@@ -9,7 +9,9 @@ import {
   type DebounceScript,
   type SpyEvent,
 } from "./debounce-driver.ts";
-import type { HyrumFlags } from "../envelope/types.ts";
+import type { HyrumFlags, SlimValue } from "../envelope/types.ts";
+import { serialize, snapshot } from "../trace/serialize.ts";
+import { hydrate } from "./gen.ts";
 
 export interface FuzzJob {
   symbol: string;
@@ -234,24 +236,19 @@ function pickFns(rec: object): Record<string, Function> {
   return out;
 }
 
-const FN_TAG = "__slimFuzzFn";
-const PROMISE_TAG = "__slimFuzzPromise";
-
 export function toCloneableJob(job: FuzzJob): FuzzJob {
   return {
     ...job,
-    args: toCloneable(job.args) as unknown[],
-    thisArg: job.thisArg === undefined ? undefined : toCloneable(job.thisArg),
-    script: job.script ? (toCloneable(job.script) as FuzzJob["script"]) : undefined,
+    args: snapshot(job.args),
+    thisArg: job.thisArg === undefined ? undefined : serialize(job.thisArg),
   };
 }
 
 export function fromCloneableJob(job: FuzzJob): FuzzJob {
   return {
     ...job,
-    args: fromCloneable(job.args) as unknown[],
-    thisArg: job.thisArg === undefined ? undefined : fromCloneable(job.thisArg),
-    script: job.script ? (fromCloneable(job.script) as FuzzJob["script"]) : undefined,
+    args: job.args.map((a) => hydrate(a as SlimValue)),
+    thisArg: job.thisArg === undefined ? undefined : hydrate(job.thisArg as SlimValue),
   };
 }
 
@@ -260,7 +257,7 @@ export function toCloneableResult(result: FuzzResult): FuzzResult {
     symbol: result.symbol,
     ok: result.ok,
     reason: result.reason,
-    args: result.args === undefined ? undefined : (toCloneable(result.args) as unknown[]),
+    args: result.args === undefined ? undefined : snapshot(result.args),
   };
 }
 
@@ -269,70 +266,8 @@ export function fromCloneableResult(result: FuzzResult): FuzzResult {
     symbol: result.symbol,
     ok: result.ok,
     reason: result.reason,
-    args: result.args === undefined ? undefined : (fromCloneable(result.args) as unknown[]),
+    args: result.args === undefined ? undefined : result.args.map((a) => hydrate(a as SlimValue)),
   };
-}
-
-function toCloneable(value: unknown, seen: WeakMap<object, unknown> = new WeakMap()): unknown {
-  if (typeof value === "function") {
-    return { [FN_TAG]: true, name: value.name, length: value.length };
-  }
-  if (value instanceof Promise) {
-    return { [PROMISE_TAG]: true };
-  }
-  if (value === null || typeof value !== "object") return value;
-  if (seen.has(value)) return seen.get(value);
-  if (value instanceof Date) return new Date(value.getTime());
-  if (value instanceof RegExp) return new RegExp(value.source, value.flags);
-  if (Array.isArray(value)) {
-    const a: unknown[] = [];
-    seen.set(value, a);
-    for (let i = 0; i < value.length; i++) {
-      if (i in value) a[i] = toCloneable(value[i], seen);
-    }
-    return a;
-  }
-  const o: Record<string, unknown> = {};
-  seen.set(value, o);
-  for (const k of Reflect.ownKeys(value)) {
-    if (typeof k === "symbol") continue;
-    try {
-      o[k] = toCloneable((value as Record<string, unknown>)[k], seen);
-    } catch {
-      /* skip */
-    }
-  }
-  return o;
-}
-
-function fromCloneable(value: unknown, seen: WeakMap<object, unknown> = new WeakMap()): unknown {
-  if (value === null || typeof value !== "object") return value;
-  if (seen.has(value)) return seen.get(value);
-  const rec = value as Record<string, unknown>;
-  if (rec[FN_TAG] === true) {
-    const fn = function slimFuzzFn() {
-      return undefined;
-    };
-    if (typeof rec.name === "string" && rec.name) Object.defineProperty(fn, "name", { value: rec.name });
-    if (typeof rec.length === "number") Object.defineProperty(fn, "length", { value: rec.length });
-    return fn;
-  }
-  if (rec[PROMISE_TAG] === true) return Promise.resolve(undefined);
-  if (value instanceof Date || value instanceof RegExp) return value;
-  if (Array.isArray(value)) {
-    const a: unknown[] = [];
-    seen.set(value, a);
-    for (let i = 0; i < value.length; i++) {
-      if (i in value) a[i] = fromCloneable(value[i], seen);
-    }
-    return a;
-  }
-  const o: Record<string, unknown> = {};
-  seen.set(value, o);
-  for (const k of Object.keys(rec)) {
-    o[k] = fromCloneable(rec[k], seen);
-  }
-  return o;
 }
 
 export async function runJob(

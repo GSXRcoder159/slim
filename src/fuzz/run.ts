@@ -223,8 +223,13 @@ async function runFuzzPool(opts: {
     const timerSymbols = opts.envelope.symbols.filter((s) => isTimerSymbol(s.exportName));
     const valueSymbols = opts.envelope.symbols.filter((s) => !isTimerSymbol(s.exportName));
     const pending = new Set<Promise<void>>();
+    const atCap = (): boolean => report.disagreements.length >= MAX_DISAGREEMENTS;
 
     const spawn = async (job: FuzzJob, onResult: (r: FuzzResult) => void): Promise<void> => {
+      while (report.disagreements.length + pending.size >= MAX_DISAGREEMENTS && pending.size > 0) {
+        await Promise.race(pending);
+      }
+      if (atCap()) return;
       const p = pool.runCase(job).then(onResult).finally(() => pending.delete(p));
       pending.add(p);
       if (pending.size >= opts.workers) await Promise.race(pending);
@@ -233,7 +238,7 @@ async function runFuzzPool(opts: {
     for (const sym of timerSymbols) {
       const scripts = scriptsForSymbol(sym, opts.envelope);
       for (const script of scripts) {
-        if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
+        if (atCap()) break;
         await spawn(
           { symbol: sym.exportName, args: [script], kind: "debounce", script, hyrum: sym.hyrum },
           (r) => recordPoolDebounce(report, r, script),
@@ -244,7 +249,7 @@ async function runFuzzPool(opts: {
 
     for (const sym of valueSymbols) {
       if (Date.now() >= deadline && report.cases > 0) break;
-      if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
+      if (atCap()) break;
       const traces = opts.envelope.traces.filter((tr) => traceHits(tr, sym));
       const hyrum = sym.hyrum;
 
@@ -255,19 +260,20 @@ async function runFuzzPool(opts: {
           recordPoolCall(report, r);
           report.tracesReplayed++;
         });
-        if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
+        if (atCap()) break;
       }
 
       const shapes = primaryShapes(sym);
       const literals = enumerateLiteralUnions(shapes, 64);
       for (const args of literals) {
         if (Date.now() >= deadline) break;
+        if (atCap()) break;
         await spawn({ symbol: sym.exportName, args, kind: "call", hyrum }, (r) => recordPoolCall(report, r));
-        if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
+        if (atCap()) break;
       }
 
       const replayed = fromTraces(traces, gen);
-      while (Date.now() < deadline && report.disagreements.length < MAX_DISAGREEMENTS) {
+      while (Date.now() < deadline && !atCap()) {
         const r = gen.next();
         let args: unknown[];
         if (r < 0.7 && replayed.length) {
