@@ -68,13 +68,21 @@ export function loadTargetTypescript(projectRoot: string): typeof import("typesc
   try {
     return req("typescript") as typeof import("typescript");
   } catch {
+    let name: string | undefined;
     try {
-      return createRequire(import.meta.url)("typescript") as typeof import("typescript");
+      name = (JSON.parse(readFileSync(join(projectRoot, "package.json"), "utf8")) as PackageJson)
+        .name;
     } catch {
-      throw new Error(
-        "slim needs typescript to analyze this repo. npm i -D typescript",
-      );
+      name = undefined;
     }
+    if (name === "slim") {
+      try {
+        return createRequire(import.meta.url)("typescript") as typeof import("typescript");
+      } catch {
+        /* fall through to the same error */
+      }
+    }
+    throw new Error("slim needs typescript to analyze this repo. npm i -D typescript");
   }
 }
 

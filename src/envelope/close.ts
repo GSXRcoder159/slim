@@ -36,7 +36,13 @@ export function closeEnvelope(env: Envelope, opts?: { allowUnknown?: boolean }):
     reason = env.slimmable.blockers.join("; ") || reason;
   }
 
-  if (untraced.length && ready) {
+  if (confidence === "closed" && env.traces.length === 0) {
+    const phrase =
+      "no traces — generators are static-shape plus catalog mutations, not your runtime distribution";
+    if (!reason.includes(phrase)) {
+      reason = reason ? `${reason}; ${phrase}` : phrase;
+    }
+  } else if (untraced.length && ready) {
     reason +=
       "; no traces — generators are static-shape plus catalog mutations, not your runtime distribution";
   }

@@ -1,3 +1,6 @@
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+
 /** Known fat / Edge-hostile packages and honest v1 refusals. */
 
 export type RefuseReason = {
@@ -88,6 +91,11 @@ const EXACT: Record<string, Omit<RefuseReason, "pkg">> = {
     evidence: "node-gyp / .node",
     whatToDo: "Refuse anything that loads .node binaries.",
   },
+  "node-gyp": {
+    why: "native addon toolchain",
+    evidence: "node-gyp / .node",
+    whatToDo: "Refuse anything that loads .node binaries.",
+  },
 };
 
 const PREFIX: Array<{ test: (name: string) => boolean; reason: Omit<RefuseReason, "pkg"> }> = [
@@ -137,13 +145,44 @@ const PREFIX: Array<{ test: (name: string) => boolean; reason: Omit<RefuseReason
   },
 ];
 
-export function refusePackage(name: string): RefuseReason | null {
+export function refusePackage(name: string, installedDir?: string | null): RefuseReason | null {
   const exact = EXACT[name];
   if (exact) return { pkg: name, ...exact };
   for (const p of PREFIX) {
     if (p.test(name)) return { pkg: name, ...p.reason };
   }
+  if (installedDir && hasDotNodeFile(installedDir)) {
+    return {
+      pkg: name,
+      why: "native addon",
+      evidence: ".node binary in package directory",
+      whatToDo: "Refuse anything that loads .node binaries.",
+    };
+  }
   return null;
+}
+
+function hasDotNodeFile(dir: string): boolean {
+  if (!existsSync(dir)) return false;
+  const stack = [dir];
+  let n = 0;
+  while (stack.length) {
+    const d = stack.pop()!;
+    let ents;
+    try {
+      ents = readdirSync(d, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of ents) {
+      if (n++ > 2000) return false;
+      if (e.name === "node_modules") continue;
+      const p = join(d, e.name);
+      if (e.isDirectory()) stack.push(p);
+      else if (e.name.endsWith(".node")) return true;
+    }
+  }
+  return false;
 }
 
 export function formatRefuse(r: RefuseReason): string {

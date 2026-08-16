@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_OK, EXIT_USAGE, SlimExit } from "./exit.ts";
@@ -13,9 +13,10 @@ export async function runInspect(args: CliArgs): Promise<number> {
     throw new SlimExit(EXIT_USAGE, "usage: slim inspect <pkg>");
   }
   const project = loadProject();
-  const refuse = refusePackage(args.pkg);
+  const installed = join(project.root, "node_modules", args.pkg);
+  const refuse = refusePackage(args.pkg, existsSync(installed) ? installed : null);
   const env = analyzePackage(project, args.pkg, { allowUnknown: args.allowUnknown });
-  const dir = join(project.root, ".slim", env.package.family || args.pkg);
+  const dir = join(project.root, ".slim", env.package.name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "envelope.json"), JSON.stringify(env, null, 2) + "\n");
 

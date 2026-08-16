@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import type ts from "typescript";
 import type { Project } from "../project.ts";
@@ -18,7 +18,7 @@ import { ENVELOPE_VERSION, emptyHyrum } from "../envelope/types.ts";
 import { parseSpecifier, resolvePackageFamily } from "./family.ts";
 import { refusePackage } from "../scan/refuse.ts";
 import { readInstalledVersion } from "../size/estimate.ts";
-import { applySlimmable } from "../envelope/slimmable.ts";
+import { applySlimmable, usedSliceGraphPure } from "../envelope/slimmable.ts";
 import { closeEnvelope } from "../envelope/close.ts";
 
 export interface AnalyzeOptions {
@@ -32,6 +32,41 @@ interface Binding {
   specifier: string;
   kind: ImportKind;
   loc: SourceLoc;
+}
+
+interface ProgramCtx {
+  program: ts.Program;
+  checker: ts.TypeChecker;
+  options: ts.CompilerOptions;
+  host: ts.CompilerHost;
+}
+
+interface LocalPending {
+  loc: SourceLoc;
+  consumerFile: string;
+  resolvedFile: string;
+  names: Array<{ local: string; imported: string }>;
+  namespaceLocal?: string;
+  defaultLocal?: string;
+}
+
+interface PkgLink {
+  file: string;
+  specifier: string;
+  names: Map<string, string> | "*";
+}
+
+interface LocalHop {
+  file: string;
+  specifier: string;
+}
+
+interface CollectExtra {
+  localPending: LocalPending[];
+  pkgLinks: PkgLink[];
+  localHops: LocalHop[];
+  programCtx: ProgramCtx | null;
+  root: string;
 }
 
 export function analyzePackage(
@@ -55,7 +90,7 @@ export function analyzePackage(
   const envKinds = detectEnv(project);
 
   const sourceCache = new Map<string, ts.SourceFile>();
-  const getSf = (file: string) => {
+  const getSfLite = (file: string) => {
     let sf = sourceCache.get(file);
     if (!sf) {
       const text = readFileSync(file, "utf8");
@@ -66,20 +101,38 @@ export function analyzePackage(
     return sf;
   };
 
-  const localReexports = new Map<string, { specifier: string; names: Map<string, string> }>();
+  const walked = files.filter((file) => ![...ignore].some((g) => file.includes(g)));
+  const parsedConfig = readTsConfig(ts, project);
+  const programCtx = shouldEscalate(ts, project, walked, getSfLite, parsedConfig)
+    ? createScopedProgram(ts, project, walked, parsedConfig)
+    : null;
 
-  for (const file of files) {
-    if ([...ignore].some((g) => file.includes(g))) continue;
+  const getSf = (file: string) => {
+    if (programCtx) {
+      const fromProg = programCtx.program.getSourceFile(file);
+      if (fromProg) return fromProg;
+    }
+    return getSfLite(file);
+  };
+
+  const extra: CollectExtra = {
+    localPending: [],
+    pkgLinks: [],
+    localHops: [],
+    programCtx,
+    root: project.root,
+  };
+
+  for (const file of walked) {
     const sf = getSf(file);
-    collectImports(ts, sf, project.root, bindings, imports, wanted, localReexports);
+    collectImports(ts, sf, bindings, imports, wanted, extra);
   }
 
-  followLocalReexports(ts, project, getSf, bindings, imports, wanted, localReexports);
+  bindLocalReexports(bindings, extra);
 
-  for (const file of files) {
-    if ([...ignore].some((g) => file.includes(g))) continue;
+  for (const file of walked) {
     const sf = getSf(file);
-    walkUses(ts, sf, project.root, bindings, wanted, callSites, unknowns, resultMembers);
+    walkUses(ts, sf, bindings, wanted, callSites, unknowns, resultMembers, programCtx?.checker);
   }
 
   const byExport = new Map<string, CallSite[]>();
@@ -114,7 +167,7 @@ export function analyzePackage(
   if (symbols.length === 0) {
     for (const b of bindings) {
       if (!specifierMatches(b.specifier, wanted)) continue;
-      const exportName = b.imported === "*" ? "*" : b.imported;
+      const exportName = exportNameOf(b) === "*" ? "*" : exportNameOf(b);
       if (byExport.has(exportName === "default" ? "default" : exportName)) continue;
       if (exportName === "*") {
         unknowns.push({
@@ -145,9 +198,17 @@ export function analyzePackage(
     }
   }
 
-  const refuse = refusePackage(family?.name ?? pkg);
+  const installedName = family?.name ?? pkg;
+  const installedDir = join(project.root, "node_modules", installedName);
+  const refuse = refusePackage(installedName, existsSync(installedDir) ? installedDir : null);
   const blockers: string[] = [];
   if (refuse) blockers.push(refuse.why);
+
+  const usedGraphPure = usedSliceGraphPure(
+    project.root,
+    installedName,
+    symbols.map((s) => s.exportName),
+  );
 
   let env: Envelope = {
     schemaVersion: ENVELOPE_VERSION,
@@ -172,7 +233,7 @@ export function analyzePackage(
     clock,
     cryptoRandom,
   };
-  env = applySlimmable(env);
+  env = applySlimmable(env, { usedGraphPure });
   env = closeEnvelope(env, { allowUnknown: opts.allowUnknown });
   return env;
 }
@@ -194,7 +255,13 @@ export function collectImportSpecifiers(
     );
     const dummy: Binding[] = [];
     const imports: ImportSite[] = [];
-    collectImports(ts, sf, project.root, dummy, imports, null, new Map());
+    collectImports(ts, sf, dummy, imports, null, {
+      localPending: [],
+      pkgLinks: [],
+      localHops: [],
+      programCtx: null,
+      root: project.root,
+    });
     for (const imp of imports) {
       const parsed = parseSpecifier(imp.specifier);
       const key = parsed?.name ?? imp.specifier;
@@ -253,55 +320,48 @@ function locOf(sf: ts.SourceFile, node: ts.Node): SourceLoc {
 function collectImports(
   ts: typeof import("typescript"),
   sf: ts.SourceFile,
-  root: string,
   bindings: Binding[],
   imports: ImportSite[],
   wanted: Set<string> | null,
-  localReexports: Map<string, { specifier: string; names: Map<string, string> }>,
+  extra: CollectExtra,
 ): void {
   const visit = (node: ts.Node) => {
     if (ts.isImportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
       const specifier = node.moduleSpecifier.text;
       const clause = node.importClause;
       const names: string[] = [];
+      const pendingNames: Array<{ local: string; imported: string }> = [];
       let kind: ImportKind = "side-effect";
+      let namespaceLocal: string | undefined;
+      let defaultLocal: string | undefined;
       if (!clause) {
         kind = "side-effect";
       } else {
         if (clause.name) {
           kind = "default";
           names.push("default");
-          bindings.push({
-            local: clause.name.text,
-            imported: "default",
-            specifier,
-            kind: "default",
-            loc: locOf(sf, node),
-          });
+          defaultLocal = clause.name.text;
+          pendingNames.push({ local: clause.name.text, imported: "default" });
+          pushPkgBinding(bindings, sf, node, specifier, clause.name.text, "default", "default");
         }
         if (clause.namedBindings) {
           if (ts.isNamespaceImport(clause.namedBindings)) {
             kind = "namespace";
             names.push("*");
-            bindings.push({
-              local: clause.namedBindings.name.text,
-              imported: "*",
-              specifier,
-              kind: "namespace",
-              loc: locOf(sf, node),
-            });
+            namespaceLocal = clause.namedBindings.name.text;
+            pushPkgBinding(bindings, sf, node, specifier, namespaceLocal, "*", "namespace");
           } else if (ts.isNamedImports(clause.namedBindings)) {
             kind = "named";
+            const map = new Map<string, string>();
             for (const el of clause.namedBindings.elements) {
               const imported = (el.propertyName ?? el.name).text;
               names.push(imported);
-              bindings.push({
-                local: el.name.text,
-                imported,
-                specifier,
-                kind: "named",
-                loc: locOf(sf, node),
-              });
+              pendingNames.push({ local: el.name.text, imported });
+              map.set(imported, imported);
+              pushPkgBinding(bindings, sf, node, specifier, el.name.text, imported, "named");
+            }
+            if (!specifier.startsWith(".") && !specifier.startsWith("#") && parseSpecifier(specifier)) {
+              extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: map });
             }
           }
         }
@@ -309,6 +369,17 @@ function collectImports(
       if (specifierMatches(specifier, wanted)) {
         imports.push({ loc: locOf(sf, node), specifier, kind, names });
       }
+      if (namespaceLocal && parseSpecifier(specifier) && !specifier.startsWith(".")) {
+        extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: "*" });
+      }
+      if (defaultLocal && parseSpecifier(specifier) && !specifier.startsWith(".")) {
+        extra.pkgLinks.push({
+          file: normPath(sf.fileName),
+          specifier,
+          names: new Map([["default", "default"]]),
+        });
+      }
+      queueLocalOrAlias(ts, sf, node, specifier, pendingNames, namespaceLocal, defaultLocal, extra);
     }
 
     if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
@@ -323,14 +394,15 @@ function collectImports(
           map.set(exported, orig);
         }
         if (specifier.startsWith(".")) {
-          localReexports.set(sf.fileName + ":" + specifier, { specifier, names: map });
+          extra.localHops.push({ file: normPath(sf.fileName), specifier });
+        } else {
+          extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: map });
         }
       } else if (!node.exportClause) {
         if (specifier.startsWith(".")) {
-          localReexports.set(sf.fileName + ":" + specifier, {
-            specifier,
-            names: new Map([["*", "*"]]),
-          });
+          extra.localHops.push({ file: normPath(sf.fileName), specifier });
+        } else {
+          extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: "*" });
         }
       }
       if (specifierMatches(specifier, wanted)) {
@@ -353,10 +425,6 @@ function collectImports(
       ) {
         const specifier = node.arguments[0].text;
         const parent = node.parent;
-        let local: string | null = null;
-        if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
-          local = parent.name.text;
-        }
         if (specifierMatches(specifier, wanted)) {
           imports.push({
             loc: locOf(sf, node),
@@ -365,14 +433,35 @@ function collectImports(
             names: ["default"],
           });
         }
-        if (local) {
+        if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
           bindings.push({
-            local,
+            local: parent.name.text,
             imported: "default",
             specifier,
             kind: "cjs-require",
             loc: locOf(sf, node),
           });
+        } else if (ts.isVariableDeclaration(parent) && ts.isObjectBindingPattern(parent.name)) {
+          const map = new Map<string, string>();
+          for (const el of parent.name.elements) {
+            if (!ts.isIdentifier(el.name)) continue;
+            const imported =
+              el.propertyName && ts.isIdentifier(el.propertyName)
+                ? el.propertyName.text
+                : el.name.text;
+            map.set(imported, imported);
+            bindings.push({
+              local: el.name.text,
+              imported,
+              specifier,
+              kind: "cjs-require",
+              loc: locOf(sf, node),
+            });
+          }
+          extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: map });
+        }
+        if (parseSpecifier(specifier)) {
+          extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: "*" });
         }
       }
       if (cal.kind === ts.SyntaxKind.ImportKeyword && node.arguments[0]) {
@@ -387,6 +476,16 @@ function collectImports(
               names: ["default"],
             });
           }
+          const local = localFromImportCall(ts, node);
+          if (local) {
+            bindings.push({
+              local,
+              imported: "*",
+              specifier,
+              kind: "default",
+              loc: locOf(sf, node),
+            });
+          }
         }
       }
     }
@@ -394,26 +493,145 @@ function collectImports(
     ts.forEachChild(node, visit);
   };
   visit(sf);
-  void root;
 }
 
-function followLocalReexports(
-  ts: typeof import("typescript"),
-  project: Project,
-  getSf: (f: string) => ts.SourceFile,
+function pushPkgBinding(
   bindings: Binding[],
-  imports: ImportSite[],
-  wanted: Set<string> | null,
-  localReexports: Map<string, { specifier: string; names: Map<string, string> }>,
+  sf: ts.SourceFile,
+  node: ts.Node,
+  specifier: string,
+  local: string,
+  imported: string,
+  kind: ImportKind,
 ): void {
-  // ponytail: one hop only — nested barrels stay as local modules
-  for (const [key, re] of localReexports) {
-    const fromFile = key.split(":")[0]!;
-    const resolved = resolveRelative(fromFile, re.specifier);
-    if (!resolved || !existsSync(resolved)) continue;
-    const sf = getSf(resolved);
-    collectImports(ts, sf, project.root, bindings, imports, wanted, new Map());
+  if (specifier.startsWith(".") || specifier.startsWith("#")) return;
+  if (!parseSpecifier(specifier)) return;
+  bindings.push({ local, imported, specifier, kind, loc: locOf(sf, node) });
+}
+
+function queueLocalOrAlias(
+  ts: typeof import("typescript"),
+  sf: ts.SourceFile,
+  node: ts.Node,
+  specifier: string,
+  names: Array<{ local: string; imported: string }>,
+  namespaceLocal: string | undefined,
+  defaultLocal: string | undefined,
+  extra: CollectExtra,
+): void {
+  let resolved: string | null = null;
+  if (specifier.startsWith(".")) {
+    resolved = resolveRelative(sf.fileName, specifier);
+  } else if (extra.programCtx) {
+    const r = ts.resolveModuleName(
+      specifier,
+      sf.fileName,
+      extra.programCtx.options,
+      extra.programCtx.host,
+    );
+    const file = r.resolvedModule?.resolvedFileName;
+    if (file && !file.includes("node_modules")) resolved = file;
   }
+  if (!resolved) return;
+  extra.localPending.push({
+    loc: locOf(sf, node),
+    consumerFile: sf.fileName,
+    resolvedFile: normPath(resolved),
+    names,
+    namespaceLocal,
+    defaultLocal,
+  });
+}
+
+function bindLocalReexports(bindings: Binding[], extra: CollectExtra): void {
+  // ponytail: one hop only — nested barrels stay as local modules
+  for (const pending of extra.localPending) {
+    applyPkgLinks(pending, pending.resolvedFile, extra, bindings, 0);
+  }
+}
+
+function applyPkgLinks(
+  pending: LocalPending,
+  file: string,
+  extra: CollectExtra,
+  bindings: Binding[],
+  hop: number,
+): void {
+  const nf = normPath(file);
+  for (const link of extra.pkgLinks) {
+    if (normPath(link.file) !== nf) continue;
+    addBindingsFromLink(pending, link, bindings);
+  }
+  if (hop >= 1) return;
+  for (const hopSpec of extra.localHops) {
+    if (normPath(hopSpec.file) !== nf) continue;
+    const next = resolveRelative(hopSpec.file, hopSpec.specifier);
+    if (next) applyPkgLinks(pending, next, extra, bindings, hop + 1);
+  }
+}
+
+function addBindingsFromLink(pending: LocalPending, link: PkgLink, bindings: Binding[]): void {
+  if (link.names === "*") {
+    if (pending.namespaceLocal) {
+      bindings.push({
+        local: pending.namespaceLocal,
+        imported: "*",
+        specifier: link.specifier,
+        kind: "namespace",
+        loc: pending.loc,
+      });
+    }
+    if (pending.defaultLocal) {
+      bindings.push({
+        local: pending.defaultLocal,
+        imported: "default",
+        specifier: link.specifier,
+        kind: "default",
+        loc: pending.loc,
+      });
+    }
+    for (const n of pending.names) {
+      if (n.imported === "default") continue;
+      bindings.push({
+        local: n.local,
+        imported: n.imported,
+        specifier: link.specifier,
+        kind: "named",
+        loc: pending.loc,
+      });
+    }
+    return;
+  }
+  for (const n of pending.names) {
+    const orig = link.names.get(n.imported);
+    if (!orig) continue;
+    bindings.push({
+      local: n.local,
+      imported: orig,
+      specifier: link.specifier,
+      kind: "named",
+      loc: pending.loc,
+    });
+  }
+  if (pending.namespaceLocal) {
+    bindings.push({
+      local: pending.namespaceLocal,
+      imported: "*",
+      specifier: link.specifier,
+      kind: "namespace",
+      loc: pending.loc,
+    });
+  }
+}
+
+function localFromImportCall(
+  ts: typeof import("typescript"),
+  node: ts.CallExpression,
+): string | null {
+  let p: ts.Node = node.parent;
+  if (ts.isAwaitExpression(p)) p = p.parent;
+  if (ts.isVariableDeclaration(p) && ts.isIdentifier(p.name)) return p.name.text;
+  return null;
 }
 
 function resolveRelative(fromFile: string, spec: string): string | null {
@@ -425,6 +643,7 @@ function resolveRelative(fromFile: string, spec: string): string | null {
     base + ".js",
     base + ".tsx",
     base + ".mjs",
+    base + ".cjs",
     join(base, "index.ts"),
     join(base, "index.js"),
   ];
@@ -434,18 +653,20 @@ function resolveRelative(fromFile: string, spec: string): string | null {
 function walkUses(
   ts: typeof import("typescript"),
   sf: ts.SourceFile,
-  root: string,
   bindings: Binding[],
   wanted: Set<string> | null,
   callSites: CallSite[],
   unknowns: UnknownSite[],
   resultMembers: Map<string, Set<string>>,
+  checker?: ts.TypeChecker,
 ): void {
+  const nf = normPath(sf.fileName);
   const bindByLocal = bindings.filter(
-    (b) => b.loc.file === sf.fileName && specifierMatches(b.specifier, wanted),
+    (b) => normPath(b.loc.file) === nf && specifierMatches(b.specifier, wanted),
   );
   const localSet = new Map(bindByLocal.map((b) => [b.local, b]));
   if (!localSet.size) return;
+  const resultLocals = new Map<string, CallSite>();
 
   const visit = (node: ts.Node) => {
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
@@ -498,9 +719,12 @@ function walkUses(
         } else {
           const spread = node.arguments.some((a) => ts.isSpreadElement(a));
           const argc = node.arguments.length;
-          const argShapes = node.arguments.map((a) => shapeOf(ts, a));
+          const argShapes = node.arguments.map((a) => {
+            if (argIsTsAny(ts, a, checker)) return { kind: "unknown" as const };
+            return shapeOf(ts, a, checker);
+          });
           const thisBinding = thisOf(ts, node.expression);
-          callSites.push({
+          const site: CallSite = {
             id: uid("call", sf, node),
             loc: locOf(sf, node),
             exportName: info.exportName,
@@ -514,7 +738,31 @@ function walkUses(
             argShapes,
             spread,
             resultMembers: [],
-          });
+          };
+          callSites.push(site);
+          const resultLocal = localFromImportCall(ts, node);
+          if (resultLocal) resultLocals.set(resultLocal, site);
+          if (spread) {
+            unknowns.push({
+              id: uid("spread", sf, node),
+              loc: locOf(sf, node),
+              kind: "spread-args",
+              detail: `spread arguments on ${info.exportName}`,
+              widensTo: "full-signature",
+              traceObservedMembers: null,
+            });
+          }
+          for (const a of node.arguments) {
+            if (!argIsTsAny(ts, a, checker)) continue;
+            unknowns.push({
+              id: uid("any", sf, a),
+              loc: locOf(sf, a),
+              kind: "ts-any",
+              detail: `any-typed argument to ${info.exportName}`,
+              widensTo: "full-signature",
+              traceObservedMembers: null,
+            });
+          }
         }
       }
       for (const arg of node.arguments) {
@@ -546,6 +794,15 @@ function walkUses(
     }
 
     if (ts.isPropertyAccessExpression(node)) {
+      const obj = unwrapExpr(ts, node.expression);
+      if (ts.isIdentifier(obj) && resultLocals.has(obj.text) && ts.isIdentifier(node.name)) {
+        const site = resultLocals.get(obj.text)!;
+        const mem = node.name.text;
+        if (!site.resultMembers.includes(mem)) site.resultMembers.push(mem);
+        const set = resultMembers.get(site.exportName) ?? new Set();
+        set.add(mem);
+        resultMembers.set(site.exportName, set);
+      }
       const info = resolveCallee(ts, node.expression, localSet);
       if (info && !info.dynamic && ts.isIdentifier(node.name)) {
         const parentCall = ts.isCallExpression(node.parent) && node.parent.expression === node;
@@ -553,14 +810,6 @@ function walkUses(
           const set = resultMembers.get(info.exportName) ?? new Set();
           set.add(node.name.text);
           resultMembers.set(info.exportName, set);
-        }
-      }
-      if (ts.isIdentifier(node.expression) && localSet.has(node.expression.text)) {
-        const b = localSet.get(node.expression.text)!;
-        if (b.imported === "*" || b.imported === "default") {
-          if (ts.isIdentifier(node.name) && node.parent && ts.isCallExpression(node.parent) && node.parent.expression === node) {
-            // handled in resolveCallee
-          }
         }
       }
     }
@@ -585,7 +834,6 @@ function walkUses(
     ts.forEachChild(node, visit);
   };
   visit(sf);
-  void root;
 }
 
 function unwrapExpr(ts: typeof import("typescript"), expr: ts.Expression): ts.Expression {
@@ -615,12 +863,13 @@ function resolveCallee(
   expr = unwrapExpr(ts, expr);
   if (ts.isIdentifier(expr) && localSet.has(expr.text)) {
     const b = localSet.get(expr.text)!;
-    if (b.imported === "*") {
+    const exportName = exportNameOf(b);
+    if (exportName === "*") {
       return { exportName: "*", memberPath: [], dynamic: false };
     }
     return {
-      exportName: b.imported === "default" ? "default" : b.imported,
-      memberPath: b.imported === "default" ? [] : [b.imported],
+      exportName,
+      memberPath: exportName === "default" ? [] : [exportName],
       dynamic: false,
     };
   }
@@ -718,7 +967,11 @@ function thisOf(ts: typeof import("typescript"), expr: ts.Expression): ThisBindi
   return { kind: "unbound" };
 }
 
-function shapeOf(ts: typeof import("typescript"), node: ts.Expression): ArgShape {
+function shapeOf(
+  ts: typeof import("typescript"),
+  node: ts.Expression,
+  checker?: ts.TypeChecker,
+): ArgShape {
   if (ts.isSpreadElement(node)) return { kind: "unknown" };
   if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
     return { kind: "literal", literals: [node.text] };
@@ -735,15 +988,20 @@ function shapeOf(ts: typeof import("typescript"), node: ts.Expression): ArgShape
     const props: Record<string, ArgShape> = {};
     for (const p of node.properties) {
       if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name)) {
-        props[p.name.text] = shapeOf(ts, p.initializer as ts.Expression);
+        props[p.name.text] = shapeOf(ts, p.initializer as ts.Expression, checker);
       } else if (ts.isPropertyAssignment(p) && ts.isStringLiteral(p.name)) {
-        props[p.name.text] = shapeOf(ts, p.initializer as ts.Expression);
+        props[p.name.text] = shapeOf(ts, p.initializer as ts.Expression, checker);
       }
     }
     return { kind: "object", props };
   }
   if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
     return { kind: "function", fnArity: node.parameters.length };
+  }
+  if (checker) {
+    const lits = typeLiterals(ts, checker.getTypeAtLocation(node));
+    if (lits.length === 1) return { kind: "literal", literals: lits };
+    if (lits.length > 1) return { kind: "union", literals: lits };
   }
   return { kind: "any" };
 }
@@ -788,4 +1046,129 @@ function installedFromPkg(project: Project, name: string): string {
   };
   const raw = deps[name] ?? "";
   return raw.replace(/^[~^>=<\s]+/, "") || "unknown";
+}
+
+function exportNameOf(b: Binding): string {
+  if (b.imported !== "*" && b.imported !== "default") return b.imported;
+  const fam = resolvePackageFamily(b.specifier);
+  if (fam?.subpath) return fam.subpath.split("/")[0]!;
+  return b.imported === "default" ? "default" : "*";
+}
+
+function normPath(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+function argIsTsAny(
+  ts: typeof import("typescript"),
+  node: ts.Expression,
+  checker?: ts.TypeChecker,
+): boolean {
+  if (ts.isSpreadElement(node)) return argIsTsAny(ts, node.expression, checker);
+  if (ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) {
+    if (node.type.kind === ts.SyntaxKind.AnyKeyword) return true;
+  }
+  if (ts.isIdentifier(node) && checker) {
+    const sym = checker.getSymbolAtLocation(node);
+    const decl = sym?.valueDeclaration;
+    if (decl && (ts.isParameter(decl) || ts.isVariableDeclaration(decl)) && decl.type) {
+      if (decl.type.kind === ts.SyntaxKind.AnyKeyword) return true;
+    }
+  }
+  return false;
+}
+
+function typeLiterals(ts: typeof import("typescript"), type: ts.Type): unknown[] {
+  if (type.isUnion()) return type.types.flatMap((t) => typeLiterals(ts, t));
+  if (type.isStringLiteral()) return [type.value];
+  if (type.isNumberLiteral()) return [type.value];
+  if (type.flags & ts.TypeFlags.BooleanLiteral) {
+    return [(type as { intrinsicName?: string }).intrinsicName === "true"];
+  }
+  if (type.flags & ts.TypeFlags.Null) return [null];
+  if (type.flags & ts.TypeFlags.Undefined) return [undefined];
+  return [];
+}
+
+function readTsConfig(
+  ts: typeof import("typescript"),
+  project: Project,
+): ts.ParsedCommandLine | null {
+  if (!project.tsconfigPath) return null;
+  const { config, error } = ts.readConfigFile(project.tsconfigPath, (p) => ts.sys.readFile(p));
+  if (error || !config) return null;
+  return ts.parseJsonConfigFileContent(
+    config,
+    ts.sys,
+    dirname(project.tsconfigPath),
+    undefined,
+    project.tsconfigPath,
+  );
+}
+
+// ponytail: Program is opt-in (paths / exports / literal unions); do not typecheck unused packages
+function shouldEscalate(
+  ts: typeof import("typescript"),
+  project: Project,
+  files: string[],
+  getSf: (f: string) => ts.SourceFile,
+  parsed: ts.ParsedCommandLine | null,
+): boolean {
+  if (parsed?.options.paths && Object.keys(parsed.options.paths).length) return true;
+  for (const file of files) {
+    const sf = getSf(file);
+    let hit = false;
+    const visit = (n: ts.Node) => {
+      if (ts.isUnionTypeNode(n) && n.types.some((t) => ts.isLiteralTypeNode(t))) hit = true;
+      if (ts.isImportDeclaration(n) && n.moduleSpecifier && ts.isStringLiteral(n.moduleSpecifier)) {
+        const spec = n.moduleSpecifier.text;
+        if (spec.startsWith("#")) hit = true;
+        if (packageExportsNeeded(project.root, spec)) hit = true;
+      }
+      ts.forEachChild(n, visit);
+    };
+    visit(sf);
+    if (hit) return true;
+  }
+  return false;
+}
+
+function packageExportsNeeded(root: string, spec: string): boolean {
+  const parsed = parseSpecifier(spec);
+  if (!parsed?.subpath) return false;
+  const pj = join(root, "node_modules", parsed.name, "package.json");
+  if (!existsSync(pj)) return false;
+  try {
+    return Boolean(
+      (JSON.parse(readFileSync(pj, "utf8")) as { exports?: unknown }).exports,
+    );
+  } catch {
+    return false;
+  }
+}
+
+function createScopedProgram(
+  ts: typeof import("typescript"),
+  project: Project,
+  files: string[],
+  parsed: ts.ParsedCommandLine | null,
+): ProgramCtx {
+  const options: ts.CompilerOptions = {
+    ...(parsed?.options ?? {
+      target: ts.ScriptTarget.Latest,
+      module: ts.ModuleKind.NodeNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      allowJs: true,
+      baseUrl: project.root,
+    }),
+    noEmit: true,
+    skipLibCheck: true,
+  };
+  const host = ts.createCompilerHost(options, true);
+  const program = ts.createProgram(files, options, host);
+  return { program, checker: program.getTypeChecker(), options, host };
 }
