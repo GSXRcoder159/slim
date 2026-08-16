@@ -1,7 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep, delimiter } from "node:path";
-import { pathToFileURL } from "node:url";
-import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
 import { randomInt } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -362,44 +360,6 @@ function toRelativeSpecifier(fromFile: string, toFile: string): string {
   let rel = relative(dirname(fromFile), toFile).replace(/\\/g, "/");
   if (!rel.startsWith(".")) rel = "./" + rel;
   return rel;
-}
-
-function loadOriginal(
-  root: string,
-  pkg: string,
-  symbols: string[],
-): Record<string, Function> {
-  const req = createRequire(join(root, "package.json"));
-  const mod = req(pkg) as Record<string, unknown>;
-  const out: Record<string, Function> = {};
-  for (const s of symbols) {
-    const fn = (mod[s] ?? (mod.default as Record<string, unknown> | undefined)?.[s]) as unknown;
-    if (typeof fn === "function") out[s] = fn as Function;
-  }
-  if (typeof (mod as { get?: unknown }).get === "function" && !out.get) {
-    out.get = (mod as { get: Function }).get;
-  }
-  return out;
-}
-
-async function loadReplacement(
-  absFile: string,
-  symbols: string[],
-): Promise<Record<string, Function>> {
-  const href = pathToFileURL(resolve(absFile)).href + `?slim=${Date.now()}`;
-  const mod = (await import(href)) as Record<string, unknown>;
-  const out: Record<string, Function> = {};
-  for (const s of symbols) {
-    const fn = mod[s];
-    if (typeof fn === "function") out[s] = fn as Function;
-  }
-  const def = mod.default as Record<string, unknown> | undefined;
-  if (def) {
-    for (const s of symbols) {
-      if (!out[s] && typeof def[s] === "function") out[s] = def[s] as Function;
-    }
-  }
-  return out;
 }
 
 async function maybeTrace(root: string, pkg: string, env: Envelope): Promise<Envelope> {
