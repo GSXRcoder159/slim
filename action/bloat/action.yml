@@ -1,0 +1,5 @@
+name: slim/bloat
+description: Fail PRs that add lodash/moment without a Slim replacement
+runs:
+  using: node20
+  main: ../../dist/github/bloat-action.js

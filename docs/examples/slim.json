@@ -1,0 +1,7 @@
+{
+  "$schema": "./docs/slim.schema.json",
+  "dir": "vendor/slim",
+  "fuzzIterations": 200,
+  "pr": true,
+  "watch": { "failOn": "slice-exposed" }
+}

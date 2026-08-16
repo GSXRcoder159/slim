@@ -1,0 +1,110 @@
+# Friday 16:40 — lodash CVE, two call sites, merge before standup
+# Streams: lines tagged OUT / ERR. Unmarked human copy is OUT.
+# Exit codes at the end of each command.
+
+$ slim scan
+OUT slim scan  src/  wrangler.toml  package.json
+OUT
+OUT   package       into bundle   used     score   next
+OUT   lodash        25.8 kB gz    get, debounce    1   slim inspect lodash
+OUT   mime-types    24.1 kB gz    lookup           2   slim inspect mime-types
+OUT
+OUT   2 more under 5 kB hidden (ms, cookie). --all to show.
+OUT
+OUT   fat, not slimmable:
+OUT   axios         18.1 kB gz    envelope-network   keep or switch to fetch
+OUT
+OUT Measured from wrangler bundle (esbuild). Unpacked lodash on disk: 1.4 MB.
+EXIT 0
+
+$ slim inspect lodash
+OUT lodash@4.17.21  MIT  71.0 kB min / 25.8 kB gz
+OUT
+OUT   call sites (2)
+OUT     src/handler.ts:14  _.get(event, 'query.id')
+OUT     src/handler.ts:41  debounce(flush, 50)
+OUT
+OUT   envelope
+OUT     exports:     get (arity 2), debounce (arity 2, trailing)
+OUT     not used:    template, chain, fp, proto-mutating helpers
+OUT     purity:      no fs, no net, no native, no Object.prototype writes
+OUT     decision:    TRY  (v1 lodash subset)
+OUT
+OUT   what Slim will not implement (and you don't call)
+OUT     debounce leading, maxWait
+OUT     get path as function
+OUT
+OUT   size (est.)
+OUT     package:     71.0 kB min  →  ~1.8 kB
+OUT     this worker: 82.4 kB gz   →  ~58 kB gz   (−24 kB, −29%)
+OUT     Lambda unpacked, if you also ship this: −1.4 MB node_modules/lodash
+OUT
+OUT   next:  slim replace lodash
+EXIT 0
+
+$ slim replace lodash
+ERR envelope         get, debounce
+ERR generate         vendor/slim/lodash.js  (67 lines)
+ERR oracle fuzz      200/200 match lodash@4.17.21
+ERR standing tests   12 pass
+ERR project tests    npm test  (3 pass)
+ERR imports          src/handler.ts
+ERR package.json     - lodash
+OUT
+OUT   vendor/slim/lodash.js
+OUT   vendor/slim/lodash.test.js
+OUT   vendor/slim/lodash.meta.json
+OUT   vendor/slim/lodash.evidence.md
+OUT   vendor/slim/lodash.LICENSE
+OUT
+OUT Open PR 'slim/replace-lodash'? [Y/n] y
+ERR branch  slim/replace-lodash
+OUT pr      https://github.com/acme/edge-api/pull/842
+OUT
+OUT Read vendor/slim/lodash.evidence.md (~90s) and vendor/slim/lodash.js
+OUT then merge. This is evidence, not proof.
+EXIT 0
+
+# --- refuse (same Friday, they also tried axios) ---
+
+$ slim replace axios
+ERR error: slim will not replace 'axios'
+ERR
+ERR   HTTP clients have network in the envelope. Slim does not slice I/O.
+ERR
+ERR   package: axios@1.19.0
+ERR   reason: envelope-network
+ERR   your call sites: src/client.ts:12 axios.get(...)
+ERR
+ERR   Workers and Node 18+ already have fetch.
+ERR   Slim will not rewrite axios to fetch in v1 (that's a different tool).
+ERR   Do it by hand, or keep axios.
+EXIT 3
+
+# --- Monday CI ---
+
+$ slim check
+ERR lodash    envelope ok  standing 12 pass
+ERR mime-types  (not slimmed)
+OUT ok  1 slice
+EXIT 0
+
+# --- Monday cron, template CVE, slice not exposed ---
+
+$ slim watch
+ERR osv          lodash GHSA-xxxx (template prototype pollution)
+ERR intersection empty  patched lodash/template.js  you export get, debounce
+OUT lodash  not exposed  CVE patches template
+OUT mime-types  (not slimmed)
+EXIT 0
+
+# --- doctor on a laptop with no gh ---
+
+$ slim doctor
+OUT node      22.11.0  ok (>= 20.12)
+OUT git       ok
+OUT gh        WARN  not on PATH; slim replace will write a commit and print the gh command
+OUT slices    vendor/slim/lodash
+OUT watch     ok  .github/workflows/slim-watch.yml
+OUT config    none (defaults)
+EXIT 0

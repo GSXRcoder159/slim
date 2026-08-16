@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/slim.schema.json",
+  "title": "slim.json",
+  "description": "Optional. Zero-config default is vendor/slim + gitignore-aware scan.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "dir": {
+      "type": "string",
+      "default": "vendor/slim",
+      "description": "Where slices, tests, meta, evidence, and LICENSE copies live."
+    },
+    "include": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Glob call-site roots. Default: whole repo minus gitignore and node_modules."
+    },
+    "ignore": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
+    "testCommand": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Run after replace and during check. null = detect script 'test' in package.json, else skip."
+    },
+    "fuzzIterations": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 200
+    },
+    "pr": {
+      "type": "boolean",
+      "default": true,
+      "description": "replace opens a PR when gh is available and --no-pr was not passed."
+    },
+    "watch": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "failOn": {
+          "enum": ["slice-exposed", "any-advisory", "never"],
+          "default": "slice-exposed"
+        }
+      }
+    }
+  }
+}

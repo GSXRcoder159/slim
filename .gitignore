@@ -1,0 +1,12 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.tmp.mjs
+fixtures/*/node_modules/
+/.slim/
+
+.DS_Store
+coverage/
+*.log
+.env
+.env.*

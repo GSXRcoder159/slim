@@ -1,0 +1,7 @@
+{
+  "name": "uuid-v4-fixture",
+  "private": true,
+  "type": "module",
+  "dependencies": { "uuid": "11.1.0" },
+  "devDependencies": { "typescript": "^5.9.2" }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "lodash-get-debounce-fixture",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/index.test.ts"
+  },
+  "dependencies": {
+    "lodash": "4.17.21"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

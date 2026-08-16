@@ -1,0 +1,5 @@
+name: slim/check
+description: Re-infer call sites and fail if a Slim envelope grew
+runs:
+  using: node20
+  main: ../../dist/github/check-action.js

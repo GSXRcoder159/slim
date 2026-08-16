@@ -1,0 +1,5 @@
+name: slim/upstream
+description: Query osv.dev for Slim replacements and fail if the slice is exposed
+runs:
+  using: node20
+  main: ../../dist/github/upstream-action.js

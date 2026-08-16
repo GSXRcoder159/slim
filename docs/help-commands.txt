@@ -1,0 +1,73 @@
+# Per-command --help (keep ≤ 40 lines each). Tested against src/help.js.
+
+------------------------------------------------------------------------
+slim scan — find packages you only use a few functions of
+
+Usage:
+  slim scan [dir]
+
+      --all              Include packages under the size floor
+      --min-size <n>     Default 5kb. Also 5120, 5k
+      --diff             Only deps added in this git diff (PR bloat)
+      --fail             Exit 1 if anything ranks (slim-bloat)
+      --limit <n>        Default 20
+
+Exit 0 even when it finds candidates. Findings are data.
+Example:  slim scan
+------------------------------------------------------------------------
+slim inspect — show call sites, envelope, and whether Slim will try
+
+Usage:
+  slim inspect <pkg>
+
+Exit 0 if Slim would try. 3 if it would refuse (report still printed).
+Example:  slim inspect lodash
+------------------------------------------------------------------------
+slim replace — write a verified slice and (usually) open a PR
+
+Usage:
+  slim replace <pkg>
+
+  -y, --yes              Don't ask. Write, test, PR if gh is available
+      --no-pr            Write files, don't open a PR
+      --no-commit        Write files, don't git commit
+      --dry-run          Show the envelope and plan, write nothing
+      --fuzz-iterations <n>
+      --out <dir>        Default: vendor/slim
+
+Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz failed.
+      3 Slim refuses this envelope. 4 missing gh/git when PR required.
+
+Example:  slim replace lodash
+------------------------------------------------------------------------
+slim check — re-run standing tests; envelope still matches call sites
+
+Usage:
+  slim check [pkg]
+
+      --update-envelope  Rewrite call-site list if it grew, then fail
+
+No network. Empty vendor/slim exits 0.
+Example:  slim check
+------------------------------------------------------------------------
+slim watch — see if upstream advisories/releases touch your slice
+
+Usage:
+  slim watch [pkg]
+  slim upstream [pkg]          (alias)
+
+      --pr               Open a PR if a slice is exposed or uncertain
+      --write-workflow   Write .github/workflows/slim-watch.yml and exit
+      --fail-on <mode>   slice-exposed (default) | any-advisory | never
+
+Not a SaaS. Uses osv.dev, GitHub Advisory, npm registry from this machine.
+Example:  slim watch --write-workflow
+------------------------------------------------------------------------
+slim doctor — check Node, git, gh, slices, and the watch workflow
+
+Usage:
+  slim doctor
+
+Warnings (no gh, no watch workflow) do not fail. Node too old exits 4.
+Example:  slim doctor
+------------------------------------------------------------------------
