@@ -1,8 +1,16 @@
 name: slim/bloat
-description: Fail PRs that add lodash/moment without a Slim replacement
+description: Fail PRs that add lodash/moment as a production dependency without a Slim replacement. Requires Node >= 22.18.
 runs:
   using: composite
   steps:
+    - name: require Node >= 22.18
+      run: |
+        major=$(node -p "Number(process.versions.node.split('.')[0])")
+        if [ "$major" -lt 22 ]; then
+          echo "this Slim action requires Node >= 22.18 (got $(node --version)). Use actions/setup-node with node-version: '22.18'." >&2
+          exit 1
+        fi
+      shell: bash
     - name: slim bloat
       run: node --experimental-strip-types "${{ github.action_path }}/../../src/github/bloat-action.ts"
       shell: bash

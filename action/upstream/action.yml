@@ -1,8 +1,16 @@
 name: slim/upstream
-description: Query osv.dev for Slim replacements and fail if the slice is exposed
+description: Query osv.dev for Slim replacements and fail if the slice is exposed. Requires Node >= 22.18.
 runs:
   using: composite
   steps:
+    - name: require Node >= 22.18
+      run: |
+        major=$(node -p "Number(process.versions.node.split('.')[0])")
+        if [ "$major" -lt 22 ]; then
+          echo "this Slim action requires Node >= 22.18 (got $(node --version)). Use actions/setup-node with node-version: '22.18'." >&2
+          exit 1
+        fi
+      shell: bash
     - name: slim upstream
       run: node --experimental-strip-types "${{ github.action_path }}/../../src/github/upstream-action.ts"
       shell: bash
