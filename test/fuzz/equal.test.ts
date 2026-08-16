@@ -24,6 +24,13 @@ test("-0 distinguished when signedZero is true", () => {
   assert.equal(equal(0, 0, undefined, { signedZero: true }), true);
 });
 
+test("-0 distinguished when hyrum.signedZero is true", () => {
+  assert.equal(equal(-0, 0, { signedZero: true }), false);
+  assert.equal(equal(-0, -0, { signedZero: true }), true);
+  assert.equal(equal(0, 0, { signedZero: true }), true);
+  assert.equal(equal(-0, 0, { signedZero: false }), true);
+});
+
 test("sparse arrays: holes must match", () => {
   const a = new Array(3);
   a[1] = 1;

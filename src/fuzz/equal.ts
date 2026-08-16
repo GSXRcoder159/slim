@@ -56,7 +56,7 @@ export function equal(
   hyrum?: Partial<HyrumFlags>,
   options?: EqualOptions,
 ): boolean {
-  const signedZero = options?.signedZero === true;
+  const signedZero = options?.signedZero === true || hyrum?.signedZero === true;
   const keyOrder = options?.keyOrder === true || hyrum?.keyOrder === true;
   return eq(a, b, signedZero, keyOrder, new WeakMap());
 }

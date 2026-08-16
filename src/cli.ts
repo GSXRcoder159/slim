@@ -27,6 +27,7 @@ Replace options:
   --template-only     catalog only, no LLM
   --llm               force LLM even if catalog matches
   --keep-original     do not uninstall the package
+  --allow-flaky       fuzz unseeded RNG packages
   --workers <n>
   --seed <n>
   --max-attempts <n>  LLM repair loop (default 3)
@@ -49,6 +50,7 @@ export interface CliArgs {
   templateOnly: boolean;
   llm: boolean;
   keepOriginal: boolean;
+  allowFlaky: boolean;
   workers: number | null;
   seed: number | null;
   maxAttempts: number;
@@ -79,6 +81,7 @@ export function parseCli(argv: string[]): CliArgs {
       "template-only": { type: "boolean", default: false },
       llm: { type: "boolean", default: false },
       "keep-original": { type: "boolean", default: false },
+      "allow-flaky": { type: "boolean", default: false },
       workers: { type: "string" },
       seed: { type: "string" },
       "max-attempts": { type: "string" },
@@ -99,6 +102,7 @@ export function parseCli(argv: string[]): CliArgs {
     templateOnly: Boolean(values["template-only"]),
     llm: Boolean(values.llm),
     keepOriginal: Boolean(values["keep-original"]),
+    allowFlaky: Boolean(values["allow-flaky"]),
     workers: values.workers ? Number(values.workers) : null,
     seed: values.seed ? Number(values.seed) : null,
     maxAttempts: values["max-attempts"] ? Number(values["max-attempts"]) : 3,
@@ -122,6 +126,7 @@ function emptyArgs(over: Partial<CliArgs>): CliArgs {
     templateOnly: false,
     llm: false,
     keepOriginal: false,
+    allowFlaky: false,
     workers: null,
     seed: null,
     maxAttempts: 3,

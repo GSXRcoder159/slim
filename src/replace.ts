@@ -121,15 +121,16 @@ export async function runReplace(args: CliArgs): Promise<number> {
   writeFileSync(tmpSlim, jsForFuzz);
 
   process.stderr.write(`fuzzing (budget ${budget}ms, seed ${seed})…\n`);
-  const original = loadOriginal(project.root, env.package.name, symbols);
-  const replacement = await loadReplacement(tmpSlim, symbols);
+  const slimHash = `${hashEnvelope(env)}:${seed}`;
   let report: FuzzReport = await runFuzz({
-    original,
-    replacement,
+    origModule: env.package.name,
+    slimModule: tmpSlim,
+    slimHash,
     envelope: env,
     budgetMs: budget,
     seed,
     workers: args.workers ?? undefined,
+    allowFlaky: args.allowFlaky,
   });
 
   if (report.disagreements.length && !usedCatalog && llm) {
@@ -150,14 +151,15 @@ export async function runReplace(args: CliArgs): Promise<number> {
         },
         fileName: slimPath,
       }).outputText);
-      const repl = await loadReplacement(tmpSlim, symbols);
       report = await runFuzz({
-        original,
-        replacement: repl,
+        origModule: env.package.name,
+        slimModule: tmpSlim,
+        slimHash: `${hashEnvelope(env)}:${seed}:${i}`,
         envelope: env,
         budgetMs: budget,
         seed: seed + i,
         workers: args.workers ?? undefined,
+        allowFlaky: args.allowFlaky,
       });
       if (!report.disagreements.length) break;
     }

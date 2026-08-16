@@ -4,6 +4,7 @@ import { createFakeClock } from "../../src/fuzz/clock.ts";
 import {
   runDebounceScript,
   TAXONOMY,
+  taxonomyForObserved,
 } from "../../src/fuzz/debounce-driver.ts";
 
 /** Tiny trailing-only debounce used to prove the driver, independent of catalog. */
@@ -44,6 +45,25 @@ function trailingDebounce(
   };
   return debounced;
 }
+
+test("CI full taxonomy includes leading-only for argc=2 envelopes", () => {
+  const user = taxonomyForObserved({ exportName: "debounce", observedArgc: [2] });
+  assert.equal(
+    user.some((s) => s === TAXONOMY["leading-only"]),
+    false,
+    "user envelopes without options must not include leading-only",
+  );
+  const ci = taxonomyForObserved({
+    exportName: "debounce",
+    observedArgc: [2],
+    full: true,
+  });
+  assert.ok(
+    ci.some((s) => s === TAXONOMY["leading-only"]),
+    "CI taxonomy must include leading-only even for argc=2",
+  );
+  assert.equal(ci.length, 14);
+});
 
 test("TAXONOMY exports Slim CI scripts", () => {
   const names = [

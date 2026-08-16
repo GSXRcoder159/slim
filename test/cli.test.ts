@@ -29,6 +29,12 @@ test("parseCli replace flags", () => {
   assert.equal(a.noPr, true);
   assert.equal(a.dryRun, true);
   assert.equal(a.seed, 1);
+  assert.equal(a.allowFlaky, false);
+});
+
+test("parseCli --allow-flaky", () => {
+  const a = parseCli(["replace", "chance", "--allow-flaky"]);
+  assert.equal(a.allowFlaky, true);
 });
 
 test("help text names evidence not proof", () => {

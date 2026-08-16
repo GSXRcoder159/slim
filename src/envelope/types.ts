@@ -90,6 +90,8 @@ export interface HyrumFlags {
   mutation: boolean;
   dateIdentity: boolean;
   sameReference: boolean;
+  /** When true, -0 and +0 are not equal. */
+  signedZero?: boolean;
 }
 
 export interface SymbolEnvelope {

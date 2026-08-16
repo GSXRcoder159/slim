@@ -120,10 +120,10 @@ export async function runDebounceScript(
   const spies: SpyEvent[] = [];
   const returns: unknown[] = [];
   const flushResults: unknown[] = [];
-  const ownedInstall = true;
+  const ownedInstall = !clock.isInstalled();
   clock.install();
   try {
-    clock.set(0);
+    clock.reset(0);
     const spy = function spy(this: unknown, ...args: unknown[]): unknown {
       const ev: SpyEvent = { t: clock.getTime(), thisArg: this, args };
       if (script.throwing) {
@@ -182,8 +182,11 @@ export function taxonomyForObserved(opts: {
   exportName: string;
   observedArgc: number[];
   optionLiterals?: unknown[];
+  /** When true (Slim CI), run the full 14-script taxonomy. */
+  full?: boolean;
 }): DebounceScript[] {
   if (!isTimerSymbol(opts.exportName)) return [];
+  if (opts.full) return Object.values(TAXONOMY);
   const argc = new Set(opts.observedArgc);
   const hasDefault = argc.has(2) || argc.size === 0;
   const hasOptions = [...argc].some((n) => n >= 3);

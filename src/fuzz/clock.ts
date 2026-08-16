@@ -10,6 +10,8 @@ export interface FakeClock {
   now(): number;
   install(): void;
   uninstall(): void;
+  isInstalled(): boolean;
+  reset(ms?: number): void;
   advance(ms: number): Promise<void>;
   set(ms: number): void;
   getTime(): number;
@@ -103,13 +105,20 @@ export function createFakeClock(start = 0): FakeClock {
     set(ms: number): void {
       time = ms;
     },
+    isInstalled(): boolean {
+      return installed;
+    },
+    reset(ms = 0): void {
+      timers.clear();
+      time = ms;
+    },
     install(): void {
       if (installed) return;
       globalThis.setTimeout = fakeSetTimeout as unknown as typeof setTimeout;
       globalThis.setInterval = fakeSetInterval as unknown as typeof setInterval;
       globalThis.clearTimeout = fakeClear as unknown as typeof clearTimeout;
       globalThis.clearInterval = fakeClear as unknown as typeof clearInterval;
-      // lodash caches root.Date at load; patch the native constructor in place.
+      // ponytail: lodash caches root.Date at load; patch NativeDate.now in place.
       NativeDate.now = () => time;
       globalThis.Date = FakeDate as unknown as DateConstructor;
       if (typeof globalThis.performance !== "undefined") {

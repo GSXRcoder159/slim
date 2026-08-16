@@ -3,7 +3,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { invoke, equalResults, equal } from "./equal.ts";
-import { createFakeClock } from "./clock.ts";
+import { createFakeClock, type FakeClock } from "./clock.ts";
 import {
   runDebounceScript,
   type DebounceScript,
@@ -39,9 +39,24 @@ export function createPool(opts: {
   origModule: string;
   slimModule: string;
   symbols: string[];
+  clock?: boolean;
+  slimHash?: string;
 }): WorkerPool {
   if (opts.workers > 1) return createThreadPool(opts);
   return createInProcessPool(opts);
+}
+
+/** Bust ESM cache of the slim module for this generate attempt. */
+export function withSlimQuery(spec: string, hash?: string): string {
+  const href = spec.startsWith("file:") ? spec : pathToFileURL(spec).href;
+  if (!hash) return href;
+  const url = new URL(href);
+  url.searchParams.set("slim", hash);
+  return url.href;
+}
+
+function workerExecArgv(): string[] {
+  return process.execArgv.filter((a) => a !== "--test" && !a.startsWith("--test-"));
 }
 
 function createThreadPool(opts: {
@@ -49,6 +64,8 @@ function createThreadPool(opts: {
   origModule: string;
   slimModule: string;
   symbols: string[];
+  clock?: boolean;
+  slimHash?: string;
 }): WorkerPool {
   const n = Math.max(1, opts.workers);
   const workers: Worker[] = [];
@@ -57,19 +74,21 @@ function createThreadPool(opts: {
   let closed = false;
   let nextId = 1;
   const pending = new Map<number, { resolve: (r: FuzzResult) => void; reject: (e: unknown) => void }>();
+  const slimModule = withSlimQuery(opts.slimModule, opts.slimHash);
 
   function spawn(): Worker {
     const w = new Worker(new URL("./worker-thread.ts", import.meta.url), {
-      execArgv: process.execArgv,
+      execArgv: workerExecArgv(),
       workerData: {
         origModule: opts.origModule,
-        slimModule: opts.slimModule,
+        slimModule,
         symbols: opts.symbols,
+        clock: opts.clock === true,
       },
     });
     w.on("message", (msg: { type: string; id?: number; result?: FuzzResult; error?: string }) => {
       if (msg.type === "result" && msg.id !== undefined && msg.result) {
-        pending.get(msg.id)?.resolve(msg.result);
+        pending.get(msg.id)?.resolve(fromCloneableResult(msg.result));
         pending.delete(msg.id);
       } else if (msg.type === "error" && msg.id !== undefined) {
         pending.get(msg.id)?.reject(new Error(msg.error ?? "worker error"));
@@ -109,7 +128,7 @@ function createThreadPool(opts: {
       try {
         return await new Promise<FuzzResult>((resolve, reject) => {
           pending.set(id, { resolve, reject });
-          w.postMessage({ type: "run", id, job });
+          w.postMessage({ type: "run", id, job: toCloneableJob(job) });
         });
       } finally {
         release(w);
@@ -127,17 +146,24 @@ function createInProcessPool(opts: {
   origModule: string;
   slimModule: string;
   symbols: string[];
+  clock?: boolean;
+  slimHash?: string;
 }): WorkerPool {
   let orig: Record<string, Function> | null = null;
   let slim: Record<string, Function> | null = null;
+  let persistClock: FakeClock | undefined;
   let loading: Promise<void> | null = null;
 
   async function ensure(): Promise<void> {
     if (orig && slim) return;
     if (!loading) {
       loading = (async () => {
+        if (opts.clock) {
+          persistClock = createFakeClock(0);
+          persistClock.install();
+        }
         orig = await loadOrig(opts.origModule);
-        slim = await loadSlim(opts.slimModule);
+        slim = await loadSlim(withSlimQuery(opts.slimModule, opts.slimHash));
       })();
     }
     await loading;
@@ -146,9 +172,11 @@ function createInProcessPool(opts: {
   return {
     async runCase(job: FuzzJob): Promise<FuzzResult> {
       await ensure();
-      return runJob(orig!, slim!, job);
+      return runJob(orig!, slim!, job, persistClock);
     },
     async close(): Promise<void> {
+      persistClock?.uninstall();
+      persistClock = undefined;
       orig = null;
       slim = null;
     },
@@ -172,34 +200,146 @@ export async function loadSlim(spec: string): Promise<Record<string, Function>> 
 }
 
 function unwrapModule(m: unknown): Record<string, Function> {
-  if (typeof m !== "object" || m === null) return {};
-  const rec = m as Record<string, unknown>;
-  const def = rec.default;
-  if (typeof def === "function") {
-    const out: Record<string, Function> = { default: def, ...(pickFns(rec)) };
-    if (typeof (def as Function & { get?: unknown }).get === "function") {
-      Object.assign(out, pickFns(def as unknown as Record<string, unknown>));
+  if (m == null) return {};
+  const out: Record<string, Function> = {};
+  if (typeof m === "function") {
+    out.default = m;
+    Object.assign(out, pickFns(m as unknown as object));
+  }
+  if (typeof m === "object" || typeof m === "function") {
+    const rec = m as Record<string, unknown>;
+    Object.assign(out, pickFns(rec));
+    const def = rec.default;
+    if (typeof def === "function") {
+      out.default = def;
+      Object.assign(out, pickFns(def as unknown as object));
+    } else if (def && typeof def === "object") {
+      Object.assign(out, pickFns(def as object));
     }
-    return out;
   }
-  if (def && typeof def === "object") {
-    return { ...pickFns(def as Record<string, unknown>), ...pickFns(rec) };
-  }
-  return pickFns(rec);
+  return out;
 }
 
-function pickFns(rec: Record<string, unknown>): Record<string, Function> {
+function pickFns(rec: object): Record<string, Function> {
   const out: Record<string, Function> = {};
-  for (const [k, v] of Object.entries(rec)) {
+  for (const k of Object.getOwnPropertyNames(rec)) {
+    let v: unknown;
+    try {
+      v = (rec as Record<string, unknown>)[k];
+    } catch {
+      continue;
+    }
     if (typeof v === "function") out[k] = v;
   }
   return out;
+}
+
+const FN_TAG = "__slimFuzzFn";
+const PROMISE_TAG = "__slimFuzzPromise";
+
+export function toCloneableJob(job: FuzzJob): FuzzJob {
+  return {
+    ...job,
+    args: toCloneable(job.args) as unknown[],
+    thisArg: job.thisArg === undefined ? undefined : toCloneable(job.thisArg),
+    script: job.script ? (toCloneable(job.script) as FuzzJob["script"]) : undefined,
+  };
+}
+
+export function fromCloneableJob(job: FuzzJob): FuzzJob {
+  return {
+    ...job,
+    args: fromCloneable(job.args) as unknown[],
+    thisArg: job.thisArg === undefined ? undefined : fromCloneable(job.thisArg),
+    script: job.script ? (fromCloneable(job.script) as FuzzJob["script"]) : undefined,
+  };
+}
+
+export function toCloneableResult(result: FuzzResult): FuzzResult {
+  return {
+    symbol: result.symbol,
+    ok: result.ok,
+    reason: result.reason,
+    args: result.args === undefined ? undefined : (toCloneable(result.args) as unknown[]),
+  };
+}
+
+export function fromCloneableResult(result: FuzzResult): FuzzResult {
+  return {
+    symbol: result.symbol,
+    ok: result.ok,
+    reason: result.reason,
+    args: result.args === undefined ? undefined : (fromCloneable(result.args) as unknown[]),
+  };
+}
+
+function toCloneable(value: unknown, seen: WeakMap<object, unknown> = new WeakMap()): unknown {
+  if (typeof value === "function") {
+    return { [FN_TAG]: true, name: value.name, length: value.length };
+  }
+  if (value instanceof Promise) {
+    return { [PROMISE_TAG]: true };
+  }
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return seen.get(value);
+  if (value instanceof Date) return new Date(value.getTime());
+  if (value instanceof RegExp) return new RegExp(value.source, value.flags);
+  if (Array.isArray(value)) {
+    const a: unknown[] = [];
+    seen.set(value, a);
+    for (let i = 0; i < value.length; i++) {
+      if (i in value) a[i] = toCloneable(value[i], seen);
+    }
+    return a;
+  }
+  const o: Record<string, unknown> = {};
+  seen.set(value, o);
+  for (const k of Reflect.ownKeys(value)) {
+    if (typeof k === "symbol") continue;
+    try {
+      o[k] = toCloneable((value as Record<string, unknown>)[k], seen);
+    } catch {
+      /* skip */
+    }
+  }
+  return o;
+}
+
+function fromCloneable(value: unknown, seen: WeakMap<object, unknown> = new WeakMap()): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return seen.get(value);
+  const rec = value as Record<string, unknown>;
+  if (rec[FN_TAG] === true) {
+    const fn = function slimFuzzFn() {
+      return undefined;
+    };
+    if (typeof rec.name === "string" && rec.name) Object.defineProperty(fn, "name", { value: rec.name });
+    if (typeof rec.length === "number") Object.defineProperty(fn, "length", { value: rec.length });
+    return fn;
+  }
+  if (rec[PROMISE_TAG] === true) return Promise.resolve(undefined);
+  if (value instanceof Date || value instanceof RegExp) return value;
+  if (Array.isArray(value)) {
+    const a: unknown[] = [];
+    seen.set(value, a);
+    for (let i = 0; i < value.length; i++) {
+      if (i in value) a[i] = fromCloneable(value[i], seen);
+    }
+    return a;
+  }
+  const o: Record<string, unknown> = {};
+  seen.set(value, o);
+  for (const k of Object.keys(rec)) {
+    o[k] = fromCloneable(rec[k], seen);
+  }
+  return o;
 }
 
 export async function runJob(
   original: Record<string, Function>,
   replacement: Record<string, Function>,
   job: FuzzJob,
+  persistClock?: FakeClock,
 ): Promise<FuzzResult> {
   const origFn = original[job.symbol];
   const slimFn = replacement[job.symbol];
@@ -207,9 +347,12 @@ export async function runJob(
     return { symbol: job.symbol, ok: false, reason: `missing function ${job.symbol}`, args: job.args };
   }
   if (job.kind === "debounce" && job.script) {
-    const clock = createFakeClock(0);
-    const a = await runDebounceScript(origFn, job.script, clock);
-    const b = await runDebounceScript(slimFn, job.script, clock);
+    const clockOrig = persistClock ?? createFakeClock(0);
+    const clockSlim = persistClock ?? createFakeClock(0);
+    persistClock?.reset(0);
+    const a = await runDebounceScript(origFn, job.script, clockOrig);
+    persistClock?.reset(0);
+    const b = await runDebounceScript(slimFn, job.script, clockSlim);
     if (!equal(a.spies, b.spies, job.hyrum)) {
       return {
         symbol: job.symbol,
