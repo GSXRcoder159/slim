@@ -1,5 +1,8 @@
 name: slim/bloat
 description: Fail PRs that add lodash/moment without a Slim replacement
 runs:
-  using: node20
-  main: ../../dist/github/bloat-action.js
+  using: composite
+  steps:
+    - name: slim bloat
+      run: node --experimental-strip-types "${{ github.action_path }}/../../src/github/bloat-action.ts"
+      shell: bash

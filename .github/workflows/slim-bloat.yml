@@ -13,4 +13,4 @@ jobs:
           node-version: "22.18"
       - run: npm ci
       - run: npx tsc -p tsconfig.json
-      - run: node dist/main.js scan --json
+      - uses: ./action/bloat
