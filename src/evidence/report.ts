@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { Envelope } from "../envelope/types.ts";
 import { hashEnvelope } from "../envelope/hash.ts";
 import { gzipGuess } from "../size/estimate.ts";
+import { maybeBundleBytes, type BundleDelta } from "../size/bundle.ts";
 
 export interface EvidenceJson {
   slogan: "EVIDENCE, NOT PROOF";
@@ -11,7 +12,12 @@ export interface EvidenceJson {
   symbols: string[];
   callSites: number;
   unknowns: number;
-  byteDelta: { originalMin: number | null; replacement: number; gzipOriginal: number | null };
+  byteDelta: {
+    originalMin: number | null;
+    replacement: number;
+    gzipOriginal: number | null;
+    bundle?: BundleDelta;
+  };
   fuzz: {
     cases: number;
     comparisons: number;
@@ -34,12 +40,14 @@ export function writeEvidence(opts: {
   fuzz: EvidenceJson["fuzz"];
   catalogIds: string[];
   coverageHoles: string[];
+  bundle?: BundleDelta | null;
 }): { mdPath: string; jsonPath: string } {
   const dir = join(opts.root, ".slim", opts.env.package.name);
   mkdirSync(dir, { recursive: true });
   const hash = hashEnvelope(opts.env);
   const callSites = opts.env.symbols.reduce((n, s) => n + s.callSites.length, 0);
   const residual = residualRisk(opts.env, opts.fuzz);
+  const bundle = opts.bundle === undefined ? maybeBundleBytes(opts.root) : opts.bundle;
   const json: EvidenceJson = {
     slogan: "EVIDENCE, NOT PROOF",
     package: opts.env.package,
@@ -51,13 +59,14 @@ export function writeEvidence(opts: {
       originalMin: opts.originalMin,
       replacement: opts.replacementBytes,
       gzipOriginal: opts.originalMin != null ? gzipGuess(opts.originalMin) : null,
+      ...(bundle ? { bundle } : {}),
     },
     fuzz: opts.fuzz,
     coverageHoles: opts.coverageHoles,
     residualRisk: residual,
     revert: "git revert the Slim PR, or restore the dependency in package.json and delete src/slim/<pkg>.ts",
   };
-  const md = renderMd(json, opts.env, opts.catalogIds);
+  const md = renderEvidenceMd(json, opts.env, opts.catalogIds);
   const mdPath = join(dir, "evidence.md");
   const jsonPath = join(dir, "evidence.json");
   writeFileSync(mdPath, md);
@@ -65,48 +74,31 @@ export function writeEvidence(opts: {
   return { mdPath, jsonPath };
 }
 
-function residualRisk(env: Envelope, fuzz: EvidenceJson["fuzz"]): string[] {
-  const r: string[] = [
-    "Differential fuzzing over the inferred envelope is strong evidence, not proof. Unobserved call shapes can still disagree.",
-  ];
-  if (!fuzz.tracesReplayed) {
-    r.push("No runtime traces. Generators are static-shape plus catalog mutations, not your runtime distribution.");
-  }
-  if (env.unknowns.length) {
-    r.push(`Unknown sites remain: ${env.unknowns.map((u) => u.kind).join(", ")}.`);
-  }
-  if (env.clock) {
-    r.push("Timer taxonomy is sampled, not exhaustive of every interleaving.");
-  }
-  if (env.cryptoRandom) {
-    r.push("RNG is isolated with injectable crypto in fuzz; production uses platform CSPRNG.");
-  }
-  r.push("Upstream may patch bugs outside this slice; slim upstream watches advisories for used symbols.");
-  return r;
-}
-
-function renderMd(json: EvidenceJson, env: Envelope, catalogIds: string[]): string {
+export function renderEvidenceMd(json: EvidenceJson, env: Envelope, catalogIds: string[]): string {
   const orig = json.byteDelta.originalMin;
   const delta =
     orig != null
       ? `${orig} B estimated original min → ${json.byteDelta.replacement} B replacement`
       : `${json.byteDelta.replacement} B replacement (original size unknown)`;
+  const bundleLine = json.byteDelta.bundle
+    ? `\n- ${json.byteDelta.bundle.tool} dry-run of \`${json.byteDelta.bundle.entry}\`: ${json.byteDelta.bundle.bytes} B`
+    : "";
   const edge =
     env.package.family === "lodash"
       ? [
-          "",
-          "## 4. Edge",
-          "",
           "Stock lodash uses `Function(String)` and is rejected on Cloudflare/Vercel Edge. This slice does not.",
           "The cap that bites Workers is **1s startup parse**, not gzip 3MB/10MB (those limits are in flux).",
-          "",
         ].join("\n")
-      : "";
+      : "n/a";
   return `# EVIDENCE, NOT PROOF
 
 Differential fuzzing over the inferred envelope is **strong evidence, not proof**. Slim ships the envelope as a standing regression suite. When a new call site appears, \`slim check\` fails and you re-run \`slim replace\`.
 
-## 1. What was used
+## 1. Evidence, not proof
+
+Differential fuzzing over the inferred envelope is strong evidence, not proof.
+
+## 2. What was used
 
 - Package: \`${json.package.name}@${json.package.version}\` (family \`${json.package.family}\`)
 - Symbols: ${json.symbols.map((s) => "`" + s + "`").join(", ") || "(none)"}
@@ -115,9 +107,11 @@ Differential fuzzing over the inferred envelope is **strong evidence, not proof*
 - Catalog: ${catalogIds.join(", ") || "LLM"}
 - Envelope hash: \`${json.envelopeHash}\`
 
-## 2. Byte delta
+## 3. Byte delta
 
-${delta}
+${delta}${bundleLine}
+
+## 4. Edge
 
 ${edge}
 
@@ -147,4 +141,24 @@ ${json.revert}
 
 ${json.residualRisk.map((x) => `- ${x}`).join("\n")}
 `;
+}
+
+function residualRisk(env: Envelope, fuzz: EvidenceJson["fuzz"]): string[] {
+  const r: string[] = [
+    "Differential fuzzing over the inferred envelope is strong evidence, not proof. Unobserved call shapes can still disagree.",
+  ];
+  if (!fuzz.tracesReplayed) {
+    r.push("No runtime traces. Generators are static-shape plus catalog mutations, not your runtime distribution.");
+  }
+  if (env.unknowns.length) {
+    r.push(`Unknown sites remain: ${env.unknowns.map((u) => u.kind).join(", ")}.`);
+  }
+  if (env.clock) {
+    r.push("Timer taxonomy is sampled, not exhaustive of every interleaving.");
+  }
+  if (env.cryptoRandom) {
+    r.push("RNG is isolated with injectable crypto in fuzz; production uses platform CSPRNG.");
+  }
+  r.push("Upstream may patch bugs outside this slice; slim upstream watches advisories for used symbols.");
+  return r;
 }
