@@ -17,15 +17,7 @@ export function assembleCatalogModule(env: Envelope): string | null {
   const entryFiles: string[] = [];
   const ids: string[] = [];
   for (const sym of symbols) {
-    const per = firstExisting(
-      join(catalogRoot(), `${family}.${sym}.ts`),
-      join(catalogRoot(), `${family}.${sym}.js`),
-    );
-    const bundled = firstExisting(
-      join(catalogRoot(), `${family}.ts`),
-      join(catalogRoot(), `${family}.js`),
-    );
-    const found = per ?? bundled;
+    const found = firstCatalogFile(family, sym);
     if (!found) return null;
     ids.push(`${family}.${sym}`);
     if (!entryFiles.includes(found)) entryFiles.push(found);
@@ -215,10 +207,34 @@ function stripImports(src: string): string {
     .trim();
 }
 
+function catalogFileBases(family: string): string[] {
+  const camel = family.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+  return camel === family ? [family] : [family, camel];
+}
+
+function firstCatalogFile(family: string, symbol: string): string | null {
+  const bases = catalogFileBases(family);
+  for (const base of bases) {
+    const per = firstExisting(
+      join(catalogRoot(), `${base}.${symbol}.ts`),
+      join(catalogRoot(), `${base}.${symbol}.js`),
+    );
+    if (per) return per;
+  }
+  for (const base of bases) {
+    const bundled = firstExisting(
+      join(catalogRoot(), `${base}.ts`),
+      join(catalogRoot(), `${base}.js`),
+    );
+    if (bundled) return bundled;
+  }
+  return null;
+}
+
 function firstExisting(...paths: string[]): string | null {
   return paths.find((p) => existsSync(p)) ?? null;
 }
 
 export function catalogFileFor(family: string, symbol: string): string {
-  return join(catalogRoot(), `${family}.${symbol}.ts`);
+  return firstCatalogFile(family, symbol) ?? join(catalogRoot(), `${family}.${symbol}.ts`);
 }

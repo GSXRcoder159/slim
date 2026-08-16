@@ -133,6 +133,55 @@ test("constructor/__proto__ literal keys allowed only in hardened get/set/has", 
   assert.equal(ok.ok, true, ok.errors.join("; "));
 });
 
+test("a function param named console does not allowlist console at module level", () => {
+  const src = `
+export function use(console: unknown) {
+  return console;
+}
+export const leaked = console.log;
+`;
+  const r = validateGenerated(ts, src);
+  assert.equal(r.ok, false, "module-level console.log must fail even if a param is named console");
+  assert.ok(
+    r.errors.some((e) => /console/i.test(e)),
+    `expected console in errors, got: ${r.errors.join("; ")}`,
+  );
+});
+
+test("usage of a param named console inside that function is allowed", () => {
+  const src = `export function use(console: unknown) { return console; }\n`;
+  const r = validateGenerated(ts, src);
+  assert.equal(r.ok, true, r.errors.join("; "));
+});
+
+test("globalThis.console, globalThis.process, and window.process fail the allowlist", () => {
+  const cases = [
+    `export const x = globalThis.console;`,
+    `export const x = globalThis.process;`,
+    `export const x = window.process;`,
+    `export const x = global.process;`,
+  ];
+  for (const src of cases) {
+    const r = validateGenerated(ts, src);
+    assert.equal(r.ok, false, `expected reject: ${src}`);
+  }
+  const cryptoOk = validateGenerated(ts, `export const c = globalThis.crypto;\n`);
+  assert.equal(cryptoOk.ok, true, cryptoOk.errors.join("; "));
+});
+
+test("export-from external packages is forbidden", () => {
+  const cases = [
+    `export { map } from "ramda";\n`,
+    `export { get } from "lodash";\n`,
+    `export * from "ms";\n`,
+    `export { readFile } from "node:fs";\n`,
+  ];
+  for (const src of cases) {
+    const r = validateGenerated(ts, src);
+    assert.equal(r.ok, false, `expected reject: ${src}`);
+  }
+});
+
 test("OriginalSourceGuard refuses lodash/moment implementation js under node_modules", () => {
   assert.throws(
     () => OriginalSourceGuard.assertNotOriginalImpl("/app/node_modules/lodash/lodash.js"),

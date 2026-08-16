@@ -104,6 +104,28 @@ test("assembled get+debounce+set+has pass the AST allowlist", () => {
   assert.equal(r.ok, true, r.errors.join("; "));
 });
 
+test("assemble finds camelCase catalog files for whatwg-url and mime-types", () => {
+  const urlEnv: Envelope = {
+    ...env(["URL", "URLSearchParams"]),
+    package: { name: "whatwg-url", version: "14", family: "whatwg-url", subpath: "" },
+    clock: false,
+  };
+  const urlSrc = assembleCatalogModule(urlEnv);
+  assert.ok(urlSrc, "assemble whatwg-url must not return null");
+  assert.match(urlSrc!, /export const URL/);
+  assert.match(urlSrc!, /URLSearchParams/);
+
+  const mimeEnv: Envelope = {
+    ...env(["lookup", "extension"]),
+    package: { name: "mime-types", version: "2", family: "mime-types", subpath: "" },
+    clock: false,
+  };
+  const mimeSrc = assembleCatalogModule(mimeEnv);
+  assert.ok(mimeSrc, "assemble mime-types must not return null");
+  assert.match(mimeSrc!, /export function lookup/);
+  assert.match(mimeSrc!, /export function extension/);
+});
+
 test("generate assemble reads via OriginalSourceGuard, not raw lodash js", () => {
   const assemblePath = fileURLToPath(new URL("../src/generate/assemble.ts", import.meta.url));
   const src = readFileSync(assemblePath, "utf8");
