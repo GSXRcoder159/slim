@@ -185,6 +185,26 @@ test("slim-upstream.yml keeps weekly cron and runs upstream --pr", () => {
   const yml = readFileSync(join(REPO_ROOT, ".github/workflows/slim-upstream.yml"), "utf8");
   assert.match(yml, /cron:\s*"0 8 \* \* 1"/);
   assert.match(yml, /upstream --pr/);
+  assert.match(yml, /contents:\s*write/);
+  assert.match(yml, /pull-requests:\s*write/);
+});
+
+test("ci.yml checks golden fixture without inspect overwrite", () => {
+  const yml = readFileSync(join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
+  assert.match(yml, /fixtures\/lodash-get-debounce/);
+  assert.match(yml, /main\.ts check/);
+  assert.equal(
+    /inspect\s+lodash/.test(yml),
+    false,
+    "inspect lodash writes envelope.json and must not run before check",
+  );
+  const inspectStep = yml.search(/name:\s*fixture inspect/);
+  const checkStep = yml.search(/name:\s*fixture check|main\.ts check/);
+  assert.ok(checkStep !== -1, "fixture slim check must remain");
+  assert.ok(
+    inspectStep === -1 || inspectStep > checkStep,
+    "inspect must not run before check (it overwrites the golden envelope)",
+  );
 });
 
 test("release.yml publishes with provenance on v* tags", () => {

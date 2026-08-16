@@ -1,7 +1,7 @@
 import { execFileSync, type ExecFileSyncOptions } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { EXIT_ENV, SlimExit } from "../exit.ts";
+import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../exit.ts";
 
 export interface PrResult {
   url: string | null;
@@ -121,6 +121,7 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
     execFile("git", ["push", "-u", "origin", opts.branch], { cwd: opts.root, stdio: "inherit" });
   } catch (err) {
     process.stderr.write(`git push failed: ${errText(err)}\n`);
+    throw new SlimExit(EXIT_FAIL, `git push failed: ${errText(err)}`);
   }
 
   if (gh) {
@@ -137,7 +138,7 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
       return { url, local: false };
     } catch (err) {
       process.stderr.write(`gh pr create failed: ${errText(err)}\n`);
-      return { url: null, local: true };
+      throw new SlimExit(EXIT_FAIL, `gh pr create failed: ${errText(err)}`);
     }
   }
 
@@ -155,7 +156,7 @@ async function createPullRequestRest(
     ).trim();
   } catch (err) {
     process.stderr.write(`git remote get-url origin failed: ${errText(err)}\n`);
-    return { url: null, local: true };
+    throw new SlimExit(EXIT_FAIL, `git remote get-url origin failed: ${errText(err)}`);
   }
   const { owner, repo } = parseGithubOwnerRepo(origin);
   const base = detectBaseBranch(ctx.execFile, opts.root);
@@ -179,13 +180,14 @@ async function createPullRequestRest(
     if (!res.ok) {
       const text = await res.text();
       process.stderr.write(`GitHub REST PR create failed: ${res.status} ${text.slice(0, 400)}\n`);
-      return { url: null, local: true };
+      throw new SlimExit(EXIT_FAIL, `GitHub REST PR create failed: ${res.status}`);
     }
     const json = (await res.json()) as { html_url?: string };
     return { url: json.html_url ?? null, local: false };
   } catch (err) {
+    if (err instanceof SlimExit) throw err;
     process.stderr.write(`GitHub REST PR create failed: ${errText(err)}\n`);
-    return { url: null, local: true };
+    throw new SlimExit(EXIT_FAIL, `GitHub REST PR create failed: ${errText(err)}`);
   }
 }
 

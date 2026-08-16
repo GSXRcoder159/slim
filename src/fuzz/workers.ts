@@ -48,6 +48,12 @@ export function createPool(opts: {
   return createInProcessPool(opts);
 }
 
+/** Resolve worker-thread next to this module: `.ts` under src, `.js` after tsc. */
+export function workerThreadUrl(metaUrl: string = import.meta.url): URL {
+  const ext = metaUrl.endsWith(".ts") ? ".ts" : ".js";
+  return new URL(`./worker-thread${ext}`, metaUrl);
+}
+
 /** Bust ESM cache of the slim module for this generate attempt. */
 export function withSlimQuery(spec: string, hash?: string): string {
   const href = spec.startsWith("file:") ? spec : pathToFileURL(spec).href;
@@ -79,7 +85,7 @@ function createThreadPool(opts: {
   const slimModule = withSlimQuery(opts.slimModule, opts.slimHash);
 
   function spawn(): Worker {
-    const w = new Worker(new URL("./worker-thread.ts", import.meta.url), {
+    const w = new Worker(workerThreadUrl(), {
       execArgv: workerExecArgv(),
       workerData: {
         origModule: opts.origModule,

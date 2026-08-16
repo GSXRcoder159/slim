@@ -11,7 +11,7 @@ import {
   type Envelope,
 } from "../../src/envelope/types.ts";
 import { runFuzz } from "../../src/fuzz/run.ts";
-import { toCloneableJob, fromCloneableJob } from "../../src/fuzz/workers.ts";
+import { toCloneableJob, fromCloneableJob, workerThreadUrl } from "../../src/fuzz/workers.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -246,6 +246,21 @@ test("pool stops near MAX_DISAGREEMENTS and does not run unbounded cases", async
     report.cases <= 20,
     `pool kept scheduling after the cap: cases=${report.cases} disagreements=${report.disagreements.length}`,
   );
+});
+
+test("worker thread specifier matches current module extension", () => {
+  const selfExt = import.meta.url.endsWith(".ts") ? ".ts" : ".js";
+  const resolved = workerThreadUrl();
+  assert.ok(
+    resolved.href.endsWith(`worker-thread${selfExt}`),
+    `expected worker-thread${selfExt}, got ${resolved.href}`,
+  );
+  assert.equal(existsSync(fileURLToPath(resolved)), true, `missing ${resolved.href}`);
+
+  const fromTs = workerThreadUrl("file:///app/src/fuzz/workers.ts");
+  assert.ok(fromTs.href.endsWith("/worker-thread.ts"), fromTs.href);
+  const fromJs = workerThreadUrl("file:///app/dist/fuzz/workers.js");
+  assert.ok(fromJs.href.endsWith("/worker-thread.js"), fromJs.href);
 });
 
 test("cloneable roundtrip preserves function arity", () => {

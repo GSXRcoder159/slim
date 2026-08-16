@@ -16,13 +16,10 @@ jobs:
       - run: npm ci
       - run: npx tsc -p tsconfig.json --noEmit
       - run: npm test
-      - name: fixture inspect
+      - name: fixture check
         working-directory: fixtures/lodash-get-debounce
         run: |
           npm install
-          node --experimental-strip-types ../../src/main.ts inspect lodash
-      - name: fixture check
-        working-directory: fixtures/lodash-get-debounce
-        run: node --experimental-strip-types ../../src/main.ts check
+          node --experimental-strip-types ../../src/main.ts check
       - name: n-gram similarity gate
         run: node --experimental-strip-types scripts/similarity-gate.ts
