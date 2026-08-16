@@ -96,7 +96,7 @@ function minimalEnvelope(pkg: string, symbols: string[], version: string): Envel
   };
 }
 
-function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: string }) {
+function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: string; slimJson?: boolean }) {
   const pkg = opts?.pkg ?? "lodash";
   const symbols = opts?.symbols ?? ["get", "set"];
   const version = opts?.version ?? "4.17.21";
@@ -125,6 +125,17 @@ function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: strin
     join(root, ".slim", pkg, "envelope.json"),
     JSON.stringify(minimalEnvelope(pkg, symbols, version), null, 2),
   );
+  if (opts?.slimJson) {
+    writeFileSync(
+      join(root, "slim.json"),
+      JSON.stringify({
+        outDir: "src/slim",
+        replacements: {
+          [pkg]: { version, envelope: `.slim/${pkg}/envelope.json`, module: moduleRel },
+        },
+      }),
+    );
+  }
   return { root, moduleRel, pkg, symbols };
 }
 
@@ -137,6 +148,15 @@ function baseDeps(over: Partial<UpstreamDeps> & { cwd: string }): UpstreamDeps {
     runFuzz: async () => okFuzz(),
     createPullRequest: async () => ({ url: null, local: true }),
     installUpstream: async () => null,
+    loadOracle: async () => ({
+      fns: {
+        get() {},
+        set(o: unknown) {
+          return o;
+        },
+      },
+      kind: "old" as const,
+    }),
     llmConfigFromEnv: () => null,
     generateWithLlm: async () => ({
       source: "export function get() { return undefined; }\n",
@@ -259,4 +279,133 @@ test("catalog disagreement is a Slim bug and does not LLM-patch", async () => {
       /catalog disagreement/i.test(err.message),
   );
   assert.equal(llm, 0, "must not LLM-patch catalog bodies");
+});
+
+const PROTO_DISAGREE = {
+  symbol: "set",
+  args: [{}, "__proto__.polluted", true],
+  reason: "return mismatch",
+};
+
+test("PR body includes fuzz evidence stats from this run", async () => {
+  const { root } = writeFixture();
+  let body = "";
+  const deps = baseDeps({
+    cwd: root,
+    queryOsv: async () => [CWE_1321],
+    runFuzz: async () => ({
+      cases: 42,
+      comparisons: 99,
+      timerCases: 7,
+      disagreements: [],
+      tracesReplayed: 3,
+      wallMs: 12,
+      seed: 1,
+    }),
+    createPullRequest: async (opts) => {
+      body = opts.body;
+      return { url: null, local: true };
+    },
+  });
+  await assert.rejects(
+    () => runUpstream(parseCli(["upstream", "--pr"]), deps),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+  );
+  const evidence = readFileSync(join(root, ".slim", "lodash", "evidence.md"), "utf8");
+  assert.match(evidence, /cases:\s*42/);
+  assert.match(evidence, /comparisons:\s*99/);
+  assert.match(evidence, /timerCases:\s*7/);
+  assert.match(body, /cases:\s*42/);
+  assert.match(body, /comparisons:\s*99/);
+  assert.match(body, /timerCases:\s*7/);
+  assert.match(body, /regenerated the replacement and fuzzed/i);
+});
+
+test("PR body says fuzz skipped when no installable oracle", async () => {
+  const { root } = writeFixture();
+  let body = "";
+  const deps = baseDeps({
+    cwd: root,
+    queryOsv: async () => [CWE_1321],
+    loadOracle: async () => null,
+    installUpstream: async () => null,
+    createPullRequest: async (opts) => {
+      body = opts.body;
+      return { url: null, local: true };
+    },
+  });
+  await assert.rejects(
+    () => runUpstream(parseCli(["upstream", "--pr"]), deps),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+  );
+  const evidence = readFileSync(join(root, ".slim", "lodash", "evidence.md"), "utf8");
+  assert.match(evidence, /fuzz skipped: no installable oracle/);
+  assert.match(body, /fuzz skipped: no installable oracle/);
+  assert.equal(/regenerated the replacement and fuzzed/i.test(body), false);
+});
+
+test("proto disagreement vs new/patched oracle is a Slim bug", async () => {
+  const { root } = writeFixture();
+  const deps = baseDeps({
+    cwd: root,
+    queryOsv: async () => [CWE_1321],
+    loadOracle: async () => ({
+      fns: { get() {}, set(o: unknown) { return o; } },
+      kind: "new",
+    }),
+    runFuzz: async () => ({ ...okFuzz(), disagreements: [PROTO_DISAGREE] }),
+  });
+  await assert.rejects(
+    () => runUpstream(parseCli(["upstream"]), deps),
+    (err: unknown) =>
+      err instanceof SlimExit &&
+      err.code === EXIT_FAIL &&
+      /catalog disagreement/i.test(err.message),
+  );
+});
+
+test("proto disagreement vs old/pinned oracle is dropped", async () => {
+  const { root } = writeFixture();
+  const deps = baseDeps({
+    cwd: root,
+    queryOsv: async () => [CWE_1321],
+    loadOracle: async () => ({
+      fns: { get() {}, set(o: unknown) { return o; } },
+      kind: "old",
+    }),
+    runFuzz: async () => ({ ...okFuzz(), disagreements: [PROTO_DISAGREE] }),
+  });
+  await assert.rejects(
+    () => runUpstream(parseCli(["upstream"]), deps),
+    (err: unknown) =>
+      err instanceof SlimExit &&
+      err.code === EXIT_FAIL &&
+      /exposed|unmapped/i.test(err.message) &&
+      !/catalog disagreement/i.test(err.message),
+  );
+});
+
+test("successful regen+fuzz bumps manifest and slim.json pin to latest", async () => {
+  const { root } = writeFixture({ slimJson: true });
+  const deps = baseDeps({
+    cwd: root,
+    npmLatest: async () => ({ version: "4.17.22" }),
+    queryOsv: async (_name, version) => (version === "4.17.21" ? [CWE_1321] : []),
+    loadOracle: async () => ({
+      fns: { get() {}, set(o: unknown) { return o; } },
+      kind: "new",
+    }),
+  });
+  await assert.rejects(
+    () => runUpstream(parseCli(["upstream"]), deps),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+  );
+  const man = JSON.parse(readFileSync(join(root, ".slim", "manifest.json"), "utf8")) as {
+    replacements: Record<string, { version: string }>;
+  };
+  assert.equal(man.replacements.lodash?.version, "4.17.22");
+  const slim = JSON.parse(readFileSync(join(root, "slim.json"), "utf8")) as {
+    replacements: Record<string, { version: string }>;
+  };
+  assert.equal(slim.replacements.lodash?.version, "4.17.22");
 });

@@ -8,9 +8,9 @@ import { queryOsv, type OsvVuln } from "./upstream/osv.ts";
 import { npmLatest } from "./upstream/npm.ts";
 import { sliceExposure } from "./upstream/slice.ts";
 import { createPullRequest } from "./github/pr.ts";
-import { applyUpstreamFix, type UpstreamDeps, type UpstreamFinding } from "./upstream/fix.ts";
+import { applyUpstreamFix, type UpstreamDeps, type UpstreamFinding, type ApplyUpstreamFixResult } from "./upstream/fix.ts";
 
-export type { UpstreamDeps, UpstreamFinding } from "./upstream/fix.ts";
+export type { UpstreamDeps, UpstreamFinding, UpstreamOracle } from "./upstream/fix.ts";
 export { applyUpstreamFix } from "./upstream/fix.ts";
 
 interface Manifest {
@@ -73,6 +73,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
   if (args.json) {
     process.stdout.write(JSON.stringify({ findings }, null, 2) + "\n");
   }
+  const fixResults: ApplyUpstreamFixResult[] = [];
   if (exposed) {
     for (const name of names) {
       const rec = man.replacements[name]!;
@@ -80,9 +81,11 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
         (f) => f.package === name && (f.exposure === "exposed" || f.exposure === "unmapped"),
       );
       if (!pkgFindings.length) continue;
-      await applyUpstreamFix(
-        { root: project.root, pkg: name, rec, findings: pkgFindings, args, config },
-        deps,
+      fixResults.push(
+        await applyUpstreamFix(
+          { root: project.root, pkg: name, rec, findings: pkgFindings, args, config },
+          deps,
+        ),
       );
     }
   }
@@ -90,7 +93,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
     mkdirSync(join(project.root, ".slim"), { recursive: true });
     const firstId =
       findings.find((f) => f.exposure === "exposed" || f.exposure === "unmapped")?.id ?? "advisory";
-    const body = prBody(project.root, findings);
+    const body = prBody(project.root, findings, fixResults);
     writeFileSync(join(project.root, ".slim", "UPSTREAM.md"), body);
     await openPr({
       root: project.root,
@@ -104,7 +107,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
   return EXIT_OK;
 }
 
-function prBody(root: string, findings: UpstreamFinding[]): string {
+function prBody(root: string, findings: UpstreamFinding[], results: ApplyUpstreamFixResult[]): string {
   const pkgs = [
     ...new Set(
       findings
@@ -122,11 +125,29 @@ function prBody(root: string, findings: UpstreamFinding[]): string {
       (evidence ? evidence + "\n" : "") +
       "EVIDENCE, NOT PROOF — differential fuzzing is evidence, not proof.\n";
   }
+  const fuzzedAll = results.length > 0 && results.every((r) => r.fuzzed);
+  const skipped = results.filter((r) => !r.fuzzed);
+  const intro = fuzzedAll
+    ? "Fail-closed: an advisory may expose this repo's slice. Slim regenerated the replacement and fuzzed it."
+    : skipped.length
+      ? "Fail-closed: an advisory may expose this repo's slice. Slim regenerated the replacement. fuzz skipped: no installable oracle."
+      : "Fail-closed: an advisory may expose this repo's slice. Slim regenerated the replacement.";
+  const fuzzLines = results
+    .map((r) =>
+      r.fuzzed && r.fuzz
+        ? `- ${r.pkg}: cases: ${r.fuzz.cases} comparisons: ${r.fuzz.comparisons} timerCases: ${r.fuzz.timerCases}`
+        : `- ${r.pkg}: ${r.fuzzSkipReason ?? "fuzz skipped: no installable oracle"}`,
+    )
+    .join("\n");
   return `# Slim upstream slice fix
 
-Fail-closed: an advisory may expose this repo's slice. Slim regenerated the replacement and fuzzed it.
+${intro}
 
 EVIDENCE, NOT PROOF — differential fuzzing is evidence, not proof.
+
+## Fuzz
+
+${fuzzLines || "- (no fix attempt)"}
 
 ## Findings
 

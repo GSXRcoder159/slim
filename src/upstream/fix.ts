@@ -14,6 +14,7 @@ import { slimRoot } from "../generate/guard.ts";
 import { llmConfigFromEnv, generateWithLlm, type LlmConfig } from "../generate/llm.ts";
 import { loadPublicApi } from "../generate/public-api.ts";
 import { assertValidGenerated } from "../generate/validate.ts";
+import { writeEvidence } from "../evidence/report.ts";
 import { runFuzz, type FuzzReport } from "../fuzz/run.ts";
 import { loadTargetTypescript } from "../project.ts";
 import { resolvePackageFamily } from "../analyze/family.ts";
@@ -57,6 +58,18 @@ export interface UpstreamDeps {
   llmConfigFromEnv?: (env?: NodeJS.ProcessEnv) => LlmConfig | null;
   createPullRequest?: (opts: CreatePrOpts) => Promise<PrResult>;
   installUpstream?: (name: string, version: string) => Promise<string | null>;
+  loadOracle?: (
+    pkg: string,
+    version: string,
+    symbols: string[],
+  ) => Promise<UpstreamOracle | null>;
+}
+
+export interface UpstreamOracle {
+  fns: Record<string, Function>;
+  /** "new" = temp-installed latest/patched; "old" = pinned/still-vulnerable project install. */
+  kind: "new" | "old";
+  tempDir?: string;
 }
 
 export interface ManifestReplacement {
@@ -76,9 +89,12 @@ export interface ApplyUpstreamFixOpts {
 }
 
 export interface ApplyUpstreamFixResult {
+  pkg: string;
   regenerated: boolean;
   usedCatalog: boolean;
   fuzzed: boolean;
+  fuzzSkipReason: string | null;
+  fuzz: { cases: number; comparisons: number; timerCases: number } | null;
   hardenedTest: string | null;
 }
 
@@ -113,83 +129,141 @@ export async function applyUpstreamFix(
   }
 
   let fuzzed = false;
+  let fuzzSkipReason: string | null = null;
+  let fuzzStats: { cases: number; comparisons: number; timerCases: number } | null = null;
   let replacement: Record<string, Function> | null = null;
+  let oracleTemp: string | undefined;
+  let tmpSlim: string | undefined;
 
-  if (source) {
-    const ts = loadTs(opts.root);
-    const moduleAbs = join(opts.root, opts.rec.module);
-    mkdirSync(dirname(moduleAbs), { recursive: true });
-    const tmpSlim = moduleAbs + ".tmp.mjs";
-    writeFileSync(
-      tmpSlim,
-      ts.transpileModule(source, {
-        compilerOptions: {
-          module: ts.ModuleKind.ESNext,
-          target: ts.ScriptTarget.ES2022,
-          moduleResolution: ts.ModuleResolutionKind.NodeNext,
-        },
-        fileName: moduleAbs,
-      }).outputText,
-    );
-    replacement = await loadReplacementFns(tmpSlim);
+  try {
+    if (source) {
+      const ts = loadTs(opts.root);
+      const moduleAbs = join(opts.root, opts.rec.module);
+      mkdirSync(dirname(moduleAbs), { recursive: true });
+      tmpSlim = moduleAbs + ".tmp.mjs";
+      writeFileSync(
+        tmpSlim,
+        ts.transpileModule(source, {
+          compilerOptions: {
+            module: ts.ModuleKind.ESNext,
+            target: ts.ScriptTarget.ES2022,
+            moduleResolution: ts.ModuleResolutionKind.NodeNext,
+          },
+          fileName: moduleAbs,
+        }).outputText,
+      );
+      replacement = await loadReplacementFns(tmpSlim);
 
-    const latest = opts.findings[0]?.latest ?? opts.rec.version;
-    const original = await loadOracle(opts, deps, latest, symbols);
+      const latest = opts.findings[0]?.latest ?? opts.rec.version;
+      const oracle = await resolveOracle(opts, deps, latest, symbols);
+      oracleTemp = oracle?.tempDir;
 
-    const origForFuzz = original ?? (deps.runFuzz ? {} : null);
-    const replForFuzz = replacement ?? (deps.runFuzz ? {} : null);
-    if (origForFuzz && replForFuzz) {
-      const budgetMs = opts.args.budgetMs ?? Math.min(opts.config.budgetMs, 5_000);
-      const report: FuzzReport = await fuzzImpl({
-        original: origForFuzz,
-        replacement: replForFuzz,
-        envelope: env,
-        budgetMs,
-        seed: 1,
-        workers: 1,
-      });
-      fuzzed = true;
-      const disagreements = usedCatalog
-        ? report.disagreements.filter((d) => !isProtoPollutionCase(d))
-        : report.disagreements;
-      if (disagreements.length) {
-        const first = disagreements[0]!;
-        const msg = usedCatalog
-          ? `catalog disagreement (Slim bug, not LLM-patched): ${first.symbol} ${first.reason}`
-          : `fuzz disagreements remain: ${first.symbol} ${first.reason}`;
-        try {
-          rmSync(tmpSlim);
-        } catch {
-          /* keep */
+      let report: FuzzReport | null = null;
+      if (oracle) {
+        const budgetMs = opts.args.budgetMs ?? Math.min(opts.config.budgetMs, 5_000);
+        report = await fuzzImpl({
+          original: oracle.fns,
+          replacement: replacement ?? {},
+          envelope: env,
+          budgetMs,
+          seed: 1,
+          workers: 1,
+        });
+        fuzzed = true;
+        fuzzStats = {
+          cases: report.cases,
+          comparisons: report.comparisons,
+          timerCases: report.timerCases,
+        };
+        const dropProto = usedCatalog && oracle.kind === "old";
+        const disagreements = dropProto
+          ? report.disagreements.filter((d) => !isProtoPollutionCase(d))
+          : report.disagreements;
+        if (disagreements.length) {
+          const first = disagreements[0]!;
+          const msg = usedCatalog
+            ? `catalog disagreement (Slim bug, not LLM-patched): ${first.symbol} ${first.reason}`
+            : `fuzz disagreements remain: ${first.symbol} ${first.reason}`;
+          throw new SlimExit(EXIT_FAIL, msg);
         }
-        throw new SlimExit(EXIT_FAIL, msg);
+      } else {
+        fuzzSkipReason = "fuzz skipped: no installable oracle";
+      }
+
+      writeFileSync(moduleAbs, source);
+
+      const pinTo = fuzzed ? latest : opts.rec.version;
+      if (fuzzed) env.package.version = pinTo;
+
+      writeEvidence({
+        root: opts.root,
+        env,
+        replacementBytes: Buffer.byteLength(source),
+        originalMin: null,
+        fuzz: report
+          ? {
+              cases: report.cases,
+              comparisons: report.comparisons,
+              timerCases: report.timerCases,
+              tracesReplayed: report.tracesReplayed,
+              wallMs: report.wallMs,
+              seed: report.seed,
+              disagreements: report.disagreements.length,
+            }
+          : {
+              cases: 0,
+              comparisons: 0,
+              timerCases: 0,
+              tracesReplayed: 0,
+              wallMs: 0,
+              seed: 0,
+              disagreements: 0,
+            },
+        catalogIds: usedCatalog ? catalog.matched.map((m) => m.id) : [],
+        coverageHoles: fuzzSkipReason ? [fuzzSkipReason] : [],
+      });
+
+      updateManifest(opts.root, opts.pkg, opts.rec, {
+        envelopeHash: hashEnvelope(env),
+        version: fuzzed ? pinTo : undefined,
+      });
+      if (fuzzed) bumpSlimJsonPin(opts.root, opts.pkg, pinTo);
+    }
+
+    if (replacement && (typeof replacement.get === "function" || typeof replacement.set === "function")) {
+      assertHardenedGetSet(replacement);
+    }
+
+    const hardenedTest = emitHardenedGetSetTest({
+      root: opts.root,
+      moduleRel: opts.rec.module,
+    });
+
+    return {
+      pkg: opts.pkg,
+      regenerated: Boolean(source),
+      usedCatalog,
+      fuzzed,
+      fuzzSkipReason,
+      fuzz: fuzzStats,
+      hardenedTest,
+    };
+  } finally {
+    if (tmpSlim) {
+      try {
+        rmSync(tmpSlim);
+      } catch {
+        /* keep */
       }
     }
-
-    writeFileSync(moduleAbs, source);
-    try {
-      rmSync(tmpSlim);
-    } catch {
-      /* keep */
+    if (oracleTemp) {
+      try {
+        rmSync(oracleTemp, { recursive: true, force: true });
+      } catch {
+        /* keep */
+      }
     }
-    updateManifestHash(opts.root, opts.pkg, opts.rec, hashEnvelope(env));
   }
-
-  if (replacement && (typeof replacement.get === "function" || typeof replacement.set === "function")) {
-    assertHardenedGetSet(replacement);
-  }
-
-  const hardenedTest = emitHardenedGetSetTest({
-    root: opts.root,
-    moduleRel: opts.rec.module,
-  });
-
-  return {
-    regenerated: Boolean(source),
-    usedCatalog,
-    fuzzed,
-    hardenedTest,
-  };
 }
 
 export function advisoryAbstracts(findings: UpstreamFinding[]): string[] {
@@ -353,23 +427,35 @@ function loadTs(root: string): typeof import("typescript") {
   }
 }
 
-async function loadOracle(
+async function resolveOracle(
   opts: ApplyUpstreamFixOpts,
   deps: UpstreamDeps,
   latest: string,
   symbols: string[],
-): Promise<Record<string, Function> | null> {
+): Promise<UpstreamOracle | null> {
+  if (deps.loadOracle) return deps.loadOracle(opts.pkg, latest, symbols);
   const install = deps.installUpstream ?? installUpstreamInTemp;
+  let tempDir: string | undefined;
   try {
     const dir = await install(opts.pkg, latest);
     if (dir) {
+      tempDir = dir;
       const loaded = loadOriginalFromRoot(dir, opts.pkg, symbols);
-      if (loaded) return loaded;
+      if (loaded) return { fns: loaded, kind: "new", tempDir };
     }
   } catch {
     /* fall back to pinned / project install */
   }
-  return loadOriginalFromRoot(opts.root, opts.pkg, symbols);
+  if (tempDir) {
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      /* keep */
+    }
+  }
+  const old = loadOriginalFromRoot(opts.root, opts.pkg, symbols);
+  if (old) return { fns: old, kind: "old" };
+  return null;
 }
 
 function loadOriginalFromRoot(
@@ -411,22 +497,43 @@ function isProtoPollutionCase(d: { args: unknown[]; reason: string; symbol?: str
   return /__proto__|prototype.?pollution|constructor\.prototype/i.test(blob);
 }
 
-function updateManifestHash(
+function updateManifest(
   root: string,
   pkg: string,
   rec: ManifestReplacement,
-  envelopeHash: string,
+  next: { envelopeHash: string; version?: string },
 ): void {
+  rec.envelopeHash = next.envelopeHash;
+  if (next.version) rec.version = next.version;
   const p = join(root, ".slim", "manifest.json");
-  rec.envelopeHash = envelopeHash;
   if (!existsSync(p)) return;
   try {
     const man = JSON.parse(readFileSync(p, "utf8")) as {
       replacements: Record<string, ManifestReplacement>;
     };
     if (man.replacements?.[pkg]) {
-      man.replacements[pkg] = { ...man.replacements[pkg], envelopeHash };
+      man.replacements[pkg] = {
+        ...man.replacements[pkg],
+        envelopeHash: next.envelopeHash,
+        ...(next.version ? { version: next.version } : {}),
+      };
       writeFileSync(p, JSON.stringify(man, null, 2) + "\n");
+    }
+  } catch {
+    /* keep */
+  }
+}
+
+function bumpSlimJsonPin(root: string, pkg: string, version: string): void {
+  const p = join(root, "slim.json");
+  if (!existsSync(p)) return;
+  try {
+    const slim = JSON.parse(readFileSync(p, "utf8")) as {
+      replacements?: Record<string, { version: string; envelope: string; module: string }>;
+    };
+    if (slim.replacements?.[pkg]) {
+      slim.replacements[pkg] = { ...slim.replacements[pkg], version };
+      writeFileSync(p, JSON.stringify(slim, null, 2) + "\n");
     }
   } catch {
     /* keep */
