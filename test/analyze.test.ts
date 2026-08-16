@@ -267,6 +267,69 @@ test("ts-any on an argument emits unknown and keeps the symbol", () => {
   assert.ok(env.symbols.some((s) => s.exportName === "get"));
 });
 
+test("ts-any on : any parameter even without paths/unions", () => {
+  const env = analyze({
+    "src/app.ts": `
+      import { get } from "lodash";
+      export function f(o: any) {
+        return get(o, "a");
+      }
+    `,
+  });
+  assert.ok(env.unknowns.some((u) => u.kind === "ts-any"));
+  assert.ok(env.symbols.some((s) => s.exportName === "get"));
+});
+
+test("ts-any unwraps parentheses around any-typed args", () => {
+  const env = analyze({
+    "src/app.ts": `
+      import { get } from "lodash";
+      export function f(o: any) {
+        return get((o), "a") + get((o as any), "b");
+      }
+    `,
+  });
+  assert.ok(env.unknowns.filter((u) => u.kind === "ts-any").length >= 2);
+  assert.ok(env.symbols.some((s) => s.exportName === "get"));
+});
+
+test("inner d.cancel() does not attach to an outer same-named debounce", () => {
+  const env = analyze({
+    "src/app.ts": `
+      import { debounce } from "lodash";
+      export function outer() {
+        const d = debounce(() => {}, 10);
+        {
+          const d = debounce(() => {}, 20);
+          d.cancel();
+        }
+        d.flush();
+      }
+    `,
+  });
+  const db = env.symbols.find((s) => s.exportName === "debounce");
+  assert.ok(db);
+  const outer = db!.callSites.find((c) => c.argShapes[1]?.literals?.[0] === 10);
+  const inner = db!.callSites.find((c) => c.argShapes[1]?.literals?.[0] === 20);
+  assert.ok(outer);
+  assert.ok(inner);
+  assert.equal(outer!.resultMembers.includes("cancel"), false);
+  assert.ok(outer!.resultMembers.includes("flush"));
+  assert.ok(inner!.resultMembers.includes("cancel"));
+  assert.equal(inner!.resultMembers.includes("flush"), false);
+});
+
+test("dynamic import(x) is unknown even with no static bindings", () => {
+  const env = analyze({
+    "src/only-dyn.ts": `
+      export async function f(x: string) {
+        return import(x);
+      }
+    `,
+  });
+  assert.ok(env.unknowns.some((u) => u.kind === "dynamic-specifier"));
+});
+
 test("paths-alias Program escalation resolves get", () => {
   const root = mini({
     "tsconfig.json": JSON.stringify({

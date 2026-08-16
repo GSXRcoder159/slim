@@ -665,10 +665,19 @@ function walkUses(
     (b) => normPath(b.loc.file) === nf && specifierMatches(b.specifier, wanted),
   );
   const localSet = new Map(bindByLocal.map((b) => [b.local, b]));
-  if (!localSet.size) return;
-  const resultLocals = new Map<string, CallSite>();
+  const resultScopes: Array<Map<string, CallSite>> = [new Map()];
+
+  const lookupResult = (name: string): CallSite | undefined => {
+    for (let i = resultScopes.length - 1; i >= 0; i--) {
+      const hit = resultScopes[i]!.get(name);
+      if (hit) return hit;
+    }
+    return undefined;
+  };
 
   const visit = (node: ts.Node) => {
+    const scoped = isBindingScope(ts, node);
+    if (scoped) resultScopes.push(new Map());
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
       unknowns.push({
         id: uid("eval", sf, node),
@@ -704,7 +713,7 @@ function walkUses(
       }
     }
 
-    if (ts.isCallExpression(node)) {
+    if (localSet.size && ts.isCallExpression(node)) {
       const info = resolveCallee(ts, node.expression, localSet);
       if (info) {
         if (info.dynamic) {
@@ -741,7 +750,7 @@ function walkUses(
           };
           callSites.push(site);
           const resultLocal = localFromImportCall(ts, node);
-          if (resultLocal) resultLocals.set(resultLocal, site);
+          if (resultLocal) resultScopes[resultScopes.length - 1]!.set(resultLocal, site);
           if (spread) {
             unknowns.push({
               id: uid("spread", sf, node),
@@ -795,8 +804,9 @@ function walkUses(
 
     if (ts.isPropertyAccessExpression(node)) {
       const obj = unwrapExpr(ts, node.expression);
-      if (ts.isIdentifier(obj) && resultLocals.has(obj.text) && ts.isIdentifier(node.name)) {
-        const site = resultLocals.get(obj.text)!;
+      const resultSite = ts.isIdentifier(obj) ? lookupResult(obj.text) : undefined;
+      if (resultSite && ts.isIdentifier(node.name)) {
+        const site = resultSite;
         const mem = node.name.text;
         if (!site.resultMembers.includes(mem)) site.resultMembers.push(mem);
         const set = resultMembers.get(site.exportName) ?? new Set();
@@ -832,6 +842,7 @@ function walkUses(
     }
 
     ts.forEachChild(node, visit);
+    if (scoped) resultScopes.pop();
   };
   visit(sf);
 }
@@ -1063,21 +1074,101 @@ function normPath(p: string): string {
   }
 }
 
+function isBindingScope(ts: typeof import("typescript"), node: ts.Node): boolean {
+  return (
+    ts.isBlock(node) ||
+    ts.isModuleBlock(node) ||
+    ts.isCaseBlock(node) ||
+    ts.isCatchClause(node) ||
+    ts.isForStatement(node) ||
+    ts.isForInStatement(node) ||
+    ts.isForOfStatement(node) ||
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node) ||
+    ts.isClassStaticBlockDeclaration(node)
+  );
+}
+
+function unwrapParens(ts: typeof import("typescript"), node: ts.Expression): ts.Expression {
+  let cur = node;
+  while (ts.isParenthesizedExpression(cur)) cur = cur.expression;
+  return cur;
+}
+
+function functionParams(
+  ts: typeof import("typescript"),
+  node: ts.Node,
+): readonly ts.ParameterDeclaration[] | undefined {
+  if (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isConstructorDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node)
+  ) {
+    return node.parameters;
+  }
+  return undefined;
+}
+
+function varDeclInScope(
+  ts: typeof import("typescript"),
+  scope: ts.Node,
+  name: string,
+): ts.VariableDeclaration | undefined {
+  const stmts = ts.isBlock(scope) || ts.isModuleBlock(scope) || ts.isSourceFile(scope)
+    ? scope.statements
+    : undefined;
+  if (!stmts) return undefined;
+  for (const s of stmts) {
+    if (!ts.isVariableStatement(s)) continue;
+    for (const d of s.declarationList.declarations) {
+      if (ts.isIdentifier(d.name) && d.name.text === name) return d;
+    }
+  }
+  return undefined;
+}
+
+function identHasExplicitAny(ts: typeof import("typescript"), ident: ts.Identifier): boolean {
+  let scope: ts.Node | undefined = ident.parent;
+  while (scope) {
+    const params = functionParams(ts, scope);
+    if (params) {
+      for (const p of params) {
+        if (ts.isIdentifier(p.name) && p.name.text === ident.text) {
+          return p.type?.kind === ts.SyntaxKind.AnyKeyword;
+        }
+      }
+    }
+    const vd = varDeclInScope(ts, scope, ident.text);
+    if (vd) return vd.type?.kind === ts.SyntaxKind.AnyKeyword;
+    scope = scope.parent;
+  }
+  return false;
+}
+
 function argIsTsAny(
   ts: typeof import("typescript"),
   node: ts.Expression,
   checker?: ts.TypeChecker,
 ): boolean {
   if (ts.isSpreadElement(node)) return argIsTsAny(ts, node.expression, checker);
+  node = unwrapParens(ts, node);
   if (ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) {
     if (node.type.kind === ts.SyntaxKind.AnyKeyword) return true;
+    return argIsTsAny(ts, node.expression, checker);
   }
-  if (ts.isIdentifier(node) && checker) {
-    const sym = checker.getSymbolAtLocation(node);
-    const decl = sym?.valueDeclaration;
-    if (decl && (ts.isParameter(decl) || ts.isVariableDeclaration(decl)) && decl.type) {
-      if (decl.type.kind === ts.SyntaxKind.AnyKeyword) return true;
-    }
+  if (ts.isIdentifier(node) && identHasExplicitAny(ts, node)) return true;
+  if (checker) {
+    const type = checker.getTypeAtLocation(node);
+    if (type.flags & ts.TypeFlags.Any) return true;
   }
   return false;
 }
@@ -1124,6 +1215,7 @@ function shouldEscalate(
     let hit = false;
     const visit = (n: ts.Node) => {
       if (ts.isUnionTypeNode(n) && n.types.some((t) => ts.isLiteralTypeNode(t))) hit = true;
+      if (n.kind === ts.SyntaxKind.AnyKeyword) hit = true;
       if (ts.isImportDeclaration(n) && n.moduleSpecifier && ts.isStringLiteral(n.moduleSpecifier)) {
         const spec = n.moduleSpecifier.text;
         if (spec.startsWith("#")) hit = true;
