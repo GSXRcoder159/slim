@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_OK, EXIT_USAGE, SlimExit } from "./exit.ts";
 import { loadProject } from "./project.ts";
+import { loadConfig } from "./config.ts";
 import { analyzePackage } from "./analyze/index.ts";
 import { hashEnvelope, envelopeForDisk } from "./envelope/types.ts";
 import { refusePackage, formatRefuse } from "./scan/refuse.ts";
@@ -13,9 +14,14 @@ export async function runInspect(args: CliArgs): Promise<number> {
     throw new SlimExit(EXIT_USAGE, "usage: slim inspect <pkg>");
   }
   const project = loadProject();
+  const config = loadConfig(project.root);
   const installed = join(project.root, "node_modules", args.pkg);
   const refuse = refusePackage(args.pkg, existsSync(installed) ? installed : null);
-  const env = analyzePackage(project, args.pkg, { allowUnknown: args.allowUnknown });
+  const env = analyzePackage(project, args.pkg, {
+    allowUnknown: args.allowUnknown,
+    include: config.include,
+    ignore: config.ignore,
+  });
   const dir = join(project.root, ".slim", env.package.name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "envelope.json"), JSON.stringify(envelopeForDisk(env), null, 2) + "\n");

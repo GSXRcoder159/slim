@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type ts from "typescript";
 import type { Project } from "../project.ts";
-import { loadTargetTypescript, walkSourceFiles } from "../project.ts";
+import { loadTargetTypescript, walkSourceFiles, filterSourceFiles } from "../project.ts";
 import type {
   CallSite,
   Envelope,
@@ -31,6 +31,7 @@ import { inferHyrum } from "./shapes.ts";
 export interface AnalyzeOptions {
   allowUnknown?: boolean;
   ignore?: string[];
+  include?: string[];
 }
 
 export function analyzePackage(
@@ -39,8 +40,10 @@ export function analyzePackage(
   opts: AnalyzeOptions = {},
 ): Envelope {
   const ts = loadTargetTypescript(project.root);
-  const files = walkSourceFiles(project.root);
-  const ignore = new Set(opts.ignore ?? []);
+  const files = filterSourceFiles(walkSourceFiles(project.root), project.root, {
+    include: opts.include,
+    ignore: opts.ignore,
+  });
   const wanted = wantedSpecifiers(pkg);
 
   const bindings: Binding[] = [];
@@ -65,7 +68,7 @@ export function analyzePackage(
     return sf;
   };
 
-  const walked = files.filter((file) => ![...ignore].some((g) => file.includes(g)));
+  const walked = files;
   const parsedConfig = readTsConfig(ts, project);
   const programCtx = shouldEscalate(ts, project, walked, getSfLite, parsedConfig)
     ? createScopedProgram(ts, project, walked, parsedConfig)
@@ -204,9 +207,10 @@ export function analyzePackage(
 
 export function collectImportSpecifiers(
   project: Project,
+  opts: { include?: string[]; ignore?: string[] } = {},
 ): Map<string, ImportSite[]> {
   const ts = loadTargetTypescript(project.root);
-  const files = walkSourceFiles(project.root);
+  const files = filterSourceFiles(walkSourceFiles(project.root), project.root, opts);
   const map = new Map<string, ImportSite[]>();
   for (const file of files) {
     const text = readFileSync(file, "utf8");
@@ -243,7 +247,12 @@ function detectEnv(project: Project): Envelope["env"] {
     ...project.packageJson.devDependencies,
   };
   const env: Envelope["env"] = ["node"];
-  if (deps["wrangler"] || deps["@cloudflare/workers-types"] || deps["@cloudflare/vitest-pool-workers"]) {
+  if (
+    deps["wrangler"] ||
+    deps["@cloudflare/workers-types"] ||
+    deps["@cloudflare/vitest-pool-workers"] ||
+    existsSync(join(project.root, "wrangler.toml"))
+  ) {
     env.push("worker");
   }
   if (deps["jsdom"] || deps["@testing-library/dom"]) env.push("jsdom");

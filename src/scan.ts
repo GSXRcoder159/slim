@@ -7,6 +7,7 @@ import { loadConfig } from "./config.ts";
 import { collectImportSpecifiers, resolvePackageFamily } from "./analyze/index.ts";
 import { estimatePackageSize, gzipGuess } from "./size/estimate.ts";
 import { refusePackage, BLOAT_PACKAGES } from "./scan/refuse.ts";
+import { lockfileDirectDeps } from "./scan/lockfile-deps.ts";
 import { scoreSlimmable } from "./envelope/slimmable.ts";
 import { ENVELOPE_VERSION, emptyHyrum, envelopeForDisk } from "./envelope/types.ts";
 import type { Envelope } from "./envelope/types.ts";
@@ -32,12 +33,16 @@ export interface ScanReport {
 export function scanProject(cwd = process.cwd()): ScanReport {
   const project = loadProject(cwd);
   const config = loadConfig(project.root);
-  const imports = collectImportSpecifiers(project);
+  const imports = collectImportSpecifiers(project, {
+    include: config.include,
+    ignore: config.ignore,
+  });
   const deps = {
     ...project.packageJson.dependencies,
     ...project.packageJson.optionalDependencies,
   };
-  const names = new Set([...Object.keys(deps ?? {}), ...imports.keys()]);
+  const locked = lockfileDirectDeps(project.root, project.lockfile);
+  const names = new Set([...Object.keys(deps ?? {}), ...imports.keys(), ...locked.keys()]);
   const rows: ScanRow[] = [];
   for (const name of [...names].sort()) {
     if (name.startsWith("@types/")) continue;
@@ -49,8 +54,8 @@ export function scanProject(cwd = process.cwd()): ScanReport {
     const unique = sites.length;
     const size = estimatePackageSize(project.root, name);
     const refuse = refusePackage(name);
-    const version =
-      (deps[name] ?? "").replace(/^[~^>=<\s]+/, "") || "unknown";
+    const fromRange = (deps[name] ?? "").replace(/^[~^>=<\s]+/, "");
+    const version = locked.get(name) ?? (fromRange || "unknown");
     const stubEnv: Envelope = {
       schemaVersion: ENVELOPE_VERSION,
       package: {
@@ -98,7 +103,6 @@ export function scanProject(cwd = process.cwd()): ScanReport {
     if (!refuse && unique > 0 && (BLOAT_PACKAGES.has(name) || (size.minBytes ?? 0) > 20_000)) {
       verdict = slim.verdict === "refuse" ? "refuse" : unique <= 8 ? "slim" : "review";
     }
-    void config;
     rows.push({
       name,
       version,

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
@@ -103,6 +103,30 @@ export function walkSourceFiles(
     }
   }
   return out;
+}
+
+/** Path-substring include/ignore on repo-relative paths. No glob library. */
+export function filterSourceFiles(
+  files: string[],
+  root: string,
+  opts?: { include?: string[]; ignore?: string[] },
+): string[] {
+  const include = (opts?.include ?? []).map(normalizePat).filter(Boolean);
+  const extraIgnore = (opts?.ignore ?? []).map(normalizePat).filter(Boolean);
+  return files.filter((file) => {
+    const rel = relative(root, file).replace(/\\/g, "/");
+    if (extraIgnore.some((g) => pathMatches(rel, g))) return false;
+    if (include.length && !include.some((g) => pathMatches(rel, g))) return false;
+    return true;
+  });
+}
+
+function normalizePat(pattern: string): string {
+  return pattern.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
+}
+
+function pathMatches(rel: string, pattern: string): boolean {
+  return rel === pattern || rel.startsWith(pattern + "/") || rel.includes(pattern);
 }
 
 export function fileUrl(abs: string): string {

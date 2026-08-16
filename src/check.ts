@@ -144,7 +144,11 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
       symbols: Array<{ exportName: string }>;
     };
     const savedNames = new Set(saved.symbols.map((s) => s.exportName));
-    const now = analyzePackage(project, pkg, { allowUnknown: args.allowUnknown });
+    const now = analyzePackage(project, pkg, {
+      allowUnknown: args.allowUnknown,
+      include: config.include,
+      ignore: config.ignore,
+    });
     const grew = now.symbols.filter((s) => !savedNames.has(s.exportName) && s.exportName !== "*");
     const extraUnknowns = now.unknowns.filter((u) => u.widensTo === "refuse");
     if (args.json) {

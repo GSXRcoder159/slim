@@ -161,6 +161,14 @@ test("worker env tag if wrangler present", () => {
   assert.ok(env.env.includes("node"));
 });
 
+test("worker env tag if wrangler.toml present", () => {
+  const dir = mini({ "src/app.ts": `import { get } from "lodash"; get({}, "a");` });
+  writeFileSync(join(dir, "wrangler.toml"), `name = "w"\nmain = "src/app.ts"\n`);
+  const env = analyzePackage(loadProject(dir), "lodash");
+  assert.ok(env.env.includes("worker"));
+  assert.ok(env.env.includes("node"));
+});
+
 test("loadTargetTypescript refuses third-party repo without typescript", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-no-ts-"));
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "other", type: "module" }));
