@@ -25,11 +25,14 @@ export function vitestTraceConfigSource(
   plugins: [slimVitest({ packages: ${JSON.stringify(packages)} })],
 }`;
   if (user) {
-    return `import { mergeConfig } from "vitest/config";
+    return `import { defineConfig, mergeConfig } from "vitest/config";
 import { slimVitest } from ${JSON.stringify(pluginSpecifier)};
 import userConfig from ${JSON.stringify(user)};
 
-export default mergeConfig(userConfig, ${pluginConfig});
+export default defineConfig(async (env) => {
+  const resolved = typeof userConfig === "function" ? await userConfig(env) : userConfig;
+  return mergeConfig(resolved, ${pluginConfig});
+});
 `;
   }
   return `import { slimVitest } from ${JSON.stringify(pluginSpecifier)};

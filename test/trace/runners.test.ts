@@ -112,6 +112,31 @@ test("vitestTraceConfigSource merges user config via mergeConfig", () => {
   assert.match(src, /slimVitest\(\{\s*packages:/);
 });
 
+test("vitestTraceConfigSource wraps user config with defineConfig callback merge", () => {
+  const src = vitestTraceConfigSource(["lodash"], "slim/vitest", {
+    userConfigSpecifier: "../vitest.config.ts",
+    alreadyHasPlugin: false,
+  });
+  assert.match(src, /typeof userConfig === ["']function["']/);
+  assert.match(src, /defineConfig/);
+  assert.match(src, /import \{ defineConfig, mergeConfig \} from ["']vitest\/config["']/);
+  assert.match(src, /export default defineConfig\(async \(env\) =>/);
+});
+
+test("writeVitestTraceConfig merges defineConfig(({ mode }) => …) user configs", () => {
+  const dir = tempPkg({ scripts: { test: "vitest run" }, devDependencies: { vitest: "^3" } });
+  writeFileSync(
+    join(dir, "vitest.config.ts"),
+    `import { defineConfig } from "vitest/config";\nexport default defineConfig(({ mode }) => ({ test: { globals: true } }));\n`,
+  );
+  const src = readFileSync(writeVitestTraceConfig(dir, ["lodash"]), "utf8");
+  assert.match(src, /typeof userConfig === ["']function["']/);
+  assert.match(src, /userConfig\(env\)/);
+  assert.match(src, /defineConfig\(async \(env\) =>/);
+  assert.match(src, /mergeConfig/);
+  assert.match(src, /vitest\.config/);
+});
+
 test("vitestTraceConfigSource does not duplicate slim/vitest plugin", () => {
   const src = vitestTraceConfigSource(["lodash"], "slim/vitest", {
     userConfigSpecifier: "../vitest.config.ts",
