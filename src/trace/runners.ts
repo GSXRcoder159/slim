@@ -1,6 +1,9 @@
-import { readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { vitestTraceConfigSource } from "./vitest.ts";
+
+export { vitestTraceConfigSource };
 
 export type RunnerKind = "node:test" | "vitest" | "jest" | "none";
 
@@ -11,12 +14,13 @@ export interface DetectedRunner {
 }
 
 const JEST_SNIPPET = `// Slim v1 does not wrap Jest.
-// Use moduleNameMapper as a manual escape hatch:
+// Use moduleNameMapper and setupFiles as a manual escape hatch:
 //
 //   moduleNameMapper: {
 //     '^lodash$': '<rootDir>/node_modules/lodash/lodash.js',
 //     '^lodash-es$': '<rootDir>/node_modules/lodash-es/index.js',
-//   }
+//   },
+//   setupFiles: ['<rootDir>/slim-jest-setup.js'],
 //
 // Prefer node:test (--import slim/hooks) or Vitest with the slim/vitest
 // plugin for automatic tracing.`;
@@ -84,4 +88,37 @@ export function traceEnv(packages: string[], outPath: string): NodeJS.ProcessEnv
 
 export function nodeTestPreloadArgs(hookModuleAbsPath: string): string[] {
   return ["--import", pathToFileURL(hookModuleAbsPath).href];
+}
+
+function slimVitestSpecifier(): string {
+  const jsPath = fileURLToPath(new URL("./vitest.js", import.meta.url));
+  const tsPath = fileURLToPath(new URL("./vitest.ts", import.meta.url));
+  if (existsSync(jsPath)) return pathToFileURL(jsPath).href;
+  if (existsSync(tsPath)) return pathToFileURL(tsPath).href;
+  return "slim/vitest";
+}
+
+export function writeVitestTraceConfig(root: string, packages: string[]): string {
+  const dir = join(root, ".slim");
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, "vitest.trace.ts");
+  writeFileSync(path, vitestTraceConfigSource(packages, slimVitestSpecifier()));
+  return path;
+}
+
+export function buildTraceSpawn(
+  runner: DetectedRunner,
+  opts: { hookPath: string; vitestConfigPath?: string },
+): { file: string; args: string[] } | null {
+  if (runner.kind === "jest" || runner.kind === "none" || !runner.command) return null;
+  const parts = runner.command.split(/\s+/).filter(Boolean);
+  const file = parts[0]!;
+  if (runner.kind === "node:test") {
+    return { file, args: [...nodeTestPreloadArgs(opts.hookPath), ...parts.slice(1)] };
+  }
+  if (runner.kind === "vitest") {
+    const extra = opts.vitestConfigPath ? ["--config", opts.vitestConfigPath] : [];
+    return { file, args: [...parts.slice(1), ...extra] };
+  }
+  return { file, args: parts.slice(1) };
 }

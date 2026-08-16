@@ -27,6 +27,7 @@ Replace options:
   --template-only     catalog only, no LLM
   --llm               force LLM even if catalog matches
   --keep-original     do not uninstall the package
+  --no-install        rewrite package.json but skip lockfile refresh
   --allow-flaky       fuzz unseeded RNG packages
   --workers <n>
   --seed <n>
@@ -50,6 +51,7 @@ export interface CliArgs {
   templateOnly: boolean;
   llm: boolean;
   keepOriginal: boolean;
+  noInstall: boolean;
   allowFlaky: boolean;
   workers: number | null;
   seed: number | null;
@@ -81,6 +83,7 @@ export function parseCli(argv: string[]): CliArgs {
       "template-only": { type: "boolean", default: false },
       llm: { type: "boolean", default: false },
       "keep-original": { type: "boolean", default: false },
+      "no-install": { type: "boolean", default: false },
       "allow-flaky": { type: "boolean", default: false },
       workers: { type: "string" },
       seed: { type: "string" },
@@ -102,6 +105,7 @@ export function parseCli(argv: string[]): CliArgs {
     templateOnly: Boolean(values["template-only"]),
     llm: Boolean(values.llm),
     keepOriginal: Boolean(values["keep-original"]),
+    noInstall: Boolean(values["no-install"]),
     allowFlaky: Boolean(values["allow-flaky"]),
     workers: values.workers ? Number(values.workers) : null,
     seed: values.seed ? Number(values.seed) : null,
@@ -126,6 +130,7 @@ function emptyArgs(over: Partial<CliArgs>): CliArgs {
     templateOnly: false,
     llm: false,
     keepOriginal: false,
+    noInstall: false,
     allowFlaky: false,
     workers: null,
     seed: null,

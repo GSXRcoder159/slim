@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -8,6 +8,9 @@ import {
   detectRunner,
   nodeTestPreloadArgs,
   traceEnv,
+  writeVitestTraceConfig,
+  vitestTraceConfigSource,
+  buildTraceSpawn,
 } from "../../src/trace/runners.ts";
 
 function tempPkg(json: unknown): string {
@@ -55,6 +58,7 @@ test("detects jest and returns a v1 snippet, no wrap command", () => {
   assert.equal(r.command, null);
   assert.equal(typeof r.jestSnippet, "string");
   assert.match(r.jestSnippet!, /moduleNameMapper/);
+  assert.match(r.jestSnippet!, /setupFiles/);
   assert.match(r.jestSnippet!, /does not wrap Jest/i);
 });
 
@@ -75,4 +79,45 @@ test("nodeTestPreloadArgs uses --import and a file URL", () => {
   const args = nodeTestPreloadArgs("/abs/hook.js");
   assert.equal(args[0], "--import");
   assert.equal(args[1], pathToFileURL("/abs/hook.js").href);
+});
+
+test("vitestTraceConfigSource default-exports slimVitest plugin wrap", () => {
+  const src = vitestTraceConfigSource(["lodash", "lodash-es"], "slim/vitest");
+  assert.match(src, /export default/);
+  assert.match(src, /slimVitest/);
+  assert.match(src, /plugins:\s*\[\s*slimVitest\(\{\s*packages:/);
+  assert.match(src, /lodash/);
+  assert.match(src, /from ["']slim\/vitest["']/);
+});
+
+test("writeVitestTraceConfig writes .slim/vitest.trace.ts", () => {
+  const dir = tempPkg({ scripts: { test: "vitest run" }, devDependencies: { vitest: "^3" } });
+  const path = writeVitestTraceConfig(dir, ["lodash"]);
+  assert.equal(path, join(dir, ".slim", "vitest.trace.ts"));
+  assert.equal(existsSync(path), true);
+  const src = readFileSync(path, "utf8");
+  assert.match(src, /export default/);
+  assert.match(src, /slimVitest\(\{\s*packages:/);
+  assert.match(src, /lodash/);
+});
+
+test("buildTraceSpawn passes --config to vitest", () => {
+  const spawn = buildTraceSpawn(
+    { kind: "vitest", command: "vitest run" },
+    { hookPath: "/abs/hook.ts", vitestConfigPath: "/proj/.slim/vitest.trace.ts" },
+  );
+  assert.ok(spawn);
+  assert.equal(spawn.file, "vitest");
+  assert.deepEqual(spawn.args, ["run", "--config", "/proj/.slim/vitest.trace.ts"]);
+});
+
+test("buildTraceSpawn preloads node:test hook, not a vitest config", () => {
+  const spawn = buildTraceSpawn(
+    { kind: "node:test", command: "node --test" },
+    { hookPath: "/abs/hook.ts" },
+  );
+  assert.ok(spawn);
+  assert.equal(spawn.file, "node");
+  assert.equal(spawn.args[0], "--import");
+  assert.equal(spawn.args.at(-1), "--test");
 });

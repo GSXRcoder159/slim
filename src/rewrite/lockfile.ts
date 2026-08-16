@@ -1,7 +1,19 @@
 import { execFileSync } from "node:child_process";
 import type { Project } from "../project.ts";
 
-export function refreshLockfile(project: Project): void {
+/** `--no-install` skips lockfile refresh only. `--keep-original` skips uninstall+install. */
+export function shouldRefreshLockfile(opts: {
+  keepOriginal?: boolean;
+  noInstall?: boolean;
+}): boolean {
+  return !opts.keepOriginal && !opts.noInstall;
+}
+
+export function refreshLockfile(
+  project: Project,
+  opts?: { keepOriginal?: boolean; noInstall?: boolean },
+): void {
+  if (opts && !shouldRefreshLockfile(opts)) return;
   const cwd = project.root;
   try {
     if (project.lockfile === "pnpm") {

@@ -13,7 +13,7 @@ import { analyzePackage } from "./analyze/index.ts";
 import { mergeTraces } from "./envelope/merge.ts";
 import { closeEnvelope } from "./envelope/close.ts";
 import { hashEnvelope } from "./envelope/hash.ts";
-import type { Envelope, TraceEvent } from "./envelope/types.ts";
+import type { Envelope, SlimValue, TraceEvent } from "./envelope/types.ts";
 import { refusePackage, formatRefuse } from "./scan/refuse.ts";
 import { estimatePackageSize } from "./size/estimate.ts";
 import { matchCatalog } from "./generate/catalog/index.ts";
@@ -26,11 +26,11 @@ import { loadTargetTypescript } from "./project.ts";
 import { runFuzz, type FuzzReport } from "./fuzz/run.ts";
 import { rewriteProjectImports } from "./rewrite/splice.ts";
 import { rewritePackageJson } from "./rewrite/packagejson.ts";
-import { refreshLockfile } from "./rewrite/lockfile.ts";
+import { refreshLockfile, shouldRefreshLockfile } from "./rewrite/lockfile.ts";
 import { writeEvidence } from "./evidence/report.ts";
 import { emitStandingTests } from "./evidence/emit-tests.ts";
 import { createPullRequest, prBodyFromEvidence } from "./github/pr.ts";
-import { detectRunner, nodeTestPreloadArgs, traceEnv } from "./trace/runners.ts";
+import { detectRunner, writeVitestTraceConfig, buildTraceSpawn, traceEnv } from "./trace/runners.ts";
 import { resolvePackageFamily } from "./analyze/family.ts";
 
 export async function runReplace(args: CliArgs): Promise<number> {
@@ -50,6 +50,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
     env = await maybeTrace(project.root, args.pkg, env);
     env = closeEnvelope(env, { allowUnknown: args.allowUnknown });
   }
+  assertNoPollutionDependence(env.traces);
 
   if (env.slimmable.verdict === "refuse" && !args.force) {
     throw new SlimExit(
@@ -207,6 +208,8 @@ export async function runReplace(args: CliArgs): Promise<number> {
     if (env.package.family === "lodash" && env.package.name !== "lodash-es") {
       rewritePackageJson(project.packageJsonPath, "lodash-es");
     }
+  }
+  if (shouldRefreshLockfile({ keepOriginal: args.keepOriginal, noInstall: args.noInstall })) {
     refreshLockfile(project);
   }
 
@@ -248,11 +251,10 @@ export async function runReplace(args: CliArgs): Promise<number> {
   writeManifest(project.root, env, slimPath);
   writeSlimJson(project.root, env, slimPath);
 
-  mkdirSync(join(project.root, ".slim", env.package.name), { recursive: true });
-  writeFileSync(
-    join(project.root, ".slim", env.package.name, "envelope.json"),
-    JSON.stringify(env, null, 2) + "\n",
-  );
+  const pkgSlimDir = join(project.root, ".slim", env.package.name);
+  mkdirSync(pkgSlimDir, { recursive: true });
+  writeFileSync(join(pkgSlimDir, "envelope.json"), JSON.stringify(env, null, 2) + "\n");
+  writeTracesMeta(pkgSlimDir);
 
   process.stdout.write(
     `wrote ${relative(project.root, slimPath)}  (${replacementBytes} B, hash ${hashEnvelope(env).slice(0, 12)}…)\n`,
@@ -260,6 +262,10 @@ export async function runReplace(args: CliArgs): Promise<number> {
   process.stdout.write(`fuzz cases=${report.cases} comparisons=${report.comparisons} timerCases=${report.timerCases}\n`);
   process.stdout.write("EVIDENCE, NOT PROOF — see .slim/" + env.package.name + "/evidence.md\n");
   if (changed.length) process.stdout.write(`rewrote ${changed.length} import files\n`);
+
+  if (shouldRunMergeGate(args)) {
+    runMergeGate(project.root, config.testCommand);
+  }
 
   if (!args.noPr) {
     const pr = createPullRequest({
@@ -271,6 +277,88 @@ export async function runReplace(args: CliArgs): Promise<number> {
     if (pr.url) process.stdout.write(pr.url + "\n");
   }
   return EXIT_OK;
+}
+
+export function shouldRunMergeGate(opts: { dryRun: boolean }): boolean {
+  return !opts.dryRun;
+}
+
+export function runMergeGate(root: string, testCommand: string | null): void {
+  let cmd = testCommand?.trim() || null;
+  if (!cmd) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+        scripts?: Record<string, string>;
+      };
+      cmd = pkg.scripts?.test?.trim() || null;
+    } catch {
+      cmd = null;
+    }
+  }
+  if (!cmd) return;
+  const parts = cmd.split(/\s+/).filter(Boolean);
+  const r = spawnSync(parts[0]!, parts.slice(1), {
+    cwd: root,
+    encoding: "utf8",
+    stdio: "inherit",
+  });
+  if (r.status !== 0) {
+    throw new SlimExit(EXIT_FAIL, `merge gate failed: tests exited ${r.status ?? "signal"}`);
+  }
+}
+
+export function writeTracesMeta(pkgDir: string): void {
+  mkdirSync(pkgDir, { recursive: true });
+  writeFileSync(join(pkgDir, "traces.meta.json"), JSON.stringify({ uploaded: false }) + "\n");
+}
+
+const PROTO = "__proto__";
+
+function slimContainsProto(v: SlimValue | SlimValue[] | undefined): boolean {
+  if (!v) return false;
+  if (Array.isArray(v)) return v.some((item) => slimContainsProto(item));
+  switch (v.t) {
+    case "str":
+      return v.v.includes(PROTO);
+    case "arr":
+      return v.v.some((item) => slimContainsProto(item));
+    case "obj":
+      return v.keys.includes(PROTO) || Object.values(v.v).some((item) => slimContainsProto(item));
+    case "map":
+      return v.v.some(([k, val]) => slimContainsProto(k) || slimContainsProto(val));
+    case "set":
+      return v.v.some((item) => slimContainsProto(item));
+    default:
+      return false;
+  }
+}
+
+function isDefinedResult(v: SlimValue | undefined): boolean {
+  return v != null && v.t !== "undef" && v.t !== "null";
+}
+
+function resultHasProtoKey(v: SlimValue | undefined): boolean {
+  if (!v) return false;
+  if (v.t === "obj") return v.keys.includes(PROTO) || slimContainsProto(v);
+  return slimContainsProto(v);
+}
+
+export function assertNoPollutionDependence(traces: TraceEvent[]): void {
+  for (const t of traces) {
+    if (t.symbol !== "get" && t.symbol !== "set") continue;
+    if (!slimContainsProto(t.args) && !slimContainsProto(t.thisArg)) continue;
+    const mutated = (t.mutatedArgIndexes?.length ?? 0) > 0;
+    const pollutedGet = t.symbol === "get" && isDefinedResult(t.result);
+    const pollutedSet = t.symbol === "set" && resultHasProtoKey(t.result);
+    if (!mutated && !pollutedGet && !pollutedSet) continue;
+    throw new SlimExit(
+      EXIT_FAIL,
+      `prototype pollution: traces show ${t.symbol} depending on __proto__ ` +
+        `(original returned a polluted object or mutated Object.prototype). ` +
+        `Slim replacements are hardened and will not reproduce this. ` +
+        `Remove __proto__ paths from runtime usage or do not replace this package.`,
+    );
+  }
 }
 
 function fileBase(name: string): string {
@@ -334,20 +422,23 @@ async function maybeTrace(root: string, pkg: string, env: Envelope): Promise<Env
     );
     return env;
   }
-  const outPath = join(root, ".slim", env.package.name, "traces.jsonl");
-  mkdirSync(dirname(outPath), { recursive: true });
+  const pkgDir = join(root, ".slim", env.package.name);
+  const outPath = join(pkgDir, "traces.jsonl");
+  mkdirSync(pkgDir, { recursive: true });
   writeFileSync(outPath, "");
+  writeTracesMeta(pkgDir);
   const hook = join(dirname(fileURLToPath(import.meta.url)), "trace", "hook.ts");
   const fam = resolvePackageFamily(pkg);
   const packages = [pkg, env.package.name, fam?.name, fam?.family].filter(Boolean) as string[];
   if (fam?.family === "lodash") packages.push("lodash", "lodash-es");
-  const envVars = traceEnv([...new Set(packages)], outPath);
-  const cmd = runner.command;
-  const parts = cmd.split(/\s+/);
-  const extra =
-    runner.kind === "node:test" ? nodeTestPreloadArgs(hook) : [];
+  const uniq = [...new Set(packages)];
+  const envVars = traceEnv(uniq, outPath);
+  const vitestConfigPath =
+    runner.kind === "vitest" ? writeVitestTraceConfig(root, uniq) : undefined;
+  const spawn = buildTraceSpawn(runner, { hookPath: hook, vitestConfigPath });
+  if (!spawn) return env;
   process.stderr.write(`tracing via ${runner.kind}…\n`);
-  const r = spawnSync(parts[0]!, [...extra, ...parts.slice(1)], {
+  const r = spawnSync(spawn.file, spawn.args, {
     cwd: root,
     env: envVars,
     encoding: "utf8",

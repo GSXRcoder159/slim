@@ -37,7 +37,18 @@ test("parseCli --allow-flaky", () => {
   assert.equal(a.allowFlaky, true);
 });
 
+test("parseCli --no-install", () => {
+  const a = parseCli(["replace", "lodash", "--no-install"]);
+  assert.equal(a.noInstall, true);
+  const b = parseCli(["replace", "lodash"]);
+  assert.equal(b.noInstall, false);
+});
+
 test("help text names evidence not proof", () => {
   assert.match(helpText(), /Evidence, not proof/i);
   assert.match(helpText(), /slim replace/);
+});
+
+test("help text documents --no-install", () => {
+  assert.match(helpText(), /--no-install/);
 });

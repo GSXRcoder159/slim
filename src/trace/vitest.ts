@@ -6,6 +6,16 @@ import { matchesTracedUrl, packageFromUrl } from "./hook.ts";
 
 export { wrapExports };
 
+/** Source for `.slim/vitest.trace.ts` used only for the TRACE run. */
+export function vitestTraceConfigSource(packages: string[], pluginSpecifier: string): string {
+  return `import { slimVitest } from ${JSON.stringify(pluginSpecifier)};
+
+export default {
+  plugins: [slimVitest({ packages: ${JSON.stringify(packages)} })],
+};
+`;
+}
+
 export type SlimVitestPlugin = {
   name: "slim-vitest";
   enforce?: "pre";

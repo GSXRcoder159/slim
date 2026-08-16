@@ -3,7 +3,8 @@ dist/
 *.tsbuildinfo
 .tmp.mjs
 fixtures/*/node_modules/
-/.slim/
+.slim/**/traces.jsonl
+.slim/**/traces/
 
 .DS_Store
 coverage/
