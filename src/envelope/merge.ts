@@ -1,4 +1,53 @@
-import type { Envelope, TraceEvent } from "./types.ts";
+import type { Envelope, HyrumFlags, SlimValue, TraceEvent } from "./types.ts";
+import { emptyHyrum } from "./types.ts";
+
+export function hyrumFromTraces(traces: TraceEvent[]): Partial<HyrumFlags> {
+  const h: Partial<HyrumFlags> = {};
+  for (const t of traces) {
+    if (t.threw?.message) h.errorMessage = true;
+    if (t.mutatedArgIndexes?.length) h.mutation = true;
+    for (const v of t.args) walkSlim(v, h);
+    if (t.result) walkSlim(t.result, h);
+    if (t.thisArg) walkSlim(t.thisArg, h);
+  }
+  return h;
+}
+
+function walkSlim(v: SlimValue, h: Partial<HyrumFlags>, depth = 0): void {
+  if (depth > 24) return;
+  if (v.t === "num") {
+    if (v.v === "NaN") h.nan = true;
+    if (v.v === "-0") h.signedZero = true;
+  }
+  if (v.t === "arr") {
+    if (v.holes.length) h.sparseArray = true;
+    for (const el of v.v) walkSlim(el, h, depth + 1);
+  }
+  if (v.t === "obj") {
+    if (v.keys.length >= 2) h.keyOrder = true;
+    for (const k of v.keys) {
+      const child = v.v[k];
+      if (child) walkSlim(child, h, depth + 1);
+    }
+  }
+  if (v.t === "map") {
+    for (const [k, val] of v.v) {
+      walkSlim(k, h, depth + 1);
+      walkSlim(val, h, depth + 1);
+    }
+  }
+  if (v.t === "set") {
+    for (const el of v.v) walkSlim(el, h, depth + 1);
+  }
+}
+
+function orHyrum(base: HyrumFlags, extra: Partial<HyrumFlags>): HyrumFlags {
+  const out: HyrumFlags = { ...emptyHyrum(), ...base };
+  for (const [k, val] of Object.entries(extra) as Array<[keyof HyrumFlags, boolean | undefined]>) {
+    if (val) (out as Record<string, boolean | undefined>)[k] = true;
+  }
+  return out;
+}
 
 export function mergeTraces(env: Envelope, traces: TraceEvent[]): Envelope {
   const bySymbol = new Map<string, TraceEvent[]>();
@@ -8,16 +57,17 @@ export function mergeTraces(env: Envelope, traces: TraceEvent[]): Envelope {
     bySymbol.set(t.symbol, list);
   }
   const symbols = env.symbols.map((s) => {
-    const hits = bySymbol.get(s.exportName) ?? [];
-    const tracedIds = new Set<string>();
-    for (const c of s.callSites) {
-      if (hits.length) tracedIds.add(c.id);
-    }
+    const hits = [
+      ...(bySymbol.get(s.exportName) ?? []),
+      ...traces.filter((t) => t.symbol.startsWith(s.exportName + ".")),
+    ];
+    const uniqueHits = [...new Set(hits)];
     return {
       ...s,
+      hyrum: orHyrum(s.hyrum, hyrumFromTraces(uniqueHits)),
       coverage: {
         callSitesStatic: s.callSites.length,
-        callSitesTraced: hits.length ? s.callSites.length : s.coverage.callSitesTraced,
+        callSitesTraced: uniqueHits.length ? s.callSites.length : s.coverage.callSitesTraced,
       },
     };
   });
