@@ -4,7 +4,7 @@ import type { CliArgs } from "./cli.ts";
 import { EXIT_OK, EXIT_USAGE, SlimExit } from "./exit.ts";
 import { loadProject } from "./project.ts";
 import { analyzePackage } from "./analyze/index.ts";
-import { hashEnvelope } from "./envelope/hash.ts";
+import { hashEnvelope, envelopeForDisk } from "./envelope/types.ts";
 import { refusePackage, formatRefuse } from "./scan/refuse.ts";
 import { EXIT_REFUSED } from "./exit.ts";
 
@@ -18,7 +18,7 @@ export async function runInspect(args: CliArgs): Promise<number> {
   const env = analyzePackage(project, args.pkg, { allowUnknown: args.allowUnknown });
   const dir = join(project.root, ".slim", env.package.name);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "envelope.json"), JSON.stringify(env, null, 2) + "\n");
+  writeFileSync(join(dir, "envelope.json"), JSON.stringify(envelopeForDisk(env), null, 2) + "\n");
 
   if (args.json) {
     process.stdout.write(JSON.stringify({ envelope: env, hash: hashEnvelope(env) }, null, 2) + "\n");

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type ts from "typescript";
 import type { Project } from "../project.ts";
 import { loadTargetTypescript, walkSourceFiles } from "../project.ts";
@@ -132,7 +132,7 @@ export function analyzePackage(
 
   for (const file of walked) {
     const sf = getSf(file);
-    walkUses(ts, sf, bindings, wanted, callSites, unknowns, resultMembers, programCtx?.checker);
+    walkUses(ts, sf, bindings, wanted, callSites, unknowns, resultMembers, extra, programCtx?.checker);
   }
 
   const byExport = new Map<string, CallSite[]>();
@@ -305,11 +305,11 @@ function scriptKind(ts: typeof import("typescript"), file: string): ts.ScriptKin
   return ts.ScriptKind.TS;
 }
 
-function locOf(sf: ts.SourceFile, node: ts.Node): SourceLoc {
+function locOf(sf: ts.SourceFile, node: ts.Node, root: string): SourceLoc {
   const start = sf.getLineAndCharacterOfPosition(node.getStart(sf));
   const end = sf.getLineAndCharacterOfPosition(node.getEnd());
   return {
-    file: sf.fileName,
+    file: toProjectRel(sf.fileName, root),
     line: start.line + 1,
     column: start.character + 1,
     endLine: end.line + 1,
@@ -342,14 +342,14 @@ function collectImports(
           names.push("default");
           defaultLocal = clause.name.text;
           pendingNames.push({ local: clause.name.text, imported: "default" });
-          pushPkgBinding(bindings, sf, node, specifier, clause.name.text, "default", "default");
+          pushPkgBinding(bindings, sf, node, specifier, clause.name.text, "default", "default", extra);
         }
         if (clause.namedBindings) {
           if (ts.isNamespaceImport(clause.namedBindings)) {
             kind = "namespace";
             names.push("*");
             namespaceLocal = clause.namedBindings.name.text;
-            pushPkgBinding(bindings, sf, node, specifier, namespaceLocal, "*", "namespace");
+            pushPkgBinding(bindings, sf, node, specifier, namespaceLocal, "*", "namespace", extra);
           } else if (ts.isNamedImports(clause.namedBindings)) {
             kind = "named";
             const map = new Map<string, string>();
@@ -358,7 +358,7 @@ function collectImports(
               names.push(imported);
               pendingNames.push({ local: el.name.text, imported });
               map.set(imported, imported);
-              pushPkgBinding(bindings, sf, node, specifier, el.name.text, imported, "named");
+              pushPkgBinding(bindings, sf, node, specifier, el.name.text, imported, "named", extra);
             }
             if (!specifier.startsWith(".") && !specifier.startsWith("#") && parseSpecifier(specifier)) {
               extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: map });
@@ -367,7 +367,7 @@ function collectImports(
         }
       }
       if (specifierMatches(specifier, wanted)) {
-        imports.push({ loc: locOf(sf, node), specifier, kind, names });
+        imports.push({ loc: locOf(sf, node, extra.root), specifier, kind, names });
       }
       if (namespaceLocal && parseSpecifier(specifier) && !specifier.startsWith(".")) {
         extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: "*" });
@@ -407,7 +407,7 @@ function collectImports(
       }
       if (specifierMatches(specifier, wanted)) {
         imports.push({
-          loc: locOf(sf, node),
+          loc: locOf(sf, node, extra.root),
           specifier,
           kind: node.exportClause ? "named" : "namespace",
           names: names.length ? names : ["*"],
@@ -427,7 +427,7 @@ function collectImports(
         const parent = node.parent;
         if (specifierMatches(specifier, wanted)) {
           imports.push({
-            loc: locOf(sf, node),
+            loc: locOf(sf, node, extra.root),
             specifier,
             kind: "cjs-require",
             names: ["default"],
@@ -439,7 +439,7 @@ function collectImports(
             imported: "default",
             specifier,
             kind: "cjs-require",
-            loc: locOf(sf, node),
+            loc: locOf(sf, node, extra.root),
           });
         } else if (ts.isVariableDeclaration(parent) && ts.isObjectBindingPattern(parent.name)) {
           const map = new Map<string, string>();
@@ -455,7 +455,7 @@ function collectImports(
               imported,
               specifier,
               kind: "cjs-require",
-              loc: locOf(sf, node),
+              loc: locOf(sf, node, extra.root),
             });
           }
           extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: map });
@@ -470,7 +470,7 @@ function collectImports(
           const specifier = arg.text;
           if (specifierMatches(specifier, wanted)) {
             imports.push({
-              loc: locOf(sf, node),
+              loc: locOf(sf, node, extra.root),
               specifier,
               kind: "default",
               names: ["default"],
@@ -483,7 +483,7 @@ function collectImports(
               imported: "*",
               specifier,
               kind: "default",
-              loc: locOf(sf, node),
+              loc: locOf(sf, node, extra.root),
             });
           }
         }
@@ -503,10 +503,11 @@ function pushPkgBinding(
   local: string,
   imported: string,
   kind: ImportKind,
+  extra: CollectExtra,
 ): void {
   if (specifier.startsWith(".") || specifier.startsWith("#")) return;
   if (!parseSpecifier(specifier)) return;
-  bindings.push({ local, imported, specifier, kind, loc: locOf(sf, node) });
+  bindings.push({ local, imported, specifier, kind, loc: locOf(sf, node, extra.root) });
 }
 
 function queueLocalOrAlias(
@@ -534,7 +535,7 @@ function queueLocalOrAlias(
   }
   if (!resolved) return;
   extra.localPending.push({
-    loc: locOf(sf, node),
+    loc: locOf(sf, node, extra.root),
     consumerFile: sf.fileName,
     resolvedFile: normPath(resolved),
     names,
@@ -658,11 +659,12 @@ function walkUses(
   callSites: CallSite[],
   unknowns: UnknownSite[],
   resultMembers: Map<string, Set<string>>,
+  extra: CollectExtra,
   checker?: ts.TypeChecker,
 ): void {
-  const nf = normPath(sf.fileName);
+  const nf = toProjectRel(sf.fileName, extra.root);
   const bindByLocal = bindings.filter(
-    (b) => normPath(b.loc.file) === nf && specifierMatches(b.specifier, wanted),
+    (b) => b.loc.file === nf && specifierMatches(b.specifier, wanted),
   );
   const localSet = new Map(bindByLocal.map((b) => [b.local, b]));
   const resultScopes: Array<Map<string, CallSite>> = [new Map()];
@@ -681,7 +683,7 @@ function walkUses(
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
       unknowns.push({
         id: uid("eval", sf, node),
-        loc: locOf(sf, node),
+        loc: locOf(sf, node, extra.root),
         kind: "eval",
         detail: "eval()",
         widensTo: "refuse",
@@ -691,7 +693,7 @@ function walkUses(
     if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Function") {
       unknowns.push({
         id: uid("fn", sf, node),
-        loc: locOf(sf, node),
+        loc: locOf(sf, node, extra.root),
         kind: "eval",
         detail: "new Function",
         widensTo: "refuse",
@@ -704,7 +706,7 @@ function walkUses(
       if (arg && !ts.isStringLiteral(arg) && !ts.isNoSubstitutionTemplateLiteral(arg)) {
         unknowns.push({
           id: uid("dynimp", sf, node),
-          loc: locOf(sf, node),
+          loc: locOf(sf, node, extra.root),
           kind: "dynamic-specifier",
           detail: "import(non-literal)",
           widensTo: "refuse",
@@ -719,7 +721,7 @@ function walkUses(
         if (info.dynamic) {
           unknowns.push({
             id: uid("dyn", sf, node),
-            loc: locOf(sf, node),
+            loc: locOf(sf, node, extra.root),
             kind: "dynamic-member",
             detail: `computed member on ${info.exportName}`,
             widensTo: "all-exports",
@@ -735,7 +737,7 @@ function walkUses(
           const thisBinding = thisOf(ts, node.expression);
           const site: CallSite = {
             id: uid("call", sf, node),
-            loc: locOf(sf, node),
+            loc: locOf(sf, node, extra.root),
             exportName: info.exportName,
             memberPath: info.memberPath,
             thisBinding,
@@ -754,7 +756,7 @@ function walkUses(
           if (spread) {
             unknowns.push({
               id: uid("spread", sf, node),
-              loc: locOf(sf, node),
+              loc: locOf(sf, node, extra.root),
               kind: "spread-args",
               detail: `spread arguments on ${info.exportName}`,
               widensTo: "full-signature",
@@ -765,7 +767,7 @@ function walkUses(
             if (!argIsTsAny(ts, a, checker)) continue;
             unknowns.push({
               id: uid("any", sf, a),
-              loc: locOf(sf, a),
+              loc: locOf(sf, a, extra.root),
               kind: "ts-any",
               detail: `any-typed argument to ${info.exportName}`,
               widensTo: "full-signature",
@@ -779,7 +781,7 @@ function walkUses(
         if (escaped) {
           unknowns.push({
             id: uid("esc", sf, arg),
-            loc: locOf(sf, arg),
+            loc: locOf(sf, arg, extra.root),
             kind: "binding-escape",
             detail: `${escaped} passed as callback (iteratee arity 3 assumed for get)`,
             widensTo: "full-signature",
@@ -788,7 +790,7 @@ function walkUses(
           if (escaped === "get" || escaped.endsWith(".get")) {
             callSites.push({
               id: uid("mapget", sf, arg),
-              loc: locOf(sf, arg),
+              loc: locOf(sf, arg, extra.root),
               exportName: "get",
               memberPath: ["get"],
               thisBinding: { kind: "unknown", reason: "iteratee" },
@@ -831,7 +833,7 @@ function walkUses(
         if (arg && !ts.isStringLiteral(arg) && !ts.isNumericLiteral(arg)) {
           unknowns.push({
             id: uid("dynm", sf, node),
-            loc: locOf(sf, node),
+            loc: locOf(sf, node, extra.root),
             kind: "dynamic-member",
             detail: `computed access ${obj.text}[...]`,
             widensTo: "all-exports",
@@ -1064,6 +1066,29 @@ function exportNameOf(b: Binding): string {
   const fam = resolvePackageFamily(b.specifier);
   if (fam?.subpath) return fam.subpath.split("/")[0]!;
   return b.imported === "default" ? "default" : "*";
+}
+
+function toProjectRel(file: string, root: string): string {
+  const posix = (p: string) => p.split(sep).join("/");
+  const relOf = (from: string, to: string): string | null => {
+    const rel = relative(from, to);
+    if (rel.startsWith("..") || isAbsolute(rel)) return null;
+    return posix(rel);
+  };
+  const absFile = isAbsolute(file) ? file : resolve(root, file);
+  const absRoot = resolve(root);
+  let hit = relOf(absRoot, absFile);
+  if (hit) return hit;
+  try {
+    hit = relOf(realpathSync(absRoot), realpathSync(absFile));
+    if (hit) return hit;
+  } catch {
+    /* ignore */
+  }
+  const rootPosix = posix(absRoot).replace(/\/$/, "");
+  const filePosix = posix(absFile);
+  if (filePosix.startsWith(rootPosix + "/")) return filePosix.slice(rootPosix.length + 1);
+  return posix(absFile);
 }
 
 function normPath(p: string): string {

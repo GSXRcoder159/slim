@@ -9,7 +9,7 @@ Differential fuzzing over the inferred envelope is **strong evidence, not proof*
 - Call sites: 6
 - Unknowns: 0
 - Catalog: lodash.get, lodash.debounce
-- Envelope hash: `95e946ccb025a9932dda151b9d5e0e9d0d32563b942e29a757eb046ebe36187f`
+- Envelope hash: `fe74a3f657a2a7695b4617c90eca6e9dfa2e7d973be6552f96f67ea55ceb9d03`
 
 ## 2. Byte delta
 
@@ -24,18 +24,19 @@ The cap that bites Workers is **1s startup parse**, not gzip 3MB/10MB (those lim
 
 ## 5. Fuzz
 
-- cases: 635805
-- comparisons: 635825
+- cases: 627300
+- comparisons: 627320
 - timerCases: 10
 - traces replayed: 0
 - disagreements: 0
 - wall: 8007 ms
-- seed: 990766132
+- seed: 1936762039
 
 ## 6. Coverage holes
 
 - debounce options (maxWait/leading) never observed; taxonomy still run in Slim CI
 - debounce.cancel never accessed at call sites
+- zero traces replayed
 
 ## 7. Upstream pin
 

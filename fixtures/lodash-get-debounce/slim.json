@@ -1,10 +1,10 @@
 {
-  "outDir": "src/slim",
   "replacements": {
     "lodash": {
       "version": "4.17.21",
       "envelope": ".slim/lodash/envelope.json",
       "module": "src/slim/lodash.ts"
     }
-  }
+  },
+  "outDir": "src/slim"
 }

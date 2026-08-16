@@ -8,7 +8,7 @@ import { collectImportSpecifiers, resolvePackageFamily } from "./analyze/index.t
 import { estimatePackageSize, gzipGuess } from "./size/estimate.ts";
 import { refusePackage, BLOAT_PACKAGES } from "./scan/refuse.ts";
 import { scoreSlimmable } from "./envelope/slimmable.ts";
-import { ENVELOPE_VERSION, emptyHyrum } from "./envelope/types.ts";
+import { ENVELOPE_VERSION, emptyHyrum, envelopeForDisk } from "./envelope/types.ts";
 import type { Envelope } from "./envelope/types.ts";
 
 export interface ScanRow {
@@ -162,7 +162,7 @@ export function writeEnvelope(root: string, pkg: string, env: Envelope): string 
   const dir = join(root, ".slim", pkg);
   mkdirSync(dir, { recursive: true });
   const p = join(dir, "envelope.json");
-  writeFileSync(p, JSON.stringify(env, null, 2) + "\n");
+  writeFileSync(p, JSON.stringify(envelopeForDisk(env), null, 2) + "\n");
   return p;
 }
 

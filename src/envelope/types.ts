@@ -191,6 +191,11 @@ export function hashEnvelope(env: Envelope): string {
     .digest("hex");
 }
 
+/** Persist envelopes without traces (those live in traces.jsonl). */
+export function envelopeForDisk(env: Envelope): Envelope {
+  return { ...env, traces: [] };
+}
+
 function canonical(value: unknown): string {
   return JSON.stringify(sortKeys(value));
 }

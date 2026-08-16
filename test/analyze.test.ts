@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, writeFileSync, mkdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, mkdirSync, symlinkSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -375,6 +375,23 @@ test("closed static envelope reason includes no-traces phrase", () => {
   );
 });
 
+test("loc.file paths are relative to the project root", () => {
+  const root = mini({
+    "src/app.ts": `import { get } from "lodash"; export const v = get({ a: 1 }, "a");`,
+  });
+  const env = analyzePackage(loadProject(root), "lodash");
+  const files = [
+    ...env.imports.map((i) => i.loc.file),
+    ...env.symbols.flatMap((s) => s.callSites.map((c) => c.loc.file)),
+  ];
+  assert.ok(files.length > 0, "expected import and call-site locs");
+  for (const file of files) {
+    assert.equal(file.startsWith("/"), false, `absolute loc.file: ${file}`);
+    assert.equal(file.includes(root), false, `loc.file contains tmp root: ${file}`);
+    assert.doesNotMatch(file, /\\/, `non-posix loc.file: ${file}`);
+  }
+});
+
 test("inspect writes envelope under package.name not family", async () => {
   const root = mini({
     "src/app.ts": `import { get } from "lodash-es"; export const v = get({ a: 1 }, "a");`,
@@ -385,6 +402,15 @@ test("inspect writes envelope under package.name not family", async () => {
     await runInspect(parseCli(["inspect", "lodash-es", "--json"]));
     assert.ok(existsSync(join(root, ".slim", "lodash-es", "envelope.json")));
     assert.equal(existsSync(join(root, ".slim", "lodash", "envelope.json")), false);
+    const saved = JSON.parse(readFileSync(join(root, ".slim", "lodash-es", "envelope.json"), "utf8")) as {
+      traces?: unknown[];
+      imports: Array<{ loc: { file: string } }>;
+    };
+    assert.deepEqual(saved.traces, []);
+    for (const imp of saved.imports) {
+      assert.equal(imp.loc.file.startsWith("/"), false, imp.loc.file);
+      assert.equal(imp.loc.file.includes(root), false, imp.loc.file);
+    }
   } finally {
     process.chdir(cwd);
   }

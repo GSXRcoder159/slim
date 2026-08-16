@@ -40,6 +40,28 @@ test("golden fixture ships tree-shaken slim lodash without the package", () => {
   assert.equal(pkg.dependencies?.lodash, undefined);
 });
 
+test("golden fixture envelope has relative locs, no traces, no bind.placeholder", () => {
+  const raw = readFileSync(join(root, ".slim/lodash/envelope.json"), "utf8");
+  assert.equal(raw.includes("bind.placeholder"), false);
+  const env = JSON.parse(raw) as {
+    traces?: unknown[];
+    imports: Array<{ loc: { file: string } }>;
+    symbols: Array<{ callSites: Array<{ loc: { file: string } }> }>;
+  };
+  assert.ok(!env.traces || env.traces.length === 0);
+  const files = [
+    ...env.imports.map((i) => i.loc.file),
+    ...env.symbols.flatMap((s) => s.callSites.map((c) => c.loc.file)),
+  ];
+  assert.ok(files.length > 0);
+  for (const file of files) {
+    assert.equal(file.startsWith("/"), false, file);
+    assert.doesNotMatch(file, /\\/);
+  }
+  const src = readFileSync(join(root, "src/slim/lodash.ts"), "utf8");
+  assert.ok(src.split("\n").length < 280, `lodash.ts is ${src.split("\n").length} lines`);
+});
+
 test("dynamic fixture is not closed", () => {
   const r = join(import.meta.dirname, "../fixtures/lodash-dynamic-refuse");
   const env = analyzePackage(loadProject(r), "lodash");

@@ -13,6 +13,7 @@ import { analyzePackage } from "./analyze/index.ts";
 import { mergeTraces } from "./envelope/merge.ts";
 import { closeEnvelope } from "./envelope/close.ts";
 import { hashEnvelope } from "./envelope/hash.ts";
+import { envelopeForDisk } from "./envelope/types.ts";
 import type { Envelope, SlimValue, TraceEvent } from "./envelope/types.ts";
 import { refusePackage, formatRefuse } from "./scan/refuse.ts";
 import { estimatePackageSize } from "./size/estimate.ts";
@@ -253,7 +254,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
 
   const pkgSlimDir = join(project.root, ".slim", env.package.name);
   mkdirSync(pkgSlimDir, { recursive: true });
-  writeFileSync(join(pkgSlimDir, "envelope.json"), JSON.stringify(env, null, 2) + "\n");
+  writeFileSync(join(pkgSlimDir, "envelope.json"), JSON.stringify(envelopeForDisk(env), null, 2) + "\n");
   writeTracesMeta(pkgSlimDir);
 
   process.stdout.write(
