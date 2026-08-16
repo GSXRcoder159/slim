@@ -1,13 +1,36 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, writeFileSync, mkdirSync, symlinkSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, mkdirSync, symlinkSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadProject, loadTargetTypescript } from "../src/project.ts";
 import { analyzePackage, resolvePackageFamily } from "../src/analyze/index.ts";
 import { parseCli } from "../src/cli.ts";
 import { runInspect } from "../src/inspect.ts";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+
+function walkAnalyzeTs(dir: string): string[] {
+  const out: string[] = [];
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    const st = statSync(p);
+    if (st.isDirectory()) out.push(...walkAnalyzeTs(p));
+    else if (name.endsWith(".ts")) out.push(p);
+  }
+  return out;
+}
+
+test("src/analyze TypeScript files stay under 450 lines", () => {
+  const over: string[] = [];
+  for (const file of walkAnalyzeTs(join(ROOT, "src/analyze"))) {
+    const lines = readFileSync(file, "utf8").split("\n").length;
+    if (lines >= 450) over.push(`${file.slice(ROOT.length + 1)} (${lines} lines)`);
+  }
+  assert.deepEqual(over, [], `analyze files over 450 lines: ${over.join(", ")}`);
+});
 
 function linkTypescript(root: string) {
   const tsDir = dirname(createRequire(import.meta.url).resolve("typescript/package.json"));
