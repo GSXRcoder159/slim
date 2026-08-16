@@ -1,0 +1,434 @@
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
+import type { CliArgs } from "../cli.ts";
+import type { SlimConfig } from "../config.ts";
+import { ENVELOPE_VERSION, emptyHyrum, hashEnvelope, type Envelope } from "../envelope/types.ts";
+import { EXIT_FAIL, SlimExit } from "../exit.ts";
+import { assembleCatalogModule } from "../generate/assemble.ts";
+import { matchCatalog } from "../generate/catalog/index.ts";
+import { slimRoot } from "../generate/guard.ts";
+import { llmConfigFromEnv, generateWithLlm, type LlmConfig } from "../generate/llm.ts";
+import { loadPublicApi } from "../generate/public-api.ts";
+import { assertValidGenerated } from "../generate/validate.ts";
+import { runFuzz, type FuzzReport } from "../fuzz/run.ts";
+import { loadTargetTypescript } from "../project.ts";
+import { resolvePackageFamily } from "../analyze/family.ts";
+import type { OsvVuln } from "./osv.ts";
+import type { NpmLatest } from "./npm.ts";
+import type { CreatePrOpts, PrResult } from "../github/pr.ts";
+import type { Exposure } from "./slice.ts";
+
+export interface UpstreamFinding {
+  package: string;
+  pinned: string;
+  latest: string;
+  id: string;
+  summary?: string;
+  details?: string;
+  exposure: Exposure;
+}
+
+export interface UpstreamDeps {
+  cwd?: string;
+  queryOsv?: (name: string, version: string) => Promise<OsvVuln[]>;
+  npmLatest?: (name: string) => Promise<NpmLatest>;
+  assembleCatalogModule?: (env: Envelope) => string | null;
+  matchCatalog?: typeof matchCatalog;
+  runFuzz?: (opts: {
+    original?: Record<string, Function>;
+    replacement?: Record<string, Function>;
+    origModule?: string;
+    slimModule?: string;
+    envelope: Envelope;
+    budgetMs: number;
+    seed: number;
+    workers?: number;
+  }) => Promise<FuzzReport>;
+  generateWithLlm?: (
+    envelope: Envelope,
+    publicApi: string,
+    counterexamples: string[],
+    cfg: LlmConfig,
+  ) => Promise<{ source: string; promptHash: string }>;
+  llmConfigFromEnv?: (env?: NodeJS.ProcessEnv) => LlmConfig | null;
+  createPullRequest?: (opts: CreatePrOpts) => Promise<PrResult>;
+  installUpstream?: (name: string, version: string) => Promise<string | null>;
+}
+
+export interface ManifestReplacement {
+  version: string;
+  envelopeHash: string;
+  symbols: string[];
+  module: string;
+}
+
+export interface ApplyUpstreamFixOpts {
+  root: string;
+  pkg: string;
+  rec: ManifestReplacement;
+  findings: UpstreamFinding[];
+  args: CliArgs;
+  config: SlimConfig;
+}
+
+export interface ApplyUpstreamFixResult {
+  regenerated: boolean;
+  usedCatalog: boolean;
+  fuzzed: boolean;
+  hardenedTest: string | null;
+}
+
+export async function applyUpstreamFix(
+  opts: ApplyUpstreamFixOpts,
+  deps: UpstreamDeps = {},
+): Promise<ApplyUpstreamFixResult> {
+  const env = loadEnvelope(opts.root, opts.pkg, opts.rec);
+  const symbols = usedSymbols(env, opts.rec);
+  const catalog = (deps.matchCatalog ?? matchCatalog)(opts.pkg, symbols);
+  const llmCfg = (deps.llmConfigFromEnv ?? llmConfigFromEnv)();
+  const assemble = deps.assembleCatalogModule ?? assembleCatalogModule;
+  const genLlm = deps.generateWithLlm ?? generateWithLlm;
+  const fuzzImpl = deps.runFuzz ?? runFuzz;
+
+  let source: string | null = null;
+  let usedCatalog = false;
+
+  if (catalog.missing.length === 0 && catalog.matched.length) {
+    source = assemble(env);
+    if (!source) {
+      throw new SlimExit(EXIT_FAIL, `catalog matched but assemble failed for ${opts.pkg}`);
+    }
+    usedCatalog = true;
+  } else if (llmCfg) {
+    const pub = loadPublicApi(opts.root, opts.pkg);
+    const abstracts = advisoryAbstracts(opts.findings);
+    const gen = await genLlm(env, pub, abstracts, llmCfg);
+    source = gen.source;
+    const ts = loadTs(opts.root);
+    assertValidGenerated(ts, source, env);
+  }
+
+  let fuzzed = false;
+  let replacement: Record<string, Function> | null = null;
+
+  if (source) {
+    const ts = loadTs(opts.root);
+    const moduleAbs = join(opts.root, opts.rec.module);
+    mkdirSync(dirname(moduleAbs), { recursive: true });
+    const tmpSlim = moduleAbs + ".tmp.mjs";
+    writeFileSync(
+      tmpSlim,
+      ts.transpileModule(source, {
+        compilerOptions: {
+          module: ts.ModuleKind.ESNext,
+          target: ts.ScriptTarget.ES2022,
+          moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        },
+        fileName: moduleAbs,
+      }).outputText,
+    );
+    replacement = await loadReplacementFns(tmpSlim);
+
+    const latest = opts.findings[0]?.latest ?? opts.rec.version;
+    const original = await loadOracle(opts, deps, latest, symbols);
+
+    const origForFuzz = original ?? (deps.runFuzz ? {} : null);
+    const replForFuzz = replacement ?? (deps.runFuzz ? {} : null);
+    if (origForFuzz && replForFuzz) {
+      const budgetMs = opts.args.budgetMs ?? Math.min(opts.config.budgetMs, 5_000);
+      const report: FuzzReport = await fuzzImpl({
+        original: origForFuzz,
+        replacement: replForFuzz,
+        envelope: env,
+        budgetMs,
+        seed: 1,
+        workers: 1,
+      });
+      fuzzed = true;
+      const disagreements = usedCatalog
+        ? report.disagreements.filter((d) => !isProtoPollutionCase(d))
+        : report.disagreements;
+      if (disagreements.length) {
+        const first = disagreements[0]!;
+        const msg = usedCatalog
+          ? `catalog disagreement (Slim bug, not LLM-patched): ${first.symbol} ${first.reason}`
+          : `fuzz disagreements remain: ${first.symbol} ${first.reason}`;
+        try {
+          rmSync(tmpSlim);
+        } catch {
+          /* keep */
+        }
+        throw new SlimExit(EXIT_FAIL, msg);
+      }
+    }
+
+    writeFileSync(moduleAbs, source);
+    try {
+      rmSync(tmpSlim);
+    } catch {
+      /* keep */
+    }
+    updateManifestHash(opts.root, opts.pkg, opts.rec, hashEnvelope(env));
+  }
+
+  if (replacement && (typeof replacement.get === "function" || typeof replacement.set === "function")) {
+    assertHardenedGetSet(replacement);
+  }
+
+  const hardenedTest = emitHardenedGetSetTest({
+    root: opts.root,
+    moduleRel: opts.rec.module,
+  });
+
+  return {
+    regenerated: Boolean(source),
+    usedCatalog,
+    fuzzed,
+    hardenedTest,
+  };
+}
+
+export function advisoryAbstracts(findings: UpstreamFinding[]): string[] {
+  const lines = [
+    "Advisory abstracts (clean-room; OriginalSourceGuard: never ingest original .js):",
+  ];
+  for (const f of findings) {
+    lines.push([f.id, f.summary, f.details].filter(Boolean).join("\n"));
+  }
+  return lines;
+}
+
+export function assertHardenedGetSet(fns: Record<string, Function>): void {
+  const proto = Object.prototype as { polluted?: unknown };
+  const before = Object.prototype.hasOwnProperty("polluted");
+  delete proto.polluted;
+  try {
+    if (typeof fns.set === "function") {
+      fns.set({}, "__proto__.polluted", true);
+      fns.set({}, ["__proto__", "polluted"], true);
+    }
+    if (typeof fns.get === "function") {
+      fns.get({ a: 1 }, "__proto__.polluted");
+    }
+    if (Object.prototype.hasOwnProperty("polluted") || proto.polluted !== undefined) {
+      throw new SlimExit(EXIT_FAIL, "hardened get/set allowed Object.prototype pollution");
+    }
+    if (before !== Object.prototype.hasOwnProperty("polluted")) {
+      throw new SlimExit(EXIT_FAIL, "hardened get/set allowed Object.prototype pollution");
+    }
+  } finally {
+    delete proto.polluted;
+  }
+}
+
+export function emitHardenedGetSetTest(opts: { root: string; moduleRel: string }): string {
+  const absMod = join(opts.root, opts.moduleRel);
+  const dir = dirname(absMod);
+  const base = absMod.replace(/\.(ts|js|mjs|cjs)$/, "");
+  const file = `${base}.hardened.test.ts`;
+  mkdirSync(dir, { recursive: true });
+  const spec = `./${absMod.slice(dir.length + 1)}`;
+  writeFileSync(
+    file,
+    `import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as slim from ${JSON.stringify(spec)};
+
+test("hardened get/set ignore __proto__ and do not pollute Object.prototype", () => {
+  const get = (slim as { get?: Function }).get;
+  const set = (slim as { set?: Function }).set;
+  if (typeof get !== "function" && typeof set !== "function") return;
+  const proto = Object.prototype as { polluted?: unknown };
+  const before = Object.prototype.hasOwnProperty("polluted");
+  delete proto.polluted;
+  try {
+    if (typeof set === "function") {
+      set({}, "__proto__.polluted", true);
+      set({}, ["__proto__", "polluted"], true);
+    }
+    if (typeof get === "function") {
+      get({ a: 1 }, "__proto__.polluted");
+    }
+    assert.equal(Object.prototype.hasOwnProperty("polluted"), before);
+    assert.equal(proto.polluted, undefined);
+    assert.equal(({} as { polluted?: unknown }).polluted, undefined);
+  } finally {
+    delete proto.polluted;
+  }
+});
+`,
+  );
+  return file;
+}
+
+export async function installUpstreamInTemp(name: string, version: string): Promise<string | null> {
+  const spec = `${name}@${version}`;
+  const view = spawnSync("npm", ["view", spec, "version"], {
+    encoding: "utf8",
+    timeout: 20_000,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (view.status !== 0) return null;
+  const dir = mkdtempSync(join(tmpdir(), "slim-up-oracle-"));
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ name: "slim-upstream-oracle", private: true }),
+  );
+  const inst = spawnSync(
+    "npm",
+    ["install", spec, "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", dir],
+    { encoding: "utf8", timeout: 60_000, stdio: ["ignore", "pipe", "pipe"] },
+  );
+  if (inst.status !== 0) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+    } catch {
+      /* keep */
+    }
+    return null;
+  }
+  return dir;
+}
+
+function usedSymbols(env: Envelope, rec: ManifestReplacement): string[] {
+  const fromEnv = env.symbols
+    .map((s) => s.exportName)
+    .filter((n) => n !== "*" && n !== "default" && n !== "(scan)");
+  return fromEnv.length ? fromEnv : rec.symbols.filter((n) => n !== "*" && n !== "(scan)");
+}
+
+function loadEnvelope(root: string, pkg: string, rec: ManifestReplacement): Envelope {
+  const p = join(root, ".slim", pkg, "envelope.json");
+  if (existsSync(p)) {
+    try {
+      const raw = JSON.parse(readFileSync(p, "utf8")) as Envelope;
+      if (raw?.package?.name && Array.isArray(raw.symbols)) return raw;
+    } catch {
+      /* synthesize */
+    }
+  }
+  return synthesizeEnvelope(pkg, rec);
+}
+
+function synthesizeEnvelope(pkg: string, rec: ManifestReplacement): Envelope {
+  const fam = resolvePackageFamily(pkg);
+  const family = fam?.family ?? pkg;
+  const symbols = rec.symbols.filter((n) => n !== "*" && n !== "(scan)");
+  return {
+    schemaVersion: ENVELOPE_VERSION,
+    package: { name: pkg, version: rec.version, family, subpath: fam?.subpath ?? "" },
+    env: ["node"],
+    imports: [],
+    symbols: symbols.map((exportName) => ({
+      exportName,
+      packages: [],
+      callSites: [],
+      resultMembers: [],
+      hyrum: emptyHyrum(),
+      coverage: { callSitesStatic: 1, callSitesTraced: 0 },
+    })),
+    unknowns: [],
+    traces: [],
+    closure: {
+      confidence: "closed",
+      readyToGenerate: true,
+      untracedCallSiteIds: [],
+      reason: "no traces — generators are static-shape plus catalog mutations, not your runtime distribution",
+    },
+    slimmable: { score: 80, verdict: "slim", blockers: [], reasons: [] },
+    clock: symbols.includes("debounce") || symbols.includes("throttle"),
+    cryptoRandom: false,
+  };
+}
+
+function loadTs(root: string): typeof import("typescript") {
+  try {
+    return loadTargetTypescript(root);
+  } catch {
+    return loadTargetTypescript(slimRoot());
+  }
+}
+
+async function loadOracle(
+  opts: ApplyUpstreamFixOpts,
+  deps: UpstreamDeps,
+  latest: string,
+  symbols: string[],
+): Promise<Record<string, Function> | null> {
+  const install = deps.installUpstream ?? installUpstreamInTemp;
+  try {
+    const dir = await install(opts.pkg, latest);
+    if (dir) {
+      const loaded = loadOriginalFromRoot(dir, opts.pkg, symbols);
+      if (loaded) return loaded;
+    }
+  } catch {
+    /* fall back to pinned / project install */
+  }
+  return loadOriginalFromRoot(opts.root, opts.pkg, symbols);
+}
+
+function loadOriginalFromRoot(
+  root: string,
+  pkg: string,
+  symbols: string[],
+): Record<string, Function> | null {
+  try {
+    const req = createRequire(join(root, "package.json"));
+    const mod = req(pkg) as Record<string, unknown>;
+    return pickFns(mod, symbols);
+  } catch {
+    return null;
+  }
+}
+
+function pickFns(mod: Record<string, unknown>, symbols: string[]): Record<string, Function> | null {
+  const out: Record<string, Function> = {};
+  const def = mod.default as Record<string, unknown> | undefined;
+  for (const s of symbols) {
+    const fn = (mod[s] ?? def?.[s]) as unknown;
+    if (typeof fn === "function") out[s] = fn as Function;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+async function loadReplacementFns(absJs: string): Promise<Record<string, Function> | null> {
+  try {
+    const href = pathToFileURL(absJs).href + `?slim=${Date.now()}`;
+    const mod = (await import(href)) as Record<string, unknown>;
+    return pickFns(mod, Object.keys(mod)) ?? pickFns(mod, ["get", "set", "default"]);
+  } catch {
+    return null;
+  }
+}
+
+function isProtoPollutionCase(d: { args: unknown[]; reason: string; symbol?: string }): boolean {
+  const blob = `${d.symbol ?? ""} ${d.reason} ${JSON.stringify(d.args)}`;
+  return /__proto__|prototype.?pollution|constructor\.prototype/i.test(blob);
+}
+
+function updateManifestHash(
+  root: string,
+  pkg: string,
+  rec: ManifestReplacement,
+  envelopeHash: string,
+): void {
+  const p = join(root, ".slim", "manifest.json");
+  rec.envelopeHash = envelopeHash;
+  if (!existsSync(p)) return;
+  try {
+    const man = JSON.parse(readFileSync(p, "utf8")) as {
+      replacements: Record<string, ManifestReplacement>;
+    };
+    if (man.replacements?.[pkg]) {
+      man.replacements[pkg] = { ...man.replacements[pkg], envelopeHash };
+      writeFileSync(p, JSON.stringify(man, null, 2) + "\n");
+    }
+  } catch {
+    /* keep */
+  }
+}
