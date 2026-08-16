@@ -5,6 +5,9 @@ import { EXIT_OK, EXIT_ENV } from "./exit.ts";
 import type { CliArgs } from "./cli.ts";
 import { loadProject } from "./project.ts";
 
+export const CJS_HOOKS_LINE =
+  "cjs hooks      recommend Node >= 22.22.3 (documented CJS sync-hook fixes)";
+
 export interface DoctorReport {
   node: string;
   nodeOk: boolean;
@@ -12,6 +15,7 @@ export interface DoctorReport {
   gh: boolean;
   typescript: boolean;
   git: boolean;
+  dirtyTree: boolean;
   lockfile: string | null;
   issues: string[];
 }
@@ -30,7 +34,10 @@ function hasBin(bin: string): boolean {
   }
 }
 
-export function collectDoctor(cwd = process.cwd()): DoctorReport {
+export function collectDoctor(
+  cwd = process.cwd(),
+  opts?: { porcelain?: string },
+): DoctorReport {
   const issues: string[] = [];
   const majorMinor = process.versions.node.split(".").map(Number);
   const nodeOk =
@@ -63,6 +70,22 @@ export function collectDoctor(cwd = process.cwd()): DoctorReport {
   } catch {
     issues.push("not a git work tree");
   }
+  let dirtyTree = false;
+  if (git) {
+    try {
+      const porcelain =
+        opts?.porcelain !== undefined
+          ? opts.porcelain
+          : execFileSync("git", ["status", "--porcelain"], {
+              cwd,
+              encoding: "utf8",
+            });
+      dirtyTree = porcelain.trim().length > 0;
+    } catch {
+      dirtyTree = false;
+    }
+    if (dirtyTree) issues.push("working tree is dirty");
+  }
   let lockfile: string | null = null;
   try {
     lockfile = loadProject(cwd).lockfile;
@@ -76,9 +99,16 @@ export function collectDoctor(cwd = process.cwd()): DoctorReport {
     gh,
     typescript,
     git,
+    dirtyTree,
     lockfile,
     issues,
   };
+}
+
+export function doctorExitCode(report: DoctorReport, strict: boolean): number {
+  if (!report.nodeOk || !report.registerHooks) return EXIT_ENV;
+  if (strict && report.dirtyTree) return EXIT_ENV;
+  return EXIT_OK;
 }
 
 export async function runDoctor(args: CliArgs): Promise<number> {
@@ -92,6 +122,7 @@ export async function runDoctor(args: CliArgs): Promise<number> {
     process.stdout.write(`typescript      ${report.typescript ? "yes" : "NO"}\n`);
     process.stdout.write(`git             ${report.git ? "yes" : "NO"}\n`);
     process.stdout.write(`lockfile        ${report.lockfile ?? "none"}\n`);
+    process.stdout.write(`${CJS_HOOKS_LINE}\n`);
     if (report.issues.length) {
       process.stderr.write("\nissues:\n");
       for (const i of report.issues) process.stderr.write(`  - ${i}\n`);
@@ -99,5 +130,5 @@ export async function runDoctor(args: CliArgs): Promise<number> {
       process.stdout.write("\nready.\n");
     }
   }
-  return report.nodeOk && report.registerHooks ? EXIT_OK : EXIT_ENV;
+  return doctorExitCode(report, args.strict);
 }

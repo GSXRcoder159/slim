@@ -44,24 +44,24 @@ EXIT 0
 
 $ slim replace lodash
 ERR envelope         get, debounce
-ERR generate         vendor/slim/lodash.js  (67 lines)
+ERR generate         src/slim/lodash.js  (67 lines)
 ERR oracle fuzz      200/200 match lodash@4.17.21
 ERR standing tests   12 pass
 ERR project tests    npm test  (3 pass)
 ERR imports          src/handler.ts
 ERR package.json     - lodash
 OUT
-OUT   vendor/slim/lodash.js
-OUT   vendor/slim/lodash.test.js
-OUT   vendor/slim/lodash.meta.json
-OUT   vendor/slim/lodash.evidence.md
-OUT   vendor/slim/lodash.LICENSE
+OUT   src/slim/lodash.js
+OUT   src/slim/lodash.test.js
+OUT   src/slim/lodash.meta.json
+OUT   src/slim/lodash.evidence.md
+OUT   src/slim/lodash.LICENSE
 OUT
 OUT Open PR 'slim/replace-lodash'? [Y/n] y
 ERR branch  slim/replace-lodash
 OUT pr      https://github.com/acme/edge-api/pull/842
 OUT
-OUT Read vendor/slim/lodash.evidence.md (~90s) and vendor/slim/lodash.js
+OUT Read src/slim/lodash.evidence.md (~90s) and src/slim/lodash.js
 OUT then merge. This is evidence, not proof.
 EXIT 0
 
@@ -104,7 +104,7 @@ $ slim doctor
 OUT node      22.11.0  ok (>= 20.12)
 OUT git       ok
 OUT gh        WARN  not on PATH; slim replace will write a commit and print the gh command
-OUT slices    vendor/slim/lodash
+OUT slices    src/slim/lodash
 OUT watch     ok  .github/workflows/slim-watch.yml
 OUT config    none (defaults)
 EXIT 0

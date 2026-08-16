@@ -6,11 +6,10 @@
     "node": ">=22.18.0"
   },
   "scripts": {
-    "test": "node --experimental-strip-types --test src/index.test.ts"
+    "test": "node --experimental-strip-types --test src/index.test.ts",
+    "slim:evidence": "node --experimental-strip-types --test src/slim/lodash.test.ts"
   },
-  "dependencies": {
-    "lodash": "4.17.21"
-  },
+  "dependencies": {},
   "devDependencies": {
     "typescript": "^5.9.2"
   }

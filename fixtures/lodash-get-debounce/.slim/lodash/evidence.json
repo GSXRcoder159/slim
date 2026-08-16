@@ -1,0 +1,41 @@
+{
+  "slogan": "EVIDENCE, NOT PROOF",
+  "package": {
+    "name": "lodash",
+    "version": "4.17.21",
+    "family": "lodash",
+    "subpath": ""
+  },
+  "envelopeHash": "95e946ccb025a9932dda151b9d5e0e9d0d32563b942e29a757eb046ebe36187f",
+  "symbols": [
+    "get",
+    "debounce"
+  ],
+  "callSites": 6,
+  "unknowns": 0,
+  "byteDelta": {
+    "originalMin": 71000,
+    "replacement": 6981,
+    "gzipOriginal": 25560
+  },
+  "fuzz": {
+    "cases": 635805,
+    "comparisons": 635825,
+    "timerCases": 10,
+    "tracesReplayed": 0,
+    "wallMs": 8007,
+    "seed": 990766132,
+    "disagreements": 0
+  },
+  "coverageHoles": [
+    "debounce options (maxWait/leading) never observed; taxonomy still run in Slim CI",
+    "debounce.cancel never accessed at call sites"
+  ],
+  "residualRisk": [
+    "Differential fuzzing over the inferred envelope is strong evidence, not proof. Unobserved call shapes can still disagree.",
+    "No runtime traces. Generators are static-shape plus catalog mutations, not your runtime distribution.",
+    "Timer taxonomy is sampled, not exhaustive of every interleaving.",
+    "Upstream may patch bugs outside this slice; slim upstream watches advisories for used symbols."
+  ],
+  "revert": "git revert the Slim PR, or restore the dependency in package.json and delete src/slim/<pkg>.ts"
+}

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import momentOracle from "moment";
 import { createMoment, moment } from "../../src/generate/catalog/moment.ts";
 
 describe("moment catalog", () => {
@@ -81,5 +82,29 @@ describe("moment catalog", () => {
     const m = moment(new Date(2020, 0, 1));
     const ret = m.add(1, "days");
     assert.equal(ret, m);
+  });
+
+  it("agrees with moment on public format/parse/unix/valueOf/toDate/add/isValid", () => {
+    const d = new Date(Date.UTC(2020, 0, 15, 12, 30, 45, 123));
+    const slim = moment(d);
+    const real = momentOracle(d);
+    assert.equal(slim.format("YYYY-MM-DD HH:mm:ss.SSS"), real.format("YYYY-MM-DD HH:mm:ss.SSS"));
+    assert.equal(slim.unix(), real.unix());
+    assert.equal(slim.valueOf(), real.valueOf());
+    assert.equal(slim.toDate().getTime(), real.toDate().getTime());
+    assert.equal(slim.isValid(), real.isValid());
+
+    const iso = "2020-01-15T12:30:45.123Z";
+    assert.equal(moment(iso).valueOf(), momentOracle(iso).valueOf());
+    assert.equal(moment(iso).isValid(), momentOracle(iso).isValid());
+
+    const slimAdd = moment(new Date(2020, 0, 15));
+    const realAdd = momentOracle(new Date(2020, 0, 15));
+    slimAdd.add(2, "days");
+    realAdd.add(2, "days");
+    assert.equal(slimAdd.format("YYYY-MM-DD"), realAdd.format("YYYY-MM-DD"));
+
+    assert.equal(moment("not a date").isValid(), momentOracle("not a date").isValid());
+    assert.equal(moment("not a date").format("YYYY"), momentOracle("not a date").format("YYYY"));
   });
 });

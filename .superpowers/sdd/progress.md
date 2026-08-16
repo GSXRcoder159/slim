@@ -21,7 +21,7 @@
 - Task 2 Fuzzer wiring: complete (commits dedfa02..bc72dfc, review clean; minor: unused loadOriginal in replace.ts)
 - Task 3 Assemble / allowlist / standing tests: complete (commits bc72dfc..8953842, review clean; minor: computed globalThis["console"] still slips)
 - Task 4 Replace pipeline: complete (commits 8953842..367d0ed, review clean; minor: defineConfig callback merge, bracket proto paths)
-- Task 5 GitHub PR REST + exit 4: complete
-- Task 6 Check + Actions + release: pending
-- Task 7 Upstream regenerate: pending
-- Task 8 Doctor, oracles, golden fixture, docs: pending
+- Task 5 GitHub PR REST + exit 4: complete (commits 367d0ed..cda96dd, review clean; minor: unquoted stderr invocation)
+- Task 6 Check + Actions + release: complete (commits cda96dd..c3f2458, review clean; minor: Node 22 vs 22.18 check)
+- Task 7 Upstream regenerate: complete (commits c3f2458..cbe461e, review clean; minor: oracle kind not labeled in evidence)
+- Task 8 Doctor, oracles, golden fixture, docs: complete

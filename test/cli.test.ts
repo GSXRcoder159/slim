@@ -52,3 +52,11 @@ test("help text names evidence not proof", () => {
 test("help text documents --no-install", () => {
   assert.match(helpText(), /--no-install/);
 });
+
+test("parseCli doctor --strict", () => {
+  const a = parseCli(["doctor", "--strict"]);
+  assert.equal(a.command, "doctor");
+  assert.equal(a.strict, true);
+  const b = parseCli(["doctor"]);
+  assert.equal(b.strict, false);
+});

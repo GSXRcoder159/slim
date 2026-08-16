@@ -1,11 +1,14 @@
 node_modules/
 dist/
+.tmp/
 *.tsbuildinfo
 .tmp.mjs
 fixtures/*/node_modules/
 .slim/**/traces.jsonl
 .slim/**/traces/
 .slim/vitest.trace.ts
+fixtures/*/.slim/**/traces.jsonl
+fixtures/*/.slim/**/traces/
 
 .DS_Store
 coverage/

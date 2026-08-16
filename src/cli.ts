@@ -14,7 +14,7 @@ Usage:
   slim check
   slim upstream [--pr]
   slim watch                  (alias of upstream)
-  slim doctor
+  slim doctor [--strict]
 
 Replace options:
   --budget-ms <n>     fuzz wall clock (default 30000, 300000 if CI=1)
@@ -32,6 +32,9 @@ Replace options:
   --workers <n>
   --seed <n>
   --max-attempts <n>  LLM repair loop (default 3)
+
+Doctor options:
+  --strict            dirty working tree exits 4 (default: list it, still 0 if Node/hooks ok)
 
 Exit codes: 0 ok  1 fail  2 usage  3 refused  4 environment
 `;
@@ -57,6 +60,7 @@ export interface CliArgs {
   seed: number | null;
   maxAttempts: number;
   help: boolean;
+  strict: boolean;
 }
 
 export function parseCli(argv: string[]): CliArgs {
@@ -88,6 +92,7 @@ export function parseCli(argv: string[]): CliArgs {
       workers: { type: "string" },
       seed: { type: "string" },
       "max-attempts": { type: "string" },
+      strict: { type: "boolean", default: false },
     },
   });
   return {
@@ -111,6 +116,7 @@ export function parseCli(argv: string[]): CliArgs {
     seed: values.seed ? Number(values.seed) : null,
     maxAttempts: values["max-attempts"] ? Number(values["max-attempts"]) : 3,
     help: Boolean(values.help),
+    strict: Boolean(values.strict),
   };
 }
 
@@ -136,6 +142,7 @@ function emptyArgs(over: Partial<CliArgs>): CliArgs {
     seed: null,
     maxAttempts: 3,
     help: false,
+    strict: false,
     ...over,
   };
 }

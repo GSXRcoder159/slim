@@ -83,7 +83,7 @@ slim/
   action/
     check/action.yml
     bloat/action.yml
-  vendor/slim/                 # dogfood: only if Slim ever takes a fat dep. Today: empty, gitkeep
+  src/slim/                 # dogfood: only if Slim ever takes a fat dep. Today: empty, gitkeep
   docs/
     dx.md
     packages.md
@@ -142,19 +142,18 @@ If someone proposes adding `chalk`, `ora`, `commander`, `zod`, `inquirer`, or Ty
 
 Look for, in order, in `--cwd`: `slim.json`, `slim.config.json`. No `package.json#slim` in v1.
 
-Zero-config is the default. A repo with only `vendor/slim/*.meta.json` is fully operational.
+Zero-config is the default. A repo with only `src/slim/*.meta.json` is fully operational.
 
 Allowed fields (and no others — unknown key = doctor/check warning, not a silent ignore in v1; `replace` refuses to run with unknown keys so we don’t typo `fuzzIteration`):
 
 | Field | Default | Why it exists |
 | --- | --- | --- |
-| `dir` | `vendor/slim` | Slices have to live somewhere commitable |
+| `outDir` | `src/slim` | Slices have to live somewhere commitable |
+| `budgetMs` | `30000` (`300000` if `CI=1`) | Fuzz wall clock |
 | `include` | gitignore-aware whole repo | Monorepos that only want `apps/edge/**` |
 | `ignore` | `[]` | Generated clients that fake call sites |
 | `testCommand` | detect `npm test` / skip | Project tests after replace |
-| `fuzzIterations` | `200` | CI time vs oracle confidence |
-| `pr` | `true` | Friday default is a PR |
-| `watch.failOn` | `slice-exposed` | Don’t page the team for `_.template` when you don’t call it |
+| `replacements` | `{}` | Written by `replace`; `check` reads recorded slices |
 
 That is the whole file. No telemetry, org, token, registry, or “model” fields.
 
@@ -163,13 +162,13 @@ Minimal user file, only when they need it:
 ```json
 {
   "$schema": "https://unpkg.com/slim/slim.schema.json",
-  "dir": "vendor/slim",
-  "testCommand": "npm test -- --run",
-  "watch": { "failOn": "slice-exposed" }
+  "outDir": "src/slim",
+  "budgetMs": 30000,
+  "testCommand": "npm test -- --run"
 }
 ```
 
-Slice **identity** is not in slim.json. It is `vendor/slim/<pkg>.meta.json` next to the code the human reads.
+Slice **identity** is not in slim.json. It is `.slim/<pkg>/envelope.json` plus the module under `src/slim/`.
 
 ---
 
@@ -179,7 +178,7 @@ Slice **identity** is not in slim.json. It is `vendor/slim/<pkg>.meta.json` next
 
 Apache-2.0 for Slim the tool: patent grant, NOTICE, corporate-friendly for a thing that writes code into your tree.
 
-**Slices are not Apache by default.** Each `vendor/slim/<pkg>.LICENSE` is a copy of the upstream license (MIT for lodash, etc.). `NOTICE` in Slim’s repo says generated files in *user* repos remain under upstream terms, and synthesize-mode still attributes the oracle.
+**Slices are not Apache by default.** Each `src/slim/<pkg>.LICENSE` is a copy of the upstream license (MIT for lodash, etc.). `NOTICE` in Slim’s repo says generated files in *user* repos remain under upstream terms, and synthesize-mode still attributes the oracle.
 
 MIT for the CLI is the fallback if Apache friction shows up in npm comments. Do not dual-license in v1; pick Apache-2.0.
 

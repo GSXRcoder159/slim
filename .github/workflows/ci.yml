@@ -21,5 +21,8 @@ jobs:
         run: |
           npm install
           node --experimental-strip-types ../../src/main.ts inspect lodash
+      - name: fixture check
+        working-directory: fixtures/lodash-get-debounce
+        run: node --experimental-strip-types ../../src/main.ts check
       - name: n-gram similarity gate
         run: node --experimental-strip-types scripts/similarity-gate.ts

@@ -1,4 +1,4 @@
-# Evidence: lodash@4.17.21 → vendor/slim/lodash.js
+# Evidence: lodash@4.17.21 → src/slim/lodash.js
 
 **EVIDENCE, NOT PROOF.** Slim compared a new 87-line file to lodash on random inputs
 and on your call sites. You still read the file. Merge only if you accept the residual
@@ -17,14 +17,14 @@ risk below.
 
 ## What we wrote
 
-Read this: **`vendor/slim/lodash.js`** (67 lines).
+Read this: **`src/slim/lodash.js`** (67 lines).
 
 | File | Role |
 | --- | --- |
-| `vendor/slim/lodash.js` | slice |
-| `vendor/slim/lodash.test.js` | standing tests (`node --test`) |
-| `vendor/slim/lodash.meta.json` | envelope + hashes + upstream hints |
-| `vendor/slim/lodash.LICENSE` | MIT, from lodash |
+| `src/slim/lodash.js` | slice |
+| `src/slim/lodash.test.js` | standing tests (`node --test`) |
+| `src/slim/lodash.meta.json` | envelope + hashes + upstream hints |
+| `src/slim/lodash.LICENSE` | MIT, from lodash |
 
 Imports in `src/handler.ts` now point at the slice. `lodash` removed from package.json.
 
@@ -74,4 +74,4 @@ and opens a human-review PR.
 
 ## Verdict
 
-Merge if you accept residual risk. Read `vendor/slim/lodash.js` first.
+Merge if you accept residual risk. Read `src/slim/lodash.js` first.

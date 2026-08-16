@@ -33,7 +33,7 @@ Usage:
       --no-commit        Write files, don't git commit
       --dry-run          Show the envelope and plan, write nothing
       --fuzz-iterations <n>
-      --out <dir>        Default: vendor/slim
+      --out <dir>        Default: src/slim
 
 Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz failed.
       3 Slim refuses this envelope. 4 missing gh/git when PR required.
@@ -47,7 +47,7 @@ Usage:
 
       --update-envelope  Rewrite call-site list if it grew, then fail
 
-No network. Empty vendor/slim exits 0.
+No network. Empty src/slim exits 0.
 Example:  slim check
 ------------------------------------------------------------------------
 slim watch — see if upstream advisories/releases touch your slice

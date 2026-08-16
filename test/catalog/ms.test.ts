@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import msOracle from "ms";
 import ms from "../../src/generate/catalog/ms.ts";
 
 describe("ms", () => {
@@ -51,5 +52,36 @@ describe("ms", () => {
 
   it("rejects strings longer than 100 characters", () => {
     assert.throws(() => ms(`${"1".repeat(101)}d`), { name: "Error" });
+  });
+
+  it("agrees with ms on the public duration table", () => {
+    const parseCases = [
+      "2 days",
+      "1d",
+      "10h",
+      "2.5 hrs",
+      "2h",
+      "1m",
+      "5s",
+      "1y",
+      "100",
+      "-3 days",
+      "-1h",
+      "-200",
+    ];
+    for (const input of parseCases) {
+      assert.equal(ms(input), msOracle(input), input);
+    }
+    const stringifyCases: Array<[number, { long?: boolean } | undefined]> = [
+      [60000, undefined],
+      [2 * 60000, undefined],
+      [-3 * 60000, undefined],
+      [60000, { long: true }],
+      [2 * 60000, { long: true }],
+      [-3 * 60000, { long: true }],
+    ];
+    for (const [n, opts] of stringifyCases) {
+      assert.equal(ms(n, opts), msOracle(n, opts), `${n} ${JSON.stringify(opts)}`);
+    }
   });
 });

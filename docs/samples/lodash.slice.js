@@ -1,4 +1,4 @@
-// vendor/slim/lodash.js
+// src/slim/lodash.js
 // Slice of lodash@4.17.21 for this repo. Evidence: lodash.evidence.md
 // License: MIT (lodash). See lodash.LICENSE.
 //

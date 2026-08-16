@@ -4,6 +4,7 @@
  * Original Slim MIME map for the common web types a typical envelope needs.
  * Not the mime-db encyclopedia; unknown types return false.
  */
+// ponytail: envelope-driven mime-db later
 
 const EXT_TO_TYPE: Record<string, string> = {
   html: "text/html",

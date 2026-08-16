@@ -1,0 +1,13 @@
+{
+  "replacements": {
+    "lodash": {
+      "version": "4.17.21",
+      "envelopeHash": "95e946ccb025a9932dda151b9d5e0e9d0d32563b942e29a757eb046ebe36187f",
+      "symbols": [
+        "get",
+        "debounce"
+      ],
+      "module": "src/slim/lodash.ts"
+    }
+  }
+}

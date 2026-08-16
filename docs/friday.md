@@ -6,7 +6,7 @@ You ship a Worker. `lodash` is in `package.json` because two call sites were con
 slim doctor
 slim scan
 slim inspect lodash
-slim replace lodash --no-pr   # skip gh if you want to read the diff first
+slim replace lodash --no-pr --no-install   # skip gh / lockfile refresh to read the diff first
 ```
 
 Read, in order:

@@ -2,15 +2,25 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://unpkg.com/slim/slim.schema.json",
   "title": "slim.json",
-  "description": "Optional. Zero-config default is vendor/slim + gitignore-aware scan.",
+  "description": "Optional. Zero-config default is src/slim + gitignore-aware scan.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
-    "dir": {
+    "outDir": {
       "type": "string",
-      "default": "vendor/slim",
-      "description": "Where slices, tests, meta, evidence, and LICENSE copies live."
+      "default": "src/slim",
+      "description": "Where generated slice modules and standing tests live."
+    },
+    "budgetMs": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Fuzz wall clock in milliseconds. Default 30000, or 300000 if CI=1."
+    },
+    "testCommand": {
+      "type": ["string", "null"],
+      "default": null,
+      "description": "Run after replace and during check. null = detect script 'test' in package.json, else skip."
     },
     "include": {
       "type": "array",
@@ -22,30 +32,19 @@
       "items": { "type": "string" },
       "default": []
     },
-    "testCommand": {
-      "type": ["string", "null"],
-      "default": null,
-      "description": "Run after replace and during check. null = detect script 'test' in package.json, else skip."
-    },
-    "fuzzIterations": {
-      "type": "integer",
-      "minimum": 1,
-      "default": 200
-    },
-    "pr": {
-      "type": "boolean",
-      "default": true,
-      "description": "replace opens a PR when gh is available and --no-pr was not passed."
-    },
-    "watch": {
+    "replacements": {
       "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "failOn": {
-          "enum": ["slice-exposed", "any-advisory", "never"],
-          "default": "slice-exposed"
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "envelope", "module"],
+        "properties": {
+          "version": { "type": "string" },
+          "envelope": { "type": "string" },
+          "module": { "type": "string" }
         }
-      }
+      },
+      "description": "Recorded slices. Written by slim replace; slim check reads this."
     }
   }
 }

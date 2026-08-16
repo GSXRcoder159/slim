@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { v4 as uuidV4 } from "uuid";
 import { v4 } from "../../src/generate/catalog/uuid.ts";
 
 const UUID_V4 =
@@ -48,6 +49,20 @@ describe("uuid v4", () => {
 
   it("throws when random is shorter than 16 bytes", () => {
     assert.throws(() => v4({ random: new Uint8Array(8) }), { name: "TypeError" });
+  });
+
+  it("agrees with uuid v4 given injectable random bytes", () => {
+    const tables = [
+      new Uint8Array(16),
+      Uint8Array.from({ length: 16 }, (_, i) => i),
+      Uint8Array.from({ length: 16 }, (_, i) => 255 - i),
+    ];
+    for (const random of tables) {
+      const slim = v4({ random: random.slice() });
+      const real = uuidV4({ random: random.slice() });
+      assert.equal(slim, real);
+      assert.match(slim, UUID_V4);
+    }
   });
 });
 

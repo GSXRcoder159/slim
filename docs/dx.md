@@ -92,7 +92,7 @@ The product.
     --no-commit         Write files; do not git commit (implies no PR)
     --dry-run           Print the plan; write nothing
     --fuzz-iterations <n>  Override config (default 200)
-    --out <dir>         Override slices dir (default vendor/slim)
+    --out <dir>         Override slices dir (default src/slim)
 ```
 
 Steps, in order, stop on first failure:
@@ -128,11 +128,11 @@ CI. No network. No generation.
 For each slice (or one pkg):
 
 1. Re-scan call sites. If a site uses an export not in the envelope → fail (exit 1).
-2. Run `vendor/slim/<pkg>.test.js` via `node --test`.
+2. Run `src/slim/<pkg>.test.js` via `node --test`.
 3. Hash the slice file; compare to meta. If the human edited the slice, that’s fine — hash updates only with `--update-envelope`? **No.** Edits are allowed; check does not fail on hash mismatch. Hash is for watch/repro. Check fails on test fail and envelope drift only.
 4. Optional `testCommand`.
 
-Empty `vendor/slim` → exit 0 with `no slices` (so adding the Action to a repo that has not slimmed yet is free).
+Empty `src/slim` → exit 0 with `no slices` (so adding the Action to a repo that has not slimmed yet is free).
 
 ### `slim watch [pkg]`  (alias `slim upstream`)
 
@@ -146,7 +146,7 @@ See §9. Network: OSV, GitHub GraphQL/REST if `GITHUB_TOKEN`/`gh`, npm registry.
 
 ### `slim doctor`
 
-No flags beyond global. Exit 0 if the install can run scan/inspect/replace/check. Exit 4 if Node < 20.12 or no package.json. Warnings (gh missing, no watch workflow, dirty tree) do not fail doctor unless `--json` consumers want `ok: false`; human doctor exits 0 with a WARN section. `--json` includes `ok`, `errors`, `warnings`.
+`--strict` makes a dirty working tree exit 4. Default: list the dirty-tree issue and still exit 0 if Node and `registerHooks` are ok. Always prints a CJS hooks recommendation for Node >= 22.22.3. Exit 4 if Node < 22.18. Warnings (gh missing, no watch workflow, dirty tree without `--strict`) do not fail doctor. `--json` dumps the report including `dirtyTree` and `issues`.
 
 ### Command help (tired human)
 
@@ -165,7 +165,7 @@ Usage:
       --no-commit        Write files, don't git commit
       --dry-run          Show the envelope and plan, write nothing
       --fuzz-iterations <n>
-      --out <dir>        Default: vendor/slim
+      --out <dir>        Default: src/slim
 
 Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz failed.
       3 Slim refuses this envelope. 4 missing gh/git when PR required.
@@ -231,24 +231,24 @@ lodash@4.17.21  MIT  71.0 kB min / 25.8 kB gz
 ```
 $ slim replace lodash
 envelope         get, debounce
-generate         vendor/slim/lodash.js  (67 lines)
+generate         src/slim/lodash.js  (67 lines)
 oracle fuzz      200/200 match lodash@4.17.21
 standing tests   12 pass
 project tests    npm test  (3 pass)
 imports          src/handler.ts
 package.json     - lodash
 
-  vendor/slim/lodash.js
-  vendor/slim/lodash.test.js
-  vendor/slim/lodash.meta.json
-  vendor/slim/lodash.evidence.md
-  vendor/slim/lodash.LICENSE
+  src/slim/lodash.js
+  src/slim/lodash.test.js
+  src/slim/lodash.meta.json
+  src/slim/lodash.evidence.md
+  src/slim/lodash.LICENSE
 
 Open PR 'slim/replace-lodash'? [Y/n] y
 branch  slim/replace-lodash
 pr      https://github.com/acme/edge-api/pull/842
 
-Read vendor/slim/lodash.evidence.md (~90s) and vendor/slim/lodash.js
+Read src/slim/lodash.evidence.md (~90s) and src/slim/lodash.js
 then merge. This is evidence, not proof.
 ```
 
@@ -323,7 +323,7 @@ runs:
       working-directory: ${{ inputs.working-directory }}
 ```
 
-Fails the PR on envelope drift or standing-test fail. Empty `vendor/slim` → pass.
+Fails the PR on envelope drift or standing-test fail. Empty `src/slim` → pass.
 
 ### `slim-bloat` (optional, PRs that add fat deps)
 
@@ -362,7 +362,7 @@ Written by `slim watch --write-workflow`. See §9.
 
 ## 8. Evidence report (90 seconds)
 
-File: `vendor/slim/<pkg>.evidence.md`
+File: `src/slim/<pkg>.evidence.md`
 
 Tone on line 1: **evidence, not proof.** If we write “safe” we have failed the product.
 
@@ -494,7 +494,7 @@ v1 implements the **full core loop**: envelope, generate, fuzz, PR, standing tes
 | First-wave envelopes in [`packages.md`](./packages.md) | moment locales, js-yaml tags, markdown, ajv, AES, path-to-regexp |
 | Synthesize + oracle fuzz | Extract-from-upstream mode when the method file is already small |
 | Call-site scanner without TypeScript as a dependency | Use the project’s `typescript` if present |
-| `vendor/slim` + optional `slim.json` | package.json `"slim"` key, workspaces |
+| `src/slim` + optional `slim.json` | package.json `"slim"` key, workspaces |
 | Actions: check, bloat, watch | IDE, language besides JS/TS, axios→fetch rewriter |
 | Zero production deps for Slim itself | still zero, if we can help it |
 

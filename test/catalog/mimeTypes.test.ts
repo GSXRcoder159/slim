@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { extension, lookup } from "../../src/generate/catalog/mimeTypes.ts";
 
 describe("mime-types catalog", () => {
@@ -25,6 +28,14 @@ describe("mime-types catalog", () => {
     assert.equal(lookup("file.unknown"), false);
     assert.equal(lookup(""), false);
     assert.equal(lookup(null as unknown as string), false);
+  });
+
+  it("documents envelope-driven mime-db as a later ponytail", () => {
+    const src = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "../../src/generate/catalog/mimeTypes.ts"),
+      "utf8",
+    );
+    assert.match(src, /\/\/ ponytail: envelope-driven mime-db later/);
   });
 
   it("maps MIME types back to a preferred extension", () => {

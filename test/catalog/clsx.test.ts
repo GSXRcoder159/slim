@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import clsxOracle from "clsx";
 import clsx, { clsx as namedClsx } from "../../src/generate/catalog/clsx.ts";
 
 describe("clsx", () => {
@@ -44,5 +45,22 @@ describe("clsx", () => {
 
   it("returns an empty string with no arguments", () => {
     assert.equal(clsx(), "");
+  });
+
+  it("agrees with clsx on the public-doc table", () => {
+    const cases: unknown[][] = [
+      [],
+      ["foo", true && "bar", "baz"],
+      [{ foo: true, bar: false, baz: 1 }],
+      [{ foo: true }, { bar: false }, null, { "--foobar": "hello" }],
+      [["foo", 0, false, "bar"]],
+      [["foo"], ["", 0, false, "bar"], [["baz", [["hello"], "there"]]]],
+      [true, false, "", null, undefined, 0, NaN],
+      [1, 2, 0, "x"],
+      ["foo", [1 && "bar", { baz: false, bat: null }, ["hello", ["world"]]], "cya"],
+    ];
+    for (const args of cases) {
+      assert.equal(clsx(...args), clsxOracle(...args), JSON.stringify(args));
+    }
   });
 });
