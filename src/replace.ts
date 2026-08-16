@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_FAIL, EXIT_OK, EXIT_REFUSED, EXIT_USAGE, SlimExit } from "./exit.ts";
 import { loadConfig } from "./config.ts";
-import { loadProject, walkSourceFiles } from "./project.ts";
+import { loadProject, walkSourceFiles, filterSourceFiles } from "./project.ts";
 import { analyzePackage } from "./analyze/index.ts";
 import { mergeTraces } from "./envelope/merge.ts";
 import { closeEnvelope } from "./envelope/close.ts";
@@ -23,6 +23,7 @@ import { assertValidGenerated, assertSmaller } from "./generate/validate.ts";
 import { loadPublicApi } from "./generate/public-api.ts";
 import { loadTargetTypescript } from "./project.ts";
 import { runFuzz, type FuzzReport } from "./fuzz/run.ts";
+import { repairLoop } from "./generate/repair.ts";
 import { rewriteProjectImports } from "./rewrite/splice.ts";
 import { rewritePackageJson } from "./rewrite/packagejson.ts";
 import { refreshLockfile, shouldRefreshLockfile } from "./rewrite/lockfile.ts";
@@ -43,7 +44,11 @@ export async function runReplace(args: CliArgs): Promise<number> {
   }
 
   process.stderr.write(`analyzing ${args.pkg}…\n`);
-  let env = analyzePackage(project, args.pkg, { allowUnknown: args.allowUnknown });
+  let env = analyzePackage(project, args.pkg, {
+    allowUnknown: args.allowUnknown,
+    include: config.include,
+    ignore: config.ignore,
+  });
 
   if (!args.noTrace) {
     env = await maybeTrace(project.root, args.pkg, env);
@@ -110,60 +115,48 @@ export async function runReplace(args: CliArgs): Promise<number> {
   }
 
   mkdirSync(dirname(slimPath), { recursive: true });
-  const jsForFuzz = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ESNext,
-      target: ts.ScriptTarget.ES2022,
-      moduleResolution: ts.ModuleResolutionKind.NodeNext,
-    },
-    fileName: slimPath,
-  }).outputText;
+  const transpile = (src: string) =>
+    ts.transpileModule(src, {
+      compilerOptions: {
+        module: ts.ModuleKind.ESNext,
+        target: ts.ScriptTarget.ES2022,
+        moduleResolution: ts.ModuleResolutionKind.NodeNext,
+      },
+      fileName: slimPath,
+    }).outputText;
   const tmpSlim = slimPath + ".tmp.mjs";
-  writeFileSync(tmpSlim, jsForFuzz);
+  const fuzzSource = async (src: string, hashExtra = ""): Promise<FuzzReport> => {
+    writeFileSync(tmpSlim, transpile(src));
+    return runFuzz({
+      origModule: env.package.name,
+      slimModule: tmpSlim,
+      slimHash: `${hashEnvelope(env)}:${seed}${hashExtra}`,
+      envelope: env,
+      budgetMs: budget,
+      seed,
+      workers: args.workers ?? undefined,
+      allowFlaky: args.allowFlaky,
+    });
+  };
 
   process.stderr.write(`fuzzing (budget ${budget}ms, seed ${seed})…\n`);
-  const slimHash = `${hashEnvelope(env)}:${seed}`;
-  let report: FuzzReport = await runFuzz({
-    origModule: env.package.name,
-    slimModule: tmpSlim,
-    slimHash,
-    envelope: env,
-    budgetMs: budget,
-    seed,
-    workers: args.workers ?? undefined,
-    allowFlaky: args.allowFlaky,
-  });
-
-  if (report.disagreements.length && !usedCatalog && llm) {
+  let report: FuzzReport;
+  if (!usedCatalog && llm) {
     const pub = loadPublicApi(project.root, env.package.name);
-    const max = args.maxAttempts;
-    for (let i = 1; i < max; i++) {
-      process.stderr.write(`repair attempt ${i + 1}/${max}…\n`);
-      const examples = report.disagreements.map(
-        (d) => `${d.symbol}: ${d.reason} args=${JSON.stringify(d.minimized ?? d.args)}`,
-      );
-      const next = await generateWithLlm(env, pub, examples, llm);
-      source = withGeneratedHeader(next.source, env, { promptHash: next.promptHash });
-      assertValidGenerated(ts, source, env);
-      writeFileSync(tmpSlim, ts.transpileModule(source, {
-        compilerOptions: {
-          module: ts.ModuleKind.ESNext,
-          target: ts.ScriptTarget.ES2022,
-        },
-        fileName: slimPath,
-      }).outputText);
-      report = await runFuzz({
-        origModule: env.package.name,
-        slimModule: tmpSlim,
-        slimHash: `${hashEnvelope(env)}:${seed}:${i}`,
-        envelope: env,
-        budgetMs: budget,
-        seed: seed + i,
-        workers: args.workers ?? undefined,
-        allowFlaky: args.allowFlaky,
-      });
-      if (!report.disagreements.length) break;
-    }
+    const repaired = await repairLoop({
+      envelope: env,
+      publicApi: pub,
+      initial: source,
+      maxAttempts: args.maxAttempts,
+      llm,
+      projectRoot: project.root,
+      catalog: false,
+      fuzz: (src) => fuzzSource(src),
+    });
+    source = repaired.source;
+    report = repaired.report as FuzzReport;
+  } else {
+    report = await fuzzSource(source);
   }
 
   if (report.disagreements.length) {
@@ -190,7 +183,10 @@ export async function runReplace(args: CliArgs): Promise<number> {
     fromSpecs.add("lodash-es");
   }
   const outAbs = resolve(project.root, outDir);
-  const files = walkSourceFiles(project.root).filter((f) => {
+  const files = filterSourceFiles(walkSourceFiles(project.root), project.root, {
+    include: config.include,
+    ignore: config.ignore,
+  }).filter((f) => {
     if (f === slimPath || f.endsWith(".tmp.mjs")) return false;
     if (f === outAbs || f.startsWith(outAbs + sep)) return false;
     return true;
