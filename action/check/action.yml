@@ -6,7 +6,8 @@ runs:
     - name: require Node >= 22.18
       run: |
         major=$(node -p "Number(process.versions.node.split('.')[0])")
-        if [ "$major" -lt 22 ]; then
+        minor=$(node -p "Number(process.versions.node.split('.')[1])")
+        if [ "$major" -lt 22 ] || { [ "$major" -eq 22 ] && [ "$minor" -lt 18 ]; }; then
           echo "this Slim action requires Node >= 22.18 (got $(node --version)). Use actions/setup-node with node-version: '22.18'." >&2
           exit 1
         fi

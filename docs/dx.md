@@ -317,7 +317,7 @@ runs:
   steps:
     - uses: actions/setup-node@v4
       with:
-        node-version: "20"
+        node-version: "22.18"
     - run: npx --yes slim@${{ inputs.version }} check
       shell: bash
       working-directory: ${{ inputs.working-directory }}
@@ -417,7 +417,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22.18"
       - run: npx --yes slim@1 watch --pr
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

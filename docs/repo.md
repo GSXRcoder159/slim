@@ -210,7 +210,7 @@ jobs:
   test:
     strategy:
       matrix:
-        node: [20, 22]
+        node: ["22.18"]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -242,7 +242,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22.18"
           registry-url: https://registry.npmjs.org
       - run: npm test
       - run: npm publish --provenance --access public

@@ -229,6 +229,9 @@ test("action.yml files run strip-types src, not committed dist", () => {
     assert.match(yml, /experimental-strip-types/);
     assert.match(yml, /using:\s*composite/);
     assert.match(yml, /Node >= 22\.18/);
-    assert.match(yml, /-lt 22/);
+    assert.match(yml, /node-version: '22\.18'/);
+    // Fail 22.0–22.17, not only major < 22.
+    assert.match(yml, /split\('\.'\)\[1\]/);
+    assert.match(yml, /-lt 18/);
   }
 });
