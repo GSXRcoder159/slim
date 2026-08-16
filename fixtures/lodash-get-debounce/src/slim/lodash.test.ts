@@ -3,7 +3,565 @@ import assert from "node:assert/strict";
 import * as slim from "./lodash.ts";
 
 // Frozen I/O pairs. This file must not import the original package.
-const pairs = [];
+const pairs = [
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [
+          "profile"
+        ],
+        "v": {
+          "profile": {
+            "t": "obj",
+            "keys": [
+              "name"
+            ],
+            "v": {
+              "name": {
+                "t": "str",
+                "v": "Ada"
+              }
+            }
+          }
+        }
+      },
+      {
+        "t": "str",
+        "v": "profile.name"
+      },
+      {
+        "t": "str",
+        "v": "anonymous"
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "str",
+      "v": "Ada"
+    }
+  },
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [],
+        "v": {}
+      },
+      {
+        "t": "str",
+        "v": "profile.name"
+      },
+      {
+        "t": "str",
+        "v": "anonymous"
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "str",
+      "v": "anonymous"
+    }
+  },
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [
+          "profile"
+        ],
+        "v": {
+          "profile": {
+            "t": "obj",
+            "keys": [
+              "name"
+            ],
+            "v": {
+              "name": {
+                "t": "undef"
+              }
+            }
+          }
+        }
+      },
+      {
+        "t": "str",
+        "v": "profile.name"
+      },
+      {
+        "t": "str",
+        "v": "anonymous"
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "str",
+      "v": "anonymous"
+    }
+  },
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [
+          "profile"
+        ],
+        "v": {
+          "profile": {
+            "t": "obj",
+            "keys": [
+              "name"
+            ],
+            "v": {
+              "name": {
+                "t": "null"
+              }
+            }
+          }
+        }
+      },
+      {
+        "t": "str",
+        "v": "profile.name"
+      },
+      {
+        "t": "str",
+        "v": "anonymous"
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "null"
+    }
+  },
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [
+          "profile"
+        ],
+        "v": {
+          "profile": {
+            "t": "obj",
+            "keys": [
+              "name"
+            ],
+            "v": {
+              "name": {
+                "t": "str",
+                "v": ""
+              }
+            }
+          }
+        }
+      },
+      {
+        "t": "str",
+        "v": "profile.name"
+      },
+      {
+        "t": "str",
+        "v": "anonymous"
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "str",
+      "v": ""
+    }
+  },
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [
+          "a"
+        ],
+        "v": {
+          "a": {
+            "t": "obj",
+            "keys": [
+              "b"
+            ],
+            "v": {
+              "b": {
+                "t": "obj",
+                "keys": [
+                  "c"
+                ],
+                "v": {
+                  "c": {
+                    "t": "num",
+                    "v": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "t": "str",
+        "v": "a.b"
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "obj",
+      "keys": [
+        "c"
+      ],
+      "v": {
+        "c": {
+          "t": "num",
+          "v": 1
+        }
+      }
+    }
+  },
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [
+          "a"
+        ],
+        "v": {
+          "a": {
+            "t": "obj",
+            "keys": [
+              "b"
+            ],
+            "v": {
+              "b": {
+                "t": "obj",
+                "keys": [
+                  "c"
+                ],
+                "v": {
+                  "c": {
+                    "t": "num",
+                    "v": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "t": "arr",
+        "v": [
+          {
+            "t": "str",
+            "v": "a"
+          },
+          {
+            "t": "str",
+            "v": "b"
+          }
+        ],
+        "holes": []
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "obj",
+      "keys": [
+        "c"
+      ],
+      "v": {
+        "c": {
+          "t": "num",
+          "v": 1
+        }
+      }
+    }
+  },
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [
+          "a"
+        ],
+        "v": {
+          "a": {
+            "t": "obj",
+            "keys": [
+              "b"
+            ],
+            "v": {
+              "b": {
+                "t": "obj",
+                "keys": [
+                  "c"
+                ],
+                "v": {
+                  "c": {
+                    "t": "num",
+                    "v": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "t": "str",
+        "v": "a.b"
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "obj",
+      "keys": [
+        "c"
+      ],
+      "v": {
+        "c": {
+          "t": "num",
+          "v": 1
+        }
+      }
+    }
+  },
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [
+          "a"
+        ],
+        "v": {
+          "a": {
+            "t": "obj",
+            "keys": [
+              "b"
+            ],
+            "v": {
+              "b": {
+                "t": "obj",
+                "keys": [
+                  "c"
+                ],
+                "v": {
+                  "c": {
+                    "t": "num",
+                    "v": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "t": "arr",
+        "v": [
+          {
+            "t": "str",
+            "v": "a"
+          },
+          {
+            "t": "str",
+            "v": "b"
+          }
+        ],
+        "holes": []
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "obj",
+      "keys": [
+        "c"
+      ],
+      "v": {
+        "c": {
+          "t": "num",
+          "v": 1
+        }
+      }
+    }
+  },
+  {
+    "symbol": "debounce",
+    "args": [
+      {
+        "t": "null"
+      },
+      {
+        "t": "num",
+        "v": 10
+      }
+    ],
+    "threw": {
+      "name": "TypeError",
+      "message": "Expected a function"
+    },
+    "result": null
+  },
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [
+          "profile"
+        ],
+        "v": {
+          "profile": {
+            "t": "obj",
+            "keys": [
+              "name"
+            ],
+            "v": {
+              "name": {
+                "t": "str",
+                "v": "Ada"
+              }
+            }
+          }
+        }
+      },
+      {
+        "t": "str",
+        "v": "profile.name"
+      },
+      {
+        "t": "str",
+        "v": "anonymous"
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "str",
+      "v": "Ada"
+    }
+  },
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [
+          "a"
+        ],
+        "v": {
+          "a": {
+            "t": "obj",
+            "keys": [
+              "b"
+            ],
+            "v": {
+              "b": {
+                "t": "obj",
+                "keys": [
+                  "c"
+                ],
+                "v": {
+                  "c": {
+                    "t": "num",
+                    "v": 7
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "t": "str",
+        "v": "a.b"
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "obj",
+      "keys": [
+        "c"
+      ],
+      "v": {
+        "c": {
+          "t": "num",
+          "v": 7
+        }
+      }
+    }
+  },
+  {
+    "symbol": "get",
+    "args": [
+      {
+        "t": "obj",
+        "keys": [
+          "a"
+        ],
+        "v": {
+          "a": {
+            "t": "obj",
+            "keys": [
+              "b"
+            ],
+            "v": {
+              "b": {
+                "t": "obj",
+                "keys": [
+                  "c"
+                ],
+                "v": {
+                  "c": {
+                    "t": "num",
+                    "v": 7
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "t": "arr",
+        "v": [
+          {
+            "t": "str",
+            "v": "a"
+          },
+          {
+            "t": "str",
+            "v": "b"
+          }
+        ],
+        "holes": []
+      }
+    ],
+    "threw": null,
+    "result": {
+      "t": "obj",
+      "keys": [
+        "c"
+      ],
+      "v": {
+        "c": {
+          "t": "num",
+          "v": 7
+        }
+      }
+    }
+  }
+];
 
 function eq(actual: unknown, expected: unknown): void {
   assert.deepEqual(actual, expected);

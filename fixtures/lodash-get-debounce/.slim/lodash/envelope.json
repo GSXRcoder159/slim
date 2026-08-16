@@ -7,7 +7,8 @@
     "subpath": ""
   },
   "env": [
-    "node"
+    "node",
+    "worker"
   ],
   "imports": [
     {
@@ -170,7 +171,7 @@
       },
       "coverage": {
         "callSitesStatic": 3,
-        "callSitesTraced": 0
+        "callSitesTraced": 3
       }
     },
     {
@@ -312,7 +313,7 @@
       },
       "coverage": {
         "callSitesStatic": 3,
-        "callSitesTraced": 0
+        "callSitesTraced": 3
       }
     }
   ],
@@ -321,15 +322,8 @@
   "closure": {
     "confidence": "closed",
     "readyToGenerate": true,
-    "untracedCallSiteIds": [
-      "call:src/index.ts:122",
-      "call:src/index.ts:248",
-      "call:src/index.ts:345",
-      "call:src/index.ts:392",
-      "call:src/index.ts:510",
-      "call:src/index.ts:605"
-    ],
-    "reason": "static envelope closed; no traces — generators are static-shape plus catalog mutations, not your runtime distribution"
+    "untracedCallSiteIds": [],
+    "reason": "static envelope closed"
   },
   "slimmable": {
     "score": 70,

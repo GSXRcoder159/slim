@@ -45,10 +45,20 @@ test("golden fixture envelope has relative locs, no traces, no bind.placeholder"
   assert.equal(raw.includes("bind.placeholder"), false);
   const env = JSON.parse(raw) as {
     traces?: unknown[];
+    env: string[];
     imports: Array<{ loc: { file: string } }>;
-    symbols: Array<{ callSites: Array<{ loc: { file: string } }> }>;
+    symbols: Array<{
+      callSites: Array<{ loc: { file: string } }>;
+      coverage: { callSitesTraced: number };
+    }>;
   };
   assert.ok(!env.traces || env.traces.length === 0);
+  assert.ok(env.env.includes("worker"), `env=${env.env.join(",")}`);
+  assert.ok(env.env.includes("node"));
+  assert.ok(
+    env.symbols.some((s) => s.coverage.callSitesTraced > 0),
+    "expected coverage.callSitesTraced > 0",
+  );
   const files = [
     ...env.imports.map((i) => i.loc.file),
     ...env.symbols.flatMap((s) => s.callSites.map((c) => c.loc.file)),
@@ -60,6 +70,39 @@ test("golden fixture envelope has relative locs, no traces, no bind.placeholder"
   }
   const src = readFileSync(join(root, "src/slim/lodash.ts"), "utf8");
   assert.ok(src.split("\n").length < 280, `lodash.ts is ${src.split("\n").length} lines`);
+});
+
+test("golden fixture evidence replays traces and has sections 2-8", () => {
+  const json = JSON.parse(readFileSync(join(root, ".slim/lodash/evidence.json"), "utf8")) as {
+    package: { version: string };
+    fuzz: { tracesReplayed: number };
+    residualRisk: string[];
+  };
+  const md = readFileSync(join(root, ".slim/lodash/evidence.md"), "utf8");
+  assert.ok(json.fuzz.tracesReplayed > 0, `tracesReplayed=${json.fuzz.tracesReplayed}`);
+  assert.ok(json.residualRisk.length > 0);
+  assert.equal(json.package.version, "4.17.21");
+  assert.match(md, /^## 2\. What was used/m);
+  assert.match(md, /^## 3\. Byte delta/m);
+  assert.match(md, /^## 4\. Edge/m);
+  assert.match(md, /^## 5\. Fuzz/m);
+  assert.match(md, /^## 6\. Coverage holes/m);
+  assert.match(md, /^## 7\. Upstream pin/m);
+  assert.match(md, /^## 8\. How to revert/m);
+  assert.match(md, /traces replayed: [1-9]/);
+});
+
+test("golden fixture is Worker-shaped", () => {
+  const wrangler = readFileSync(join(root, "wrangler.toml"), "utf8");
+  assert.match(wrangler, /main\s*=\s*"src\/worker\.ts"/);
+  const worker = readFileSync(join(root, "src/worker.ts"), "utf8");
+  assert.match(worker, /async fetch\(/);
+  assert.match(worker, /pickUser/);
+  assert.match(worker, /schedule/);
+  const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+    devDependencies?: Record<string, string>;
+  };
+  assert.ok(pkg.devDependencies?.["@cloudflare/workers-types"]);
 });
 
 test("dynamic fixture is not closed", () => {

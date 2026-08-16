@@ -9,8 +9,10 @@
     "test": "node --experimental-strip-types --test src/index.test.ts",
     "slim:evidence": "node --experimental-strip-types --test src/slim/lodash.test.ts"
   },
-  "dependencies": {},
+  "dependencies": {
+  },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250813.0",
     "typescript": "^5.9.2"
   }
 }
