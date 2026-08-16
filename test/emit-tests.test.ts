@@ -160,6 +160,68 @@ test("debounce standing tests include observed option scripts", () => {
   assert.match(body, /trailing-single/);
 });
 
+test("standing frozen pairs skip debounce function I/O and keep throw traces", () => {
+  const dir = tmpProject();
+  const catalogDebounce = new URL("../src/generate/catalog/lodash.debounce.ts", import.meta.url).href;
+  writeFileSync(
+    join(dir, "src", "lodash.ts"),
+    `export { debounce } from ${JSON.stringify(catalogDebounce)};
+export function get(object: Record<string, unknown>, path: string) {
+  return object[path];
+}
+`,
+  );
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "lodash",
+    env: env({ symbols: ["get", "debounce"] }),
+    traces: [
+      {
+        symbol: "get",
+        args: [
+          { t: "obj", keys: ["a"], v: { a: { t: "num", v: 1 } } },
+          { t: "str", v: "a" },
+        ],
+        result: { t: "num", v: 1 },
+      },
+      {
+        symbol: "debounce",
+        args: [
+          { t: "fn", length: 1, name: "ping" },
+          { t: "num", v: 50 },
+        ],
+        result: { t: "fn", length: 0, name: "debounced" },
+      },
+      {
+        symbol: "debounce",
+        args: [
+          { t: "null" },
+          { t: "num", v: 10 },
+        ],
+        threw: { name: "TypeError", message: "Expected a function" },
+      },
+      {
+        symbol: "debounce()",
+        args: [{ t: "num", v: 1 }],
+        result: { t: "undef" },
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./lodash.ts",
+  });
+  const body = readFileSync(file, "utf8");
+  assert.match(body, /Expected a function/);
+  assert.match(body, /"symbol": "get"/);
+  assert.doesNotMatch(body, /"name": "debounced"/);
+  assert.doesNotMatch(body, /"symbol": "debounce\(\)"/);
+  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--test", file], {
+    encoding: "utf8",
+    cwd: dir,
+  });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+});
+
 test("vitest flavor standing tests import vitest", () => {
   const dir = tmpProject();
   const file = emitStandingTests({

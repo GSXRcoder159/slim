@@ -29,6 +29,31 @@ test("wraps a fake module get export and records a TraceEvent", () => {
   assert.equal(ev.threw, undefined);
 });
 
+test("cyclic function placeholder keeps export symbols", () => {
+  const events: TraceEvent[] = [];
+  function lodash(): string {
+    return "called";
+  }
+  function get(o: Record<string, unknown>, p: string): unknown {
+    return o[p];
+  }
+  function bind(): string {
+    return "bound";
+  }
+  (bind as { placeholder: typeof lodash }).placeholder = lodash;
+  Object.assign(lodash, { get, bind });
+  const wrapped = wrapExports(lodash, {
+    packageName: "lodash",
+    onEvent: (e) => events.push(e),
+  }) as typeof lodash & { get: typeof get; bind: typeof bind };
+  assert.equal(wrapped.get({ a: 1 }, "a"), 1);
+  assert.equal(events.some((e) => e.symbol === "get"), true);
+  assert.equal(
+    events.some((e) => e.symbol.includes("placeholder")),
+    false,
+  );
+});
+
 test("does not wrap primitive exports", () => {
   assert.equal(
     wrapExports("hello", { packageName: "x", onEvent: () => {} }),

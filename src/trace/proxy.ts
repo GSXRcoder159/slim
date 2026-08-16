@@ -89,10 +89,12 @@ function wrapFn(
     /* ignore */
   }
 
-  copyFnProps(wrapped, fn, propParent, opts);
+  // Cache before copying props so cyclic fn.placeholder === fn (lodash bind) does not
+  // re-wrap the root export under bind.placeholder.bind.placeholder… symbols.
   fnCache.set(fn, wrapped);
   fnCache.set(wrapped, wrapped);
   wrappedObjects.add(wrapped);
+  copyFnProps(wrapped, fn, propParent, opts);
   return wrapped;
 }
 

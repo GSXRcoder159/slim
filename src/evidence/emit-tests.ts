@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import type { ArgShape, Envelope, TraceEvent } from "../envelope/types.ts";
+import type { ArgShape, Envelope, SlimValue, TraceEvent } from "../envelope/types.ts";
 
 export function emitStandingTests(opts: {
   root: string;
@@ -13,7 +13,9 @@ export function emitStandingTests(opts: {
 }): string {
   mkdirSync(join(opts.root, opts.outDir), { recursive: true });
   const file = join(opts.root, opts.outDir, `${opts.pkg.replace(/\//g, "-")}.test.ts`);
-  const pairs = opts.traces.filter((t) => t.symbol && !t.symbol.includes("."));
+  const pairs = opts.traces.filter(
+    (t) => t.symbol && !/[.(]/.test(t.symbol) && standingPairReplayable(t),
+  );
   const body = standingFile(opts.runner, opts.moduleSpecifier, pairs, opts.env);
   writeFileSync(file, body);
   const pkgPath = join(opts.root, "package.json");
@@ -122,6 +124,27 @@ function revive(v: any): unknown {
 
 function compactTrace(t: TraceEvent) {
   return { symbol: t.symbol, args: t.args, threw: t.threw ?? null, result: t.result ?? null };
+}
+
+/** Drop successful traces whose args/result contain functions; revive cannot reconstruct them. */
+function standingPairReplayable(t: TraceEvent): boolean {
+  if (t.threw) return true;
+  if (t.args.some(slimValueHasFn)) return false;
+  if (t.result && slimValueHasFn(t.result)) return false;
+  return true;
+}
+
+function slimValueHasFn(v: SlimValue | undefined, depth = 0): boolean {
+  /* ponytail: depth 24; nested SlimValues beyond that are treated as non-fn. */
+  if (!v || depth > 24) return false;
+  if (v.t === "fn") return true;
+  if (v.t === "arr") return v.v.some((el) => slimValueHasFn(el, depth + 1));
+  if (v.t === "obj") return Object.values(v.v).some((el) => slimValueHasFn(el, depth + 1));
+  if (v.t === "map") {
+    return v.v.some(([k, val]) => slimValueHasFn(k, depth + 1) || slimValueHasFn(val, depth + 1));
+  }
+  if (v.t === "set") return v.v.some((el) => slimValueHasFn(el, depth + 1));
+  return false;
 }
 
 function debounceBlock(env: Envelope): string {
