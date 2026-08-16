@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -23,6 +23,7 @@ test("gitignore ignores traces only, not envelopes", () => {
   assert.equal(lines.includes(".slim/"), false);
   assert.ok(lines.includes(".slim/**/traces.jsonl"));
   assert.ok(lines.includes(".slim/**/traces/"));
+  assert.ok(lines.includes(".slim/vitest.trace.ts"));
 });
 
 test("shouldRefreshLockfile: --no-install skips lockfile only", () => {
@@ -92,6 +93,20 @@ test("runMergeGate passes when scripts.test exits 0", () => {
   runMergeGate(dir, null);
 });
 
+test("runMergeGate finds binaries in node_modules/.bin", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-gate-bin-"));
+  const bin = join(dir, "node_modules", ".bin");
+  mkdirSync(bin, { recursive: true });
+  const runner = join(bin, "slim-fake-test-runner");
+  writeFileSync(runner, "#!/bin/sh\nexit 0\n");
+  chmodSync(runner, 0o755);
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ name: "gate-bin", scripts: { test: "slim-fake-test-runner" } }),
+  );
+  runMergeGate(dir, null);
+});
+
 test("pollution traces for get/set with __proto__ fail loud (exit 1)", () => {
   const traces: TraceEvent[] = [
     {
@@ -113,22 +128,27 @@ test("pollution traces for get/set with __proto__ fail loud (exit 1)", () => {
   );
 });
 
-test("pollution traces for set that mutated Object.prototype fail loud", () => {
+test("canonical set __proto__ path is dependence even with empty mutatedArgIndexes", () => {
+  // Tracer snapshot of _.set({}, '__proto__.x', true): own keys unchanged,
+  // Object.prototype mutated, result is the empty target.
   const traces: TraceEvent[] = [
     {
       symbol: "set",
       args: [
         { t: "obj", keys: [], v: {} },
-        { t: "arr", v: [{ t: "str", v: "__proto__" }, { t: "str", v: "x" }], holes: [] },
+        { t: "str", v: "__proto__.x" },
         { t: "bool", v: true },
       ],
       result: { t: "obj", keys: [], v: {} },
-      mutatedArgIndexes: [0],
+      mutatedArgIndexes: [],
     },
   ];
   assert.throws(
     () => assertNoPollutionDependence(traces),
-    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+    (err: unknown) =>
+      err instanceof SlimExit &&
+      err.code === EXIT_FAIL &&
+      /__proto__/i.test(err.message),
   );
 });
 
@@ -146,16 +166,19 @@ test("get/set traces without __proto__ do not fail", () => {
   assertNoPollutionDependence(traces);
 });
 
-test("get/set with __proto__ path but undefined result and no mutation is not dependence", () => {
+test("get/set path segment __proto__ is dependence regardless of result", () => {
   const traces: TraceEvent[] = [
     {
       symbol: "get",
       args: [
         { t: "obj", keys: [], v: {} },
-        { t: "str", v: "__proto__.x" },
+        { t: "arr", v: [{ t: "str", v: "__proto__" }, { t: "str", v: "x" }], holes: [] },
       ],
       result: { t: "undef" },
     },
   ];
-  assertNoPollutionDependence(traces);
+  assert.throws(
+    () => assertNoPollutionDependence(traces),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+  );
 });

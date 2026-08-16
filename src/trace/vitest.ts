@@ -7,12 +7,34 @@ import { matchesTracedUrl, packageFromUrl } from "./hook.ts";
 export { wrapExports };
 
 /** Source for `.slim/vitest.trace.ts` used only for the TRACE run. */
-export function vitestTraceConfigSource(packages: string[], pluginSpecifier: string): string {
+export type VitestTraceConfigOpts = {
+  userConfigSpecifier?: string | null;
+  alreadyHasPlugin?: boolean;
+};
+
+export function vitestTraceConfigSource(
+  packages: string[],
+  pluginSpecifier: string,
+  opts?: VitestTraceConfigOpts,
+): string {
+  const user = opts?.userConfigSpecifier;
+  if (user && opts?.alreadyHasPlugin) {
+    return `export { default } from ${JSON.stringify(user)};\n`;
+  }
+  const pluginConfig = `{
+  plugins: [slimVitest({ packages: ${JSON.stringify(packages)} })],
+}`;
+  if (user) {
+    return `import { mergeConfig } from "vitest/config";
+import { slimVitest } from ${JSON.stringify(pluginSpecifier)};
+import userConfig from ${JSON.stringify(user)};
+
+export default mergeConfig(userConfig, ${pluginConfig});
+`;
+  }
   return `import { slimVitest } from ${JSON.stringify(pluginSpecifier)};
 
-export default {
-  plugins: [slimVitest({ packages: ${JSON.stringify(packages)} })],
-};
+export default ${pluginConfig};
 `;
 }
 

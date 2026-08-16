@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep, delimiter } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { spawnSync } from "node:child_process";
@@ -301,10 +301,22 @@ export function runMergeGate(root: string, testCommand: string | null): void {
     cwd: root,
     encoding: "utf8",
     stdio: "inherit",
+    env: withLocalBinPath(root),
   });
   if (r.status !== 0) {
     throw new SlimExit(EXIT_FAIL, `merge gate failed: tests exited ${r.status ?? "signal"}`);
   }
+}
+
+export function withLocalBinPath(
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  const bin = join(root, "node_modules", ".bin");
+  return {
+    ...env,
+    PATH: `${bin}${delimiter}${env.PATH ?? ""}`,
+  };
 }
 
 export function writeTracesMeta(pkgDir: string): void {
@@ -314,43 +326,23 @@ export function writeTracesMeta(pkgDir: string): void {
 
 const PROTO = "__proto__";
 
-function slimContainsProto(v: SlimValue | SlimValue[] | undefined): boolean {
-  if (!v) return false;
-  if (Array.isArray(v)) return v.some((item) => slimContainsProto(item));
-  switch (v.t) {
-    case "str":
-      return v.v.includes(PROTO);
-    case "arr":
-      return v.v.some((item) => slimContainsProto(item));
-    case "obj":
-      return v.keys.includes(PROTO) || Object.values(v.v).some((item) => slimContainsProto(item));
-    case "map":
-      return v.v.some(([k, val]) => slimContainsProto(k) || slimContainsProto(val));
-    case "set":
-      return v.v.some((item) => slimContainsProto(item));
-    default:
-      return false;
+/** True when a lodash-style path (args[1]) contains a `__proto__` segment. */
+function pathHasProtoSegment(path: SlimValue | undefined): boolean {
+  if (!path) return false;
+  if (path.t === "str") return path.v.split(/[./]/).includes(PROTO);
+  if (path.t === "arr") {
+    return path.v.some((el) => {
+      if (el.t === "str") return el.v === PROTO || el.v.split(/[./]/).includes(PROTO);
+      return pathHasProtoSegment(el);
+    });
   }
-}
-
-function isDefinedResult(v: SlimValue | undefined): boolean {
-  return v != null && v.t !== "undef" && v.t !== "null";
-}
-
-function resultHasProtoKey(v: SlimValue | undefined): boolean {
-  if (!v) return false;
-  if (v.t === "obj") return v.keys.includes(PROTO) || slimContainsProto(v);
-  return slimContainsProto(v);
+  return false;
 }
 
 export function assertNoPollutionDependence(traces: TraceEvent[]): void {
   for (const t of traces) {
     if (t.symbol !== "get" && t.symbol !== "set") continue;
-    if (!slimContainsProto(t.args) && !slimContainsProto(t.thisArg)) continue;
-    const mutated = (t.mutatedArgIndexes?.length ?? 0) > 0;
-    const pollutedGet = t.symbol === "get" && isDefinedResult(t.result);
-    const pollutedSet = t.symbol === "set" && resultHasProtoKey(t.result);
-    if (!mutated && !pollutedGet && !pollutedSet) continue;
+    if (!pathHasProtoSegment(t.args[1])) continue;
     throw new SlimExit(
       EXIT_FAIL,
       `prototype pollution: traces show ${t.symbol} depending on __proto__ ` +
@@ -440,7 +432,7 @@ async function maybeTrace(root: string, pkg: string, env: Envelope): Promise<Env
   process.stderr.write(`tracing via ${runner.kind}…\n`);
   const r = spawnSync(spawn.file, spawn.args, {
     cwd: root,
-    env: envVars,
+    env: withLocalBinPath(root, envVars),
     encoding: "utf8",
     timeout: 120_000,
   });

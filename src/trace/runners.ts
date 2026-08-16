@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { vitestTraceConfigSource } from "./vitest.ts";
 
@@ -90,6 +90,36 @@ export function nodeTestPreloadArgs(hookModuleAbsPath: string): string[] {
   return ["--import", pathToFileURL(hookModuleAbsPath).href];
 }
 
+const VITEST_CONFIG_NAMES = [
+  "vitest.config.ts",
+  "vitest.config.mts",
+  "vitest.config.js",
+  "vitest.config.mjs",
+  "vitest.config.cts",
+  "vitest.config.cjs",
+  "vite.config.ts",
+  "vite.config.mts",
+  "vite.config.js",
+  "vite.config.mjs",
+];
+
+export function findVitestUserConfig(root: string): string | null {
+  for (const name of VITEST_CONFIG_NAMES) {
+    const p = join(root, name);
+    if (existsSync(p)) return p;
+  }
+  return null;
+}
+
+function userConfigHasSlimPlugin(configPath: string): boolean {
+  try {
+    const text = readFileSync(configPath, "utf8");
+    return /\bslimVitest\b/.test(text) || /["']slim\/vitest["']/.test(text);
+  } catch {
+    return false;
+  }
+}
+
 function slimVitestSpecifier(): string {
   const jsPath = fileURLToPath(new URL("./vitest.js", import.meta.url));
   const tsPath = fileURLToPath(new URL("./vitest.ts", import.meta.url));
@@ -102,7 +132,22 @@ export function writeVitestTraceConfig(root: string, packages: string[]): string
   const dir = join(root, ".slim");
   mkdirSync(dir, { recursive: true });
   const path = join(dir, "vitest.trace.ts");
-  writeFileSync(path, vitestTraceConfigSource(packages, slimVitestSpecifier()));
+  const userAbs = findVitestUserConfig(root);
+  let userConfigSpecifier: string | null = null;
+  let alreadyHasPlugin = false;
+  if (userAbs) {
+    let rel = relative(dir, userAbs).replace(/\\/g, "/");
+    if (!rel.startsWith(".")) rel = "./" + rel;
+    userConfigSpecifier = rel;
+    alreadyHasPlugin = userConfigHasSlimPlugin(userAbs);
+  }
+  writeFileSync(
+    path,
+    vitestTraceConfigSource(packages, slimVitestSpecifier(), {
+      userConfigSpecifier,
+      alreadyHasPlugin,
+    }),
+  );
   return path;
 }
 

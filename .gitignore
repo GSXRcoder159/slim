@@ -5,6 +5,7 @@ dist/
 fixtures/*/node_modules/
 .slim/**/traces.jsonl
 .slim/**/traces/
+.slim/vitest.trace.ts
 
 .DS_Store
 coverage/
