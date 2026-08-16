@@ -44,24 +44,23 @@ EXIT 0
 
 $ slim replace lodash
 ERR envelope         get, debounce
-ERR generate         src/slim/lodash.js  (67 lines)
+ERR generate         src/slim/lodash.ts  (~248 lines)
 ERR oracle fuzz      200/200 match lodash@4.17.21
 ERR standing tests   12 pass
 ERR project tests    npm test  (3 pass)
 ERR imports          src/handler.ts
 ERR package.json     - lodash
 OUT
-OUT   src/slim/lodash.js
-OUT   src/slim/lodash.test.js
-OUT   src/slim/lodash.meta.json
-OUT   src/slim/lodash.evidence.md
-OUT   src/slim/lodash.LICENSE
+OUT   src/slim/lodash.ts
+OUT   src/slim/lodash.test.ts
+OUT   .slim/lodash/envelope.json
+OUT   .slim/lodash/evidence.md
 OUT
 OUT Open PR 'slim/replace-lodash'? [Y/n] y
 ERR branch  slim/replace-lodash
 OUT pr      https://github.com/acme/edge-api/pull/842
 OUT
-OUT Read src/slim/lodash.evidence.md (~90s) and src/slim/lodash.js
+OUT Read .slim/lodash/evidence.md (~90s) and src/slim/lodash.ts
 OUT then merge. This is evidence, not proof.
 EXIT 0
 

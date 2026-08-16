@@ -54,6 +54,20 @@ test("docs replace vendor/slim with src/slim", () => {
   assert.deepEqual(hits, [], `leftover vendor/slim in ${hits.join(", ")}`);
 });
 
+test("docs slices are TypeScript, not 67-line lodash.js", () => {
+  const jsHits: string[] = [];
+  const lineHits: string[] = [];
+  for (const file of walkDocs(join(ROOT, "docs"))) {
+    if (!/\.(md|json|txt|yml|yaml)$/.test(file)) continue;
+    const rel = file.slice(ROOT.length + 1);
+    const text = readFileSync(file, "utf8");
+    if (text.includes("src/slim/lodash.js")) jsHits.push(rel);
+    if (/\b67 lines\b/.test(text) || /generate\s+\S+\s+\(67 lines\)/.test(text)) lineHits.push(rel);
+  }
+  assert.deepEqual(jsHits, [], `src/slim/lodash.js in ${jsHits.join(", ")}`);
+  assert.deepEqual(lineHits, [], `67-line generate claim in ${lineHits.join(", ")}`);
+});
+
 test("friday walkthrough documents --no-install", () => {
   const md = readFileSync(join(ROOT, "docs/friday.md"), "utf8");
   assert.match(md, /--no-install/);

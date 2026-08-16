@@ -231,30 +231,29 @@ lodash@4.17.21  MIT  71.0 kB min / 25.8 kB gz
 ```
 $ slim replace lodash
 envelope         get, debounce
-generate         src/slim/lodash.js  (67 lines)
+generate         src/slim/lodash.ts  (~248 lines)
 oracle fuzz      200/200 match lodash@4.17.21
 standing tests   12 pass
 project tests    npm test  (3 pass)
 imports          src/handler.ts
 package.json     - lodash
 
-  src/slim/lodash.js
-  src/slim/lodash.test.js
-  src/slim/lodash.meta.json
-  src/slim/lodash.evidence.md
-  src/slim/lodash.LICENSE
+  src/slim/lodash.ts
+  src/slim/lodash.test.ts
+  .slim/lodash/envelope.json
+  .slim/lodash/evidence.md
 
 Open PR 'slim/replace-lodash'? [Y/n] y
 branch  slim/replace-lodash
 pr      https://github.com/acme/edge-api/pull/842
 
-Read src/slim/lodash.evidence.md (~90s) and src/slim/lodash.js
+Read .slim/lodash/evidence.md (~90s) and src/slim/lodash.ts
 then merge. This is evidence, not proof.
 ```
 
 ### Evidence (what they actually read)
 
-See §8. They open `lodash.evidence.md`, then the 87-line file. The PR body is the first screen of that report plus the URL to the file.
+See §8. They open `.slim/lodash/evidence.md`, then the ~248-line file. The PR body is the first screen of that report plus the URL to the file.
 
 ### Cold-start framing (print this, don’t overclaim)
 
