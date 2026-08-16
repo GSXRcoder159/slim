@@ -4,7 +4,8 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsS
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SlimExit, EXIT_FAIL } from "../src/exit.ts";
+import { SlimExit, EXIT_FAIL, EXIT_ENV } from "../src/exit.ts";
+import * as githubPr from "../src/github/pr.ts";
 import { shouldRefreshLockfile } from "../src/rewrite/lockfile.ts";
 import {
   assertNoPollutionDependence,
@@ -164,6 +165,55 @@ test("get/set traces without __proto__ do not fail", () => {
     },
   ];
   assertNoPollutionDependence(traces);
+});
+
+test("PR requested without gh or token is EXIT_ENV after local writes", async () => {
+  assert.equal(typeof githubPr.maybeCreatePullRequest, "function");
+  await assert.rejects(
+    () =>
+      githubPr.maybeCreatePullRequest(
+        true,
+        { root: "/tmp", title: "t", body: "b", branch: "slim/x" },
+        {
+          hasGh: () => false,
+          env: {},
+          execFile: () => "",
+          fetchImpl: async () => new Response("no"),
+        },
+      ),
+    (err: unknown) =>
+      err instanceof SlimExit &&
+      err.code === EXIT_ENV &&
+      /install GitHub CLI/i.test(err.message) &&
+      /GITHUB_TOKEN/.test(err.message),
+  );
+});
+
+test("--no-pr never attempts PR and does not throw EXIT_ENV", async () => {
+  assert.equal(typeof githubPr.maybeCreatePullRequest, "function");
+  const result = await githubPr.maybeCreatePullRequest(
+    false,
+    { root: "/tmp", title: "t", body: "b", branch: "slim/x" },
+    {
+      hasGh: () => false,
+      env: {},
+      execFile: () => {
+        throw new Error("should not exec");
+      },
+      fetchImpl: async () => {
+        throw new Error("should not fetch");
+      },
+    },
+  );
+  assert.equal(result, null);
+});
+
+test("runReplace awaits PR after writes and does not swallow EXIT_ENV", () => {
+  const src = readFileSync(join(REPO_ROOT, "src/replace.ts"), "utf8");
+  assert.match(src, /await maybeCreatePullRequest\(!args\.noPr/);
+  const prSection = src.slice(src.lastIndexOf("if (!args.noPr)"));
+  const beforeReturn = prSection.split("return EXIT_OK")[0] ?? "";
+  assert.equal(/try\s*\{/.test(beforeReturn), false);
 });
 
 test("get/set path segment __proto__ is dependence regardless of result", () => {

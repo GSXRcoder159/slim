@@ -69,7 +69,7 @@ export async function runUpstream(args: CliArgs): Promise<number> {
     mkdirSync(join(project.root, ".slim"), { recursive: true });
     const body = `# Slim upstream review\n\nFail-closed: an advisory may expose this repo's slice.\n\n\`\`\`json\n${JSON.stringify(findings, null, 2)}\n\`\`\`\n`;
     writeFileSync(join(project.root, ".slim", "UPSTREAM.md"), body);
-    createPullRequest({
+    await createPullRequest({
       root: project.root,
       title: "slim: upstream advisory review",
       body,

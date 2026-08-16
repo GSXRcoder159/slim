@@ -29,7 +29,7 @@ import { rewritePackageJson } from "./rewrite/packagejson.ts";
 import { refreshLockfile, shouldRefreshLockfile } from "./rewrite/lockfile.ts";
 import { writeEvidence } from "./evidence/report.ts";
 import { emitStandingTests } from "./evidence/emit-tests.ts";
-import { createPullRequest, prBodyFromEvidence } from "./github/pr.ts";
+import { maybeCreatePullRequest, prBodyFromEvidence } from "./github/pr.ts";
 import { detectRunner, writeVitestTraceConfig, buildTraceSpawn, traceEnv } from "./trace/runners.ts";
 import { resolvePackageFamily } from "./analyze/family.ts";
 
@@ -268,13 +268,13 @@ export async function runReplace(args: CliArgs): Promise<number> {
   }
 
   if (!args.noPr) {
-    const pr = createPullRequest({
+    const pr = await maybeCreatePullRequest(!args.noPr, {
       root: project.root,
       title: `slim: replace ${env.package.name} with a verified slice`,
       body: prBodyFromEvidence(project.root, env.package.name),
       branch: `slim/${fileBase(env.package.name)}`,
     });
-    if (pr.url) process.stdout.write(pr.url + "\n");
+    if (pr?.url) process.stdout.write(pr.url + "\n");
   }
   return EXIT_OK;
 }
