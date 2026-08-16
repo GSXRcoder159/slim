@@ -320,7 +320,7 @@ Slim deletes a JS/TS dependency by replacing it with a verified slice.
   npx slim inspect lodash
   npx slim replace lodash
 
-You read ~90 lines and an evidence report. Evidence, not proof.
+You read a slice readable in one sitting (~250 lines for get+debounce) and an evidence report. Evidence, not proof.
 CI: slim check. Upstream CVEs: slim watch (a cron Action, not a SaaS).
 
 Requires Node 20.12+. Zero runtime dependencies.

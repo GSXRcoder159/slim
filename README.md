@@ -20,7 +20,7 @@ slim replace lodash
 
 You get:
 
-- `src/slim/lodash.ts` — a short module a human can read in one sitting (`get` + `debounce`, not 300 methods)
+- `src/slim/lodash.ts` — readable in one sitting (~250 lines for `get` + `debounce`, not 300 methods). Golden Worker-shaped fixture: `fixtures/lodash-get-debounce/` (`wrangler.toml`, `src/worker.ts`).
 - `.slim/lodash/evidence.md` — what was used, byte delta, fuzz counts, residual risk (never empty)
 - standing tests that replay frozen I/O pairs **without** keeping lodash installed
 - `lodash` removed from `package.json`

@@ -22,7 +22,7 @@ Ranked for the Friday serverless engineer: bytes or CVE pain, 1–5 call-site fu
 
 | # | Package | Typical slice | Original min / gz | Slim (est.) | Hardness | Why it matters on Workers / Lambda |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | **lodash** | `get`, `pick`, `debounce` | 71.0 kB / 25.8 kB (`4.17.21`) | ~1.8 kB / 0.9 kB (~70 lines) | easy–med | The demo. `require('lodash')` does not tree-shake. Prototype-pollution history. Unbundled Lambda still copies ~1.4 MB unpacked onto the image. |
+| 1 | **lodash** | `get`, `pick`, `debounce` | 71.0 kB / 25.8 kB (`4.17.21`) | ~1.8 kB / 0.9 kB (~250 lines for get+debounce) | easy–med | The demo. `require('lodash')` does not tree-shake. Prototype-pollution history. Unbundled Lambda still copies ~1.4 MB unpacked onto the image. Golden fixture: `fixtures/lodash-get-debounce/`. |
 | 2 | **whatwg-url** | `new URL(...)` | 470.9 kB / 168.5 kB | **0** (use global `URL`) | easy | Worst size/function ratio in the wave. Pulled by `node-fetch` / jsdom. The IDNA table (`tr46`) is the body. Workers and Node 20 already have `URL`. |
 | 3 | **mime-types** (via **mime-db**) | `lookup('json')` / `contentType('html')` for 2–10 types | 162.5 kB / 24.1 kB | ~0.4 kB | easy | A JSON encyclopedia of every MIME type ever, to answer `.json → application/json`. |
 | 4 | **validator** | `isEmail`, `isUUID`, `escape` | 125.2 kB / 39.2 kB | 2–8 kB | med | Auth/form Workers. `isEmail` is a rabbit hole (RFC + Gmail). v1 oracles against validator for *your* strings plus a fixture corpus, and says so on the tin. |

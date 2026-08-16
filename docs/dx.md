@@ -1,6 +1,6 @@
 # Slim developer experience
 
-Wedge: a serverless/edge engineer on a Friday. CVE in a library they use two functions of. They run `slim replace lodash`, read ~90 lines plus an evidence report, merge before standup.
+Wedge: a serverless/edge engineer on a Friday. CVE in a library they use two functions of. They run `slim replace lodash`, read a slice readable in one sitting (~250 lines for get+debounce) plus an evidence report, merge before standup.
 
 Money and billing are out of scope. There is no SaaS. Slim is a CLI plus two GitHub Actions that call that CLI.
 
@@ -231,7 +231,7 @@ lodash@4.17.21  MIT  71.0 kB min / 25.8 kB gz
 ```
 $ slim replace lodash
 envelope         get, debounce
-generate         src/slim/lodash.ts  (~248 lines)
+generate         src/slim/lodash.ts  (~250 lines)
 oracle fuzz      200/200 match lodash@4.17.21
 standing tests   12 pass
 project tests    npm test  (3 pass)
@@ -253,7 +253,7 @@ then merge. This is evidence, not proof.
 
 ### Evidence (what they actually read)
 
-See §8. They open `.slim/lodash/evidence.md`, then the ~248-line file. The PR body is the first screen of that report plus the URL to the file.
+See §8. They open `.slim/lodash/evidence.md`, then the ~250-line file. The PR body is the first screen of that report plus the URL to the file. Worker-shaped golden fixture: `fixtures/lodash-get-debounce/`.
 
 ### Cold-start framing (print this, don’t overclaim)
 
