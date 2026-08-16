@@ -45,8 +45,14 @@ export class OriginalSourceGuard {
         `OriginalSourceGuard: public spec must be .d.ts or README, got ${filePath}`,
       );
     }
-    return readFileSync(filePath, "utf8");
+    return guardedReadFileSync(filePath);
   }
+}
+
+/** Generate/validate file reads. Fuzz workers may still import originals. */
+export function guardedReadFileSync(filePath: string): string {
+  OriginalSourceGuard.assertNotOriginalImpl(filePath);
+  return readFileSync(filePath, "utf8");
 }
 
 export function slimRoot(): string {

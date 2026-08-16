@@ -1,5 +1,6 @@
 import { SlimExit, EXIT_REFUSED } from "../exit.ts";
 import { buildPrompt } from "./prompt.ts";
+import { withGeneratedHeader } from "./header.ts";
 import type { Envelope } from "../envelope/types.ts";
 
 export interface LlmConfig {
@@ -86,7 +87,7 @@ export async function generateWithLlm(
     };
     text = json.choices?.[0]?.message?.content ?? "";
   }
-  const source = stripFences(text);
+  const source = withGeneratedHeader(stripFences(text), envelope, { promptHash });
   if (!source.includes("export")) {
     throw new SlimExit(EXIT_REFUSED, "LLM returned no TypeScript exports");
   }

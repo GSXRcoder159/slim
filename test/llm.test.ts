@@ -62,4 +62,8 @@ test("generateWithLlm uses a fake provider", async () => {
     fake,
   );
   assert.match(out.source, /export function ms/);
+  assert.ok(out.promptHash);
+  assert.match(out.source, /SPDX-License-Identifier: MIT/);
+  assert.match(out.source, new RegExp(`Prompt ${out.promptHash}`));
+  assert.match(out.source, /Differential fuzzing is evidence, not proof/);
 });

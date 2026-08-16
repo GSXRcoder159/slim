@@ -28,7 +28,7 @@ export async function repairLoop(opts: {
   const examples: string[] = [];
   while (attempts < Math.max(1, opts.maxAttempts)) {
     attempts++;
-    assertValidGenerated(ts, source);
+    assertValidGenerated(ts, source, opts.envelope);
     const report = await opts.fuzz(source);
     if (report.disagreements.length === 0) {
       return { source, report, attempts };

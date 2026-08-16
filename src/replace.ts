@@ -18,6 +18,7 @@ import { refusePackage, formatRefuse } from "./scan/refuse.ts";
 import { estimatePackageSize } from "./size/estimate.ts";
 import { matchCatalog } from "./generate/catalog/index.ts";
 import { assembleCatalogModule } from "./generate/assemble.ts";
+import { withGeneratedHeader } from "./generate/header.ts";
 import { llmConfigFromEnv, generateWithLlm } from "./generate/llm.ts";
 import { assertValidGenerated, assertSmaller } from "./generate/validate.ts";
 import { loadPublicApi } from "./generate/public-api.ts";
@@ -89,11 +90,11 @@ export async function runReplace(args: CliArgs): Promise<number> {
     process.stderr.write("generating with LLM (clean-room)…\n");
     const pub = loadPublicApi(project.root, env.package.name);
     const gen = await generateWithLlm(env, pub, [], llm);
-    source = gen.source;
+    source = withGeneratedHeader(gen.source, env, { promptHash: gen.promptHash });
   }
 
   const ts = loadTargetTypescript(project.root);
-  assertValidGenerated(ts, source);
+  assertValidGenerated(ts, source, env);
   const originalSize = estimatePackageSize(project.root, env.package.name);
   const replacementBytes = Buffer.byteLength(source);
   assertSmaller(replacementBytes, originalSize.minBytes ?? 0, args.force);
@@ -142,8 +143,8 @@ export async function runReplace(args: CliArgs): Promise<number> {
         (d) => `${d.symbol}: ${d.reason} args=${JSON.stringify(d.minimized ?? d.args)}`,
       );
       const next = await generateWithLlm(env, pub, examples, llm);
-      source = next.source;
-      assertValidGenerated(ts, source);
+      source = withGeneratedHeader(next.source, env, { promptHash: next.promptHash });
+      assertValidGenerated(ts, source, env);
       writeFileSync(tmpSlim, ts.transpileModule(source, {
         compilerOptions: {
           module: ts.ModuleKind.ESNext,
