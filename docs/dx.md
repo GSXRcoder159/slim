@@ -38,7 +38,7 @@ The shipped CLI uses **0–4 only**. Code 5 is reserved for an internal bug path
 
 SIGINT → 130. Do not invent other codes in v1.
 
-`slim-bloat` (the Action) uses `scan --diff`. Default exit 0 even when it comments. `--fail` makes it exit 1.
+`slim-bloat` (the Action) runs the compiled bloat checker (`action/run.mjs bloat`), not `scan --diff`. Default exit 0 when the PR comment path is unused. The action fails (exit 1) when a production `BLOAT_PACKAGES` dependency has no Slim replacement.
 
 ### Global flags (every command)
 
@@ -57,19 +57,17 @@ Shipped top-level help is the `HELP` string in `src/cli.ts` (`slim --help`). Kee
 
 ### `slim scan [dir]`
 
-Discover direct deps that look slimmable.
+Inventory of third-party packages (declared deps plus imported undeclared names). Not an envelope. Findings are data; exit 0 unless usage/internal.
 
 ```
---all                 Include packages under the size floor
---min-size <bytes>    Default 5120. Accepts 5kb, 5k, 5120
---diff                Only deps added in this git diff (PR bloat)
---fail                Exit 1 if anything would rank (for slim-bloat)
---limit <n>           Default 20
+--json                One schema-valid document on stdout (docs/scan.schema.json)
 ```
 
-Stdout (human): a table, then a refuse section. JSON: `{ candidates: [...], refused: [...], measuredHow: "bundler"|"unpacked"|"bundlephobia-cache" }`.
+Optional `[dir]` is a project directory. Relative imports, absolute paths, URLs, Node builtins, and `file:`/`workspace:`/`link:`/`portal:` packages are omitted. `verdict` is `candidate` | `review` | `refuse` | `unused` — never `slim` or `closed`. Size fields are `measured` (unpacked `node_modules`), `estimated` (known min table / gzip guess), or `unknown`. Lockfile versions are `exact`, or `unknown` with `versionState` `range-only` / `malformed` / `unavailable`.
 
-Does not network unless bundle size cannot be measured locally; then optional npm/bundlephobia, fail open (size = unpacked or unknown) rather than exit 4.
+Stdout (human): a table of every row including unused and undeclared. JSON: `{ schemaVersion, lockfile, rows }` with no absolute `root`. No `--all`, `--min-size`, `--diff`, `--fail`, or `--limit`.
+
+Does not network. Unpacked or estimated size is local; missing size is `unknown`.
 
 ### `slim inspect <pkg>`
 
@@ -185,19 +183,14 @@ Project: a Cloudflare Worker. `lodash@4.17.21`. GHSA out for `_.template` protot
 
 ```
 $ slim scan
-slim scan  src/  wrangler.toml  package.json
+package                      relation              verdict     sites    min       note
+lodash                       declared-imported     candidate   2        71.0kB
+axios                        declared-imported     refuse      3        18.1kB    network client — envelope is HTTP
 
-  package       into bundle   used     score   next
-  lodash        25.8 kB gz    get, debounce    1   slim inspect lodash
-  mime-types    24.1 kB gz    lookup           2   slim inspect mime-types
-
-  2 more under 5 kB hidden (ms, cookie). --all to show.
-
-  fat, not slimmable:
-  axios         18.1 kB gz    envelope-network   keep or switch to fetch
-
-Measured from wrangler bundle (esbuild). Unpacked lodash on disk: 1.4 MB.
+1 candidate. Scan does not close an envelope. Run slim inspect <pkg> then slim replace <pkg>.
 ```
+
+JSON (`--json`) is `{ schemaVersion, lockfile, rows }`. See `docs/scan.schema.json`.
 
 ### `slim inspect lodash`
 
@@ -344,7 +337,7 @@ jobs:
       - uses: slim-js/slim/action/bloat@v1
 ```
 
-`action/bloat/action.yml` runs `npx slim scan --diff` and, if candidates exist, comments on the PR with `gh`:
+`action/bloat/action.yml` runs `action/run.mjs bloat` (compiled `dist/github/bloat-action.js` when present). It flags production `BLOAT_PACKAGES` without a Slim replacement; it does not run `slim scan --diff`.
 
 ```
 This PR adds lodash (71 kB min / 25.8 kB gz). Call sites look like 2 functions.

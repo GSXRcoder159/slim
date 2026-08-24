@@ -27,7 +27,7 @@ export const KNOWN_MIN_BYTES: Record<string, number> = {
 
 export interface SizeEstimate {
   minBytes: number | null;
-  source: "known" | "node_modules" | "unknown";
+  source: "estimated" | "measured" | "unknown";
   unpackedBytes: number | null;
 }
 
@@ -67,10 +67,10 @@ export function estimatePackageSize(projectRoot: string, name: string): SizeEsti
   let unpacked: number | null = null;
   if (existsSync(nm)) unpacked = dirSize(nm);
   if (known != null) {
-    return { minBytes: known, source: "known", unpackedBytes: unpacked };
+    return { minBytes: known, source: "estimated", unpackedBytes: unpacked };
   }
   if (unpacked != null) {
-    return { minBytes: unpacked, source: "node_modules", unpackedBytes: unpacked };
+    return { minBytes: unpacked, source: "measured", unpackedBytes: unpacked };
   }
   return { minBytes: null, source: "unknown", unpackedBytes: null };
 }

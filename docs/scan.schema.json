@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/scan.schema.json",
+  "title": "Slim scan --json report",
+  "description": "One JSON document on stdout. Scan is an inventory and ranking heuristic, not a closed envelope. schemaVersion 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "lockfile", "rows"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "lockfile": { "type": ["string", "null"], "enum": ["npm", "pnpm", "yarn", "bun", null] },
+    "rows": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/row" }
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "family",
+        "subpaths",
+        "importSites",
+        "version",
+        "versionState",
+        "versionReason",
+        "relation",
+        "declaredAs",
+        "verdict",
+        "slimmable",
+        "minBytes",
+        "gzipBytes",
+        "sizeProvenance",
+        "sizeState",
+        "note"
+      ],
+      "properties": {
+        "name": { "type": "string" },
+        "family": { "type": "string" },
+        "subpaths": { "type": "array", "items": { "type": "string" } },
+        "importSites": { "type": "integer", "minimum": 0 },
+        "version": { "type": "string" },
+        "versionState": { "type": "string", "enum": ["exact", "range-only", "malformed", "unavailable"] },
+        "versionReason": { "type": "string" },
+        "relation": {
+          "type": "string",
+          "enum": ["declared-imported", "declared-unused", "imported-undeclared"]
+        },
+        "declaredAs": { "type": "string", "enum": ["dependency", "optional", "peer", "dev", "none"] },
+        "verdict": { "type": "string", "enum": ["candidate", "review", "refuse", "unused"] },
+        "slimmable": { "type": "number" },
+        "minBytes": { "type": ["integer", "null"] },
+        "gzipBytes": { "type": ["integer", "null"] },
+        "sizeProvenance": { "type": "string", "enum": ["measured", "estimated", "unknown"] },
+        "sizeState": {
+          "type": "string",
+          "enum": ["measured", "estimated", "unknown", "refused", "review"]
+        },
+        "note": { "type": "string" }
+      }
+    }
+  }
+}

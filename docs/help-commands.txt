@@ -1,19 +1,15 @@
-# Per-command --help (keep ≤ 40 lines each). Tested against src/help.js.
+# Per-command notes (keep ≤ 40 lines each). Shipped top-level help is docs/help.txt.
 
 ------------------------------------------------------------------------
-slim scan — find packages you only use a few functions of
+slim scan — inventory third-party packages (not a closed envelope)
 
 Usage:
-  slim scan [dir]
+  slim scan [dir] [--json]
 
-      --all              Include packages under the size floor
-      --min-size <n>     Default 5kb. Also 5120, 5k
-      --diff             Only deps added in this git diff (PR bloat)
-      --fail             Exit 1 if anything ranks (slim-bloat)
-      --limit <n>        Default 20
+      --json             One schema-valid document on stdout
 
 Exit 0 even when it finds candidates. Findings are data.
-Example:  slim scan
+Never claims slim/closed. Example:  slim scan --json
 ------------------------------------------------------------------------
 slim inspect — show call sites, envelope, and whether Slim will try
 

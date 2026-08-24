@@ -82,7 +82,7 @@ These are slimmable and painful, but the envelope is a project.
 | fast-xml-parser | med | XML. Same “wrong parser” problem as markdown. |
 | semver | ~range grammar | `jsonwebtoken` already drags it in. A `satisfies` slice is med. |
 
-Tiny packages Slim *can* replace (supply-chain, not bytes): `ms` (1.5 / 0.7), `cookie`, `escape-html` (0.6 / 0.4), `deepmerge` (1.7 / 0.7), `nanoid`. `scan` hides them unless `--all`. A CVE in `ms` is still a Friday.
+Tiny packages Slim *can* replace (supply-chain, not bytes): `ms` (1.5 / 0.7), `cookie`, `escape-html` (0.6 / 0.4), `deepmerge` (1.7 / 0.7), `nanoid`. Scan lists them when they are declared or imported; it does not hide them behind `--all`. A CVE in `ms` is still a Friday.
 
 ---
 
@@ -230,18 +230,15 @@ error: slim will not replace 'core-js'
 
 ---
 
-## Scan ranking (what `slim scan` actually sorts by)
+## Scan ranking (what `slim scan` actually reports)
 
-Not download counts. Per direct dependency:
+Scan is an inventory, not a closed envelope. It does **not** score CVE boosts or wrangler/esbuild “into bundle” bytes (those belong to later phases).
 
-```
-score = bytes_into_bundle * (1 / max(used_exports, 1)) * shake_penalty * cve_boost
-```
+Per third-party package name:
 
-- **bytes_into_bundle:** for a bundled app (esbuild/wrangler), the package’s contribution after the project’s bundler if we can run it; otherwise Bundlephobia min. For unbundled Lambda, unpacked directory size.
-- **shake_penalty:** 3× if CJS default import / `require('lodash')`; 1× if already named ESM.
-- **cve_boost:** 2× if OSV has an advisory on the resolved version.
+- **Sites** come from include/ignore-filtered source. Relative, absolute, URL, builtin, and `file:`/`workspace:` deps are omitted.
+- **Version** is lockfile/`node_modules` exact, or `unknown` with `range-only` / `malformed` / `unavailable` — never a stripped `^` range pretending to be exact.
+- **Verdict** `candidate` vs `review` is a ranking heuristic (known-large / few sites). `refuse` is the refuse table. `unused` is declared with no import. Scan never emits `slim`.
+- **Size provenance** is `measured` (unpacked), `estimated` (known min table / gzip guess), or `unknown`.
 
-Hide packages under `--min-size` (default 5 kB min) unless `--all`.
-
-Always list refuse-reasons in a second section: “fat, but Slim will not touch these.” Axios showing up there is the point.
+Human output lists unused and undeclared rows. `inspect` / `replace` close an envelope; scan does not.

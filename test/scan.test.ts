@@ -1,14 +1,17 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire, isBuiltin } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadProject, walkSourceFiles, filterSourceFiles } from "../src/project.ts";
-import { analyzePackage, collectImportSpecifiers } from "../src/analyze/index.ts";
-import { scanProject } from "../src/scan.ts";
+import { analyzePackage, collectImportSpecifiers, parseSpecifier } from "../src/analyze/index.ts";
+import { formatScanHuman, scanProject, scanReportJson } from "../src/scan.ts";
 import { lockfileDirectDeps } from "../src/scan/lockfile-deps.ts";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 function linkTypescript(root: string) {
   const tsDir = dirname(createRequire(import.meta.url).resolve("typescript/package.json"));
@@ -110,7 +113,8 @@ test("npm lockfile v3 yields exact direct versions", () => {
     },
   );
   const deps = lockfileDirectDeps(root, "npm");
-  assert.equal(deps.get("lodash"), "4.17.21");
+  assert.equal(deps.state, "ok");
+  assert.equal(deps.versions.get("lodash"), "4.17.21");
 });
 
 test("scan prefers lockfile exact version over package.json range", () => {
@@ -161,7 +165,8 @@ packages: {}
 `,
   });
   const deps = lockfileDirectDeps(root, "pnpm");
-  assert.equal(deps.get("lodash"), "4.17.21");
+  assert.equal(deps.state, "ok");
+  assert.equal(deps.versions.get("lodash"), "4.17.21");
 });
 
 test("yarn.lock reads top-level package versions", () => {
@@ -174,7 +179,8 @@ lodash@^4.17.21:
 `,
   });
   const deps = lockfileDirectDeps(root, "yarn");
-  assert.equal(deps.get("lodash"), "4.17.21");
+  assert.equal(deps.state, "ok");
+  assert.equal(deps.versions.get("lodash"), "4.17.21");
 });
 
 test("walkSourceFiles still skips node_modules by directory name", () => {
@@ -190,4 +196,419 @@ test("walkSourceFiles still skips node_modules by directory name", () => {
   );
 });
 
+test("parseSpecifier rejects relative, absolute, URL, protocol, and Node builtins", () => {
+  assert.equal(parseSpecifier("./foo"), null);
+  assert.equal(parseSpecifier("../bar"), null);
+  assert.equal(parseSpecifier("/abs/pkg"), null);
+  assert.equal(parseSpecifier("C:/windows/path"), null);
+  assert.equal(parseSpecifier("https://example.com/pkg"), null);
+  assert.equal(parseSpecifier("http://example.com/pkg"), null);
+  assert.equal(parseSpecifier("file:../lib"), null);
+  assert.equal(parseSpecifier("node:fs"), null);
+  assert.equal(parseSpecifier("bun:sqlite"), null);
+  assert.equal(parseSpecifier("npm:lodash"), null);
+  assert.equal(parseSpecifier("fs"), null);
+  assert.equal(parseSpecifier("path"), null);
+  assert.equal(parseSpecifier("fs/promises"), null);
+  assert.equal(parseSpecifier("#local"), null);
+  assert.ok(isBuiltin("fs"));
+});
+
+test("parseSpecifier keeps scoped packages and subpaths", () => {
+  assert.deepEqual(parseSpecifier("@scope/pkg/subpath"), {
+    name: "@scope/pkg",
+    subpath: "subpath",
+  });
+  assert.deepEqual(parseSpecifier("lodash/get"), { name: "lodash", subpath: "get" });
+  assert.deepEqual(parseSpecifier("lodash.get"), { name: "lodash.get", subpath: "" });
+});
+
+test("scan omits relative, absolute, URL, and builtin import rows", () => {
+  const root = mini({
+    "src/app.ts": `
+      import { join } from "node:path";
+      import fs from "fs";
+      import rel from "./util.ts";
+      import abs from "/usr/lib/foo";
+      import remote from "https://example.com/pkg";
+      import { get } from "lodash";
+      export const a = get({}, "x") + join("a", "b") + fs + rel + abs + remote;
+    `,
+    "src/util.ts": `export default 1;\n`,
+  });
+  const report = scanProject(root);
+  const names = report.rows.map((r) => r.name);
+  for (const n of names) {
+    assert.equal(n.startsWith("."), false, n);
+    assert.equal(n.startsWith("/"), false, n);
+    assert.equal(n.startsWith("node:"), false, n);
+    assert.equal(n.includes("://"), false, n);
+    assert.equal(isBuiltin(n), false, n);
+  }
+  assert.ok(report.rows.some((r) => r.name === "lodash"));
+});
+
+test("scan maps package.json #imports alias to the external package", () => {
+  const root = mini(
+    {
+      "src/app.ts": `import { get } from "#lodash";\nexport const a = get({}, "x");\n`,
+    },
+    {
+      dependencies: { lodash: "^4.17.21" },
+      imports: { "#lodash": "lodash" },
+    },
+  );
+  const map = collectImportSpecifiers(loadProject(root));
+  assert.ok(map.has("lodash"));
+  assert.equal(map.has("#lodash"), false);
+  const report = scanProject(root);
+  const lodash = report.rows.find((r) => r.name === "lodash");
+  assert.ok(lodash && lodash.importSites > 0);
+});
+
+test("scan skips #imports that resolve to a relative path", () => {
+  const root = mini(
+    {
+      "src/app.ts": `import local from "#util";\nexport default local;\n`,
+      "src/util.ts": `export default 1;\n`,
+    },
+    {
+      dependencies: { lodash: "^4.17.21" },
+      imports: { "#util": "./src/util.ts" },
+    },
+  );
+  const report = scanProject(root);
+  assert.equal(
+    report.rows.some((r) => r.name === "#util" || r.name.includes("util.ts")),
+    false,
+  );
+});
+
+test("scan excludes file: workspace packages from third-party rows", () => {
+  const root = mini(
+    {
+      "src/app.ts": `import x from "local-lib";\nimport { get } from "lodash";\nexport const a = get(x, "y");\n`,
+    },
+    {
+      dependencies: { lodash: "^4.17.21", "local-lib": "file:../local-lib" },
+    },
+  );
+  const report = scanProject(root);
+  assert.equal(
+    report.rows.some((r) => r.name === "local-lib"),
+    false,
+  );
+  assert.ok(report.rows.some((r) => r.name === "lodash"));
+});
+
+test("scan reports @scope/pkg/subpath as package plus retained subpath and lockfile version", () => {
+  const root = mini(
+    {
+      "src/app.ts": `import fn from "@scope/pkg/subpath";\nexport const a = fn();\n`,
+      "package-lock.json": JSON.stringify({
+        name: "mini",
+        lockfileVersion: 3,
+        packages: {
+          "": { dependencies: { "@scope/pkg": "^2.0.0" } },
+          "node_modules/@scope/pkg": { version: "2.3.4" },
+        },
+      }),
+    },
+    { dependencies: { "@scope/pkg": "^2.0.0" } },
+  );
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "@scope/pkg");
+  assert.ok(row);
+  assert.equal(row!.version, "2.3.4");
+  assert.equal(row!.versionState, "exact");
+  assert.deepEqual(row!.subpaths, ["subpath"]);
+});
+
+test("lodash family accounting keeps siblings distinct without zero-site duplicates", () => {
+  const root = mini(
+    {
+      "src/app.ts": `
+        import { get } from "lodash/get";
+        import debounce from "lodash.debounce";
+        import { map } from "lodash-es";
+        export const a = get({}, "x");
+        export const d = debounce(() => {}, 1);
+        export const m = map([], (x) => x);
+      `,
+    },
+    {
+      dependencies: {
+        lodash: "^4.17.21",
+        "lodash-es": "^4.17.21",
+        "lodash.debounce": "^4.0.8",
+        leftover: "^1.0.0",
+      },
+    },
+  );
+  const report = scanProject(root);
+  const lodash = report.rows.find((r) => r.name === "lodash");
+  const es = report.rows.find((r) => r.name === "lodash-es");
+  const perMethod = report.rows.find((r) => r.name === "lodash.debounce");
+  const leftover = report.rows.find((r) => r.name === "leftover");
+  assert.ok(lodash && es && perMethod && leftover);
+  assert.equal(lodash!.family, "lodash");
+  assert.equal(es!.family, "lodash");
+  assert.equal(perMethod!.family, "lodash");
+  assert.ok(lodash!.subpaths.includes("get"));
+  assert.deepEqual(perMethod!.subpaths, ["debounce"]);
+  assert.ok(lodash!.importSites > 0);
+  assert.ok(es!.importSites > 0);
+  assert.ok(perMethod!.importSites > 0);
+  assert.equal(leftover!.importSites, 0);
+  assert.equal(leftover!.relation, "declared-unused");
+  assert.equal(es!.importSites === lodash!.importSites && es!.name === lodash!.name, false);
+});
+
+test("npm lockfile v1 yields exact top-level versions", () => {
+  const root = mini({
+    "package-lock.json": JSON.stringify({
+      name: "mini",
+      lockfileVersion: 1,
+      dependencies: {
+        lodash: { version: "4.17.21", dependencies: { "lodash-es": { version: "4.0.0" } } },
+      },
+    }),
+  });
+  const deps = lockfileDirectDeps(root, "npm");
+  assert.equal(deps.state, "ok");
+  assert.equal(deps.versions.get("lodash"), "4.17.21");
+  assert.equal(deps.versions.has("lodash-es"), false);
+});
+
+test("yarn.lock keeps scoped package names", () => {
+  const root = mini({
+    "yarn.lock": `# yarn lockfile v1
+
+"@scope/pkg@^2.0.0":
+  version "2.3.4"
+  resolved "https://registry.yarnpkg.com/@scope/pkg/-/pkg-2.3.4.tgz"
+
+vue@^3.0.0:
+  version "3.5.0"
+`,
+  });
+  const deps = lockfileDirectDeps(root, "yarn");
+  assert.equal(deps.versions.get("@scope/pkg"), "2.3.4");
+  assert.equal(deps.versions.get("vue"), "3.5.0");
+});
+
+test("yarn berry lockfile reads npm: protocol versions", () => {
+  const root = mini({
+    "yarn.lock": `# This file is generated by running "yarn install" inside your project.
+
+__metadata:
+  version: 6
+
+"lodash@npm:^4.17.21":
+  version: 4.17.21
+  resolution: "lodash@npm:4.17.21"
+
+"@scope/pkg@npm:^2.0.0":
+  version: 2.3.4
+  resolution: "@scope/pkg@npm:2.3.4"
+`,
+  });
+  const deps = lockfileDirectDeps(root, "yarn");
+  assert.equal(deps.state, "ok");
+  assert.equal(deps.versions.get("lodash"), "4.17.21");
+  assert.equal(deps.versions.get("@scope/pkg"), "2.3.4");
+});
+
+test("bun.lock text yields exact direct versions", () => {
+  const root = mini({
+    "bun.lock": `{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "lodash": "^4.17.21",
+        "@scope/pkg": "^2.0.0"
+      }
+    }
+  },
+  "packages": {
+    "lodash": ["lodash@4.17.21", "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz", {}, "sha512-aa"],
+    "@scope/pkg": ["@scope/pkg@2.3.4", "https://registry.npmjs.org/@scope/pkg/-/pkg-2.3.4.tgz", {}, "sha512-bb"]
+  }
+}
+`,
+  });
+  const deps = lockfileDirectDeps(root, "bun");
+  assert.equal(deps.state, "ok");
+  assert.equal(deps.versions.get("lodash"), "4.17.21");
+  assert.equal(deps.versions.get("@scope/pkg"), "2.3.4");
+});
+
+test("bun.lock with comments still parses", () => {
+  const root = mini({
+    "bun.lock": `// bun lockfile
+{
+  "lockfileVersion": 1,
+  "packages": {
+    "lodash": ["lodash@4.17.21"]
+  }
+}
+`,
+  });
+  const deps = lockfileDirectDeps(root, "bun");
+  assert.equal(deps.state, "ok");
+  assert.equal(deps.versions.get("lodash"), "4.17.21");
+});
+
+test("binary bun.lockb is unavailable with a reason", () => {
+  const root = mini({
+    "bun.lockb": Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe]).toString("latin1"),
+  });
+  writeFileSync(join(root, "bun.lockb"), Buffer.from([0x00, 0x01, 0x02, 0xff, 0xfe]));
+  const deps = lockfileDirectDeps(root, "bun");
+  assert.equal(deps.state, "unavailable");
+  assert.match(deps.reason, /bun\.lockb|binary|text bun\.lock/i);
+  assert.equal(deps.versions.size, 0);
+});
+
+test("malformed npm lockfile reports unknown with reason, not a stripped range", () => {
+  const root = mini(
+    {
+      "src/app.ts": `import { get } from "lodash";\nexport const a = get({}, "x");\n`,
+      "package-lock.json": "{ this is not json",
+    },
+  );
+  const deps = lockfileDirectDeps(root, "npm");
+  assert.equal(deps.state, "malformed");
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "lodash");
+  assert.ok(row);
+  assert.equal(row!.version, "unknown");
+  assert.equal(row!.versionState, "malformed");
+  assert.ok(row!.versionReason.length > 0);
+  assert.equal(row!.version.includes("4.17.21"), false);
+});
+
+test("no lockfile keeps package.json range as range-only unknown", () => {
+  const root = mini({
+    "src/app.ts": `import { get } from "lodash";\nexport const a = get({}, "x");\n`,
+  });
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "lodash");
+  assert.ok(row);
+  assert.equal(row!.version, "unknown");
+  assert.equal(row!.versionState, "range-only");
+  assert.match(row!.versionReason, /\^4\.17\.21|range/i);
+});
+
+test("declared-unused and imported-undeclared are distinct in JSON and human output", () => {
+  const root = mini(
+    {
+      "src/app.ts": `import ghost from "ghost-pkg";\nexport default ghost;\n`,
+    },
+    {
+      dependencies: { leftover: "^1.0.0" },
+      optionalDependencies: { "opt-pkg": "^2.0.0" },
+    },
+  );
+  const report = scanProject(root);
+  const leftover = report.rows.find((r) => r.name === "leftover");
+  const ghost = report.rows.find((r) => r.name === "ghost-pkg");
+  const opt = report.rows.find((r) => r.name === "opt-pkg");
+  assert.ok(leftover && ghost && opt);
+  assert.equal(leftover!.relation, "declared-unused");
+  assert.equal(leftover!.verdict, "unused");
+  assert.equal(leftover!.declaredAs, "dependency");
+  assert.equal(ghost!.relation, "imported-undeclared");
+  assert.equal(ghost!.declaredAs, "none");
+  assert.equal(opt!.declaredAs, "optional");
+  assert.equal(opt!.relation, "declared-unused");
+  const human = formatScanHuman(report);
+  assert.match(human, /leftover/);
+  assert.match(human, /ghost-pkg/);
+  assert.match(human, /declared-unused|unused/);
+  assert.match(human, /imported-undeclared|undeclared/);
+  assert.doesNotMatch(human, /slimmable/i);
+});
+
+test("scan never awards slim from size and few import sites", () => {
+  const root = mini({
+    "src/app.ts": `import { get } from "lodash";\nexport const a = get({}, "x");\n`,
+  });
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "lodash");
+  assert.ok(row);
+  assert.notEqual(row!.verdict, "slim");
+  assert.ok(row!.verdict === "candidate" || row!.verdict === "review");
+  assert.equal(
+    report.rows.some((r) => r.verdict === "slim"),
+    false,
+  );
+});
+
+test("scan ignore from slim.json drops sites in ignored paths", () => {
+  const root = mini({
+    "src/app.ts": `import { get } from "lodash";\nexport const a = get({}, "x");\n`,
+    "src/vendor/copy.ts": `import moment from "moment";\nexport const b = moment();\n`,
+    "slim.json": JSON.stringify({ ignore: ["vendor"] }),
+  });
+  const report = scanProject(root);
+  const lodash = report.rows.find((r) => r.name === "lodash");
+  const moment = report.rows.find((r) => r.name === "moment");
+  assert.ok(lodash && lodash.importSites > 0);
+  assert.ok(!moment || moment.importSites === 0);
+});
+
+test("scan JSON has no absolute root and is byte-identical across runs", () => {
+  const root = mini({
+    "src/app.ts": `import { get } from "lodash";\nexport const a = get({}, "x");\n`,
+  });
+  const a = scanReportJson(scanProject(root));
+  const b = scanReportJson(scanProject(root));
+  assert.equal(a, b);
+  const doc = JSON.parse(a) as { root?: unknown; rows: unknown };
+  assert.equal("root" in doc, false);
+  assert.equal(a.includes(root), false);
+});
+
+test("scan --json emits one schema-valid document and no progress on stdout", () => {
+  const root = mini({
+    "src/app.ts": `import { get } from "lodash";\nexport const a = get({}, "x");\n`,
+  });
+  const r = spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", join(ROOT, "src/main.ts"), "scan", "--json", root],
+    { encoding: "utf8", timeout: 30_000, env: { ...process.env, CI: "1" } },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  const stdout = r.stdout ?? "";
+  assert.equal(stdout.trimStart().startsWith("{"), true, stdout);
+  const doc = JSON.parse(stdout) as unknown;
+  const pretty = JSON.stringify(doc, null, 2) + "\n";
+  const compact = JSON.stringify(doc) + "\n";
+  assert.ok(stdout === pretty || stdout === compact, "stdout is not exactly one JSON document");
+  const schema = JSON.parse(readFileSync(join(ROOT, "docs/scan.schema.json"), "utf8")) as {
+    required: string[];
+    properties: Record<string, unknown>;
+  };
+  assert.ok(schema.required.includes("schemaVersion"));
+  assert.ok(schema.required.includes("rows"));
+  const rec = doc as Record<string, unknown>;
+  for (const key of schema.required) {
+    assert.ok(key in rec, `missing ${key}`);
+  }
+});
+
+test("scanning this repository emits zero relative, absolute, or builtin rows", () => {
+  const report = scanProject(ROOT);
+  for (const row of report.rows) {
+    assert.equal(row.name.startsWith("."), false, row.name);
+    assert.equal(row.name.startsWith("/"), false, row.name);
+    assert.equal(row.name.startsWith("node:"), false, row.name);
+    assert.equal(isBuiltin(row.name), false, row.name);
+    assert.equal(/^[a-zA-Z]:[\\/]/.test(row.name), false, row.name);
+  }
+});
+
 void fileURLToPath;
+void existsSync;

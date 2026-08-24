@@ -2,11 +2,27 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Project } from "../project.ts";
 
-/** Direct dependency name → exact lockfile version. */
+export type LockfileFileState = "ok" | "malformed" | "unavailable" | "absent";
+
+export interface LockfileResult {
+  state: LockfileFileState;
+  reason: string;
+  versions: Map<string, string>;
+}
+
+function empty(state: LockfileFileState, reason: string): LockfileResult {
+  return { state, reason, versions: new Map() };
+}
+
+function ok(versions: Map<string, string>): LockfileResult {
+  return { state: "ok", reason: "", versions };
+}
+
+/** Direct dependency name → exact lockfile version, plus parse honesty. */
 export function lockfileDirectDeps(
   root: string,
   kind: Project["lockfile"],
-): Map<string, string> {
+): LockfileResult {
   if (kind === "npm") return parseNpmLock(join(root, "package-lock.json"));
   if (kind === "pnpm") return parsePnpmLock(join(root, "pnpm-lock.yaml"));
   if (kind === "yarn") return parseYarnLock(join(root, "yarn.lock"));
@@ -14,23 +30,32 @@ export function lockfileDirectDeps(
     const text = join(root, "bun.lock");
     const bin = join(root, "bun.lockb");
     if (existsSync(text)) return parseBunLock(text);
-    if (existsSync(bin)) return parseBunLock(bin);
+    if (existsSync(bin)) {
+      return empty(
+        "unavailable",
+        "binary bun.lockb is not parsed; add a text bun.lock",
+      );
+    }
+    return empty("absent", "no bun.lock");
   }
-  return new Map();
+  return empty("absent", "no lockfile");
 }
 
-function parseNpmLock(path: string): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!existsSync(path)) return out;
+function parseNpmLock(path: string): LockfileResult {
+  const versions = new Map<string, string>();
+  if (!existsSync(path)) return empty("absent", "package-lock.json missing");
   let json: {
     lockfileVersion?: number;
-    packages?: Record<string, { version?: string; dependencies?: Record<string, string>; optionalDependencies?: Record<string, string> }>;
+    packages?: Record<
+      string,
+      { version?: string; dependencies?: Record<string, string>; optionalDependencies?: Record<string, string> }
+    >;
     dependencies?: Record<string, { version?: string; dependencies?: Record<string, { version?: string }> }>;
   };
   try {
     json = JSON.parse(readFileSync(path, "utf8")) as typeof json;
   } catch {
-    return out;
+    return empty("malformed", "package-lock.json is not valid JSON");
   }
   const pkgs = json.packages;
   if (pkgs) {
@@ -41,24 +66,27 @@ function parseNpmLock(path: string): Map<string, string> {
     };
     for (const name of Object.keys(direct)) {
       const rec = pkgs[`node_modules/${name}`];
-      if (rec?.version) out.set(name, rec.version);
+      if (rec?.version) versions.set(name, rec.version);
     }
-    return out;
+    return ok(versions);
   }
-  // ponytail: lockfileVersion 1 nests transitives; only take top-level keys
   if (json.dependencies) {
     for (const [name, rec] of Object.entries(json.dependencies)) {
-      if (rec?.version) out.set(name, rec.version);
+      if (rec?.version) versions.set(name, rec.version);
     }
+    return ok(versions);
   }
-  return out;
+  if (json.lockfileVersion != null) return ok(versions);
+  return empty("malformed", "package-lock.json has no packages or dependencies");
 }
 
-function parsePnpmLock(path: string): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!existsSync(path)) return out;
+function parsePnpmLock(path: string): LockfileResult {
+  const versions = new Map<string, string>();
+  if (!existsSync(path)) return empty("absent", "pnpm-lock.yaml missing");
   const text = readFileSync(path, "utf8");
-  // ponytail: no yaml parser; scan importers["."] dependencies block
+  if (!/lockfileVersion\s*:/.test(text) && !/(?:^|\n)importers\s*:/.test(text)) {
+    return empty("malformed", "pnpm-lock.yaml is missing lockfileVersion and importers");
+  }
   const importer = text.match(
     /(?:^|\n)importers:\n {2}\.:\n([\s\S]*?)(?=\n(?:packages|snapshots|time|overrides):|\n[^\s]|$)/,
   );
@@ -71,12 +99,11 @@ function parsePnpmLock(path: string): Map<string, string> {
       const re = /(?:^|\n) {6}(\S+):\n(?: {8}.*\n)*? {8}version: ['"]?([^'"\n ]+)/g;
       let m: RegExpExecArray | null;
       while ((m = re.exec(sec))) {
-        out.set(m[1]!, stripPnpmPeer(m[2]!));
+        versions.set(m[1]!, stripPnpmPeer(m[2]!));
       }
     }
   }
-  if (out.size) return out;
-  // fallback: packages: /lodash@4.17.21:  (only if also listed as a specifier near top)
+  if (versions.size) return ok(versions);
   const names = new Set<string>();
   const specRe = /\n {6}(@?[\w.-]+(?:\/[\w.-]+)?):\n {8}specifier:/g;
   let sm: RegExpExecArray | null;
@@ -86,56 +113,113 @@ function parsePnpmLock(path: string): Map<string, string> {
   let pm: RegExpExecArray | null;
   while ((pm = pkgRe.exec(text))) {
     const name = pm[1]!;
-    if (names.size === 0 || names.has(name)) out.set(name, stripPnpmPeer(pm[2]!));
+    if (names.size === 0 || names.has(name)) versions.set(name, stripPnpmPeer(pm[2]!));
   }
-  return out;
+  return ok(versions);
 }
 
 function stripPnpmPeer(v: string): string {
   return v.replace(/\(.+$/, "").replace(/^['"]|['"]$/g, "");
 }
 
-function parseYarnLock(path: string): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!existsSync(path)) return out;
+function yarnDescriptorName(line: string): string | null {
+  const trimmed = line.trim().replace(/^"+|"+\s*:?\s*$/g, "");
+  const first = trimmed.split(",")[0]!.trim().replace(/^"+|"+$/g, "");
+  if (!first || first.startsWith("__") || first.startsWith("#")) return null;
+  const at = first.startsWith("@") ? first.indexOf("@", 1) : first.indexOf("@");
+  if (at <= 0) return null;
+  return first.slice(0, at);
+}
+
+function parseYarnLock(path: string): LockfileResult {
+  const versions = new Map<string, string>();
+  if (!existsSync(path)) return empty("absent", "yarn.lock missing");
   const text = readFileSync(path, "utf8");
-  // ponytail: yarn.lock is not JSON; key lines name@version, then version "x"
+  const classic = /(?:^|\n)# yarn lockfile v/i.test(text);
+  const berry = /(?:^|\n)__metadata\s*:/.test(text);
   const blocks = text.split(/\n(?=\S)/);
   for (const block of blocks) {
-    const key = block.match(/^"?(@?[^@\s"v][^@\s"]*?)@/);
-    const ver = block.match(/\n {2}version "?([^"\n]+)"?/);
-    if (key && ver) out.set(key[1]!, ver[1]!);
+    const keyLine = block.match(/^[^\n]+/)?.[0] ?? "";
+    const name = yarnDescriptorName(keyLine);
+    const ver = block.match(/\n {2}version:? "?([^"\n]+)"?/);
+    if (name && ver) versions.set(name, ver[1]!.trim());
+  }
+  if (!classic && !berry && versions.size === 0 && text.trim().length > 0) {
+    return empty("malformed", "yarn.lock is not a recognized classic or berry lockfile");
+  }
+  return ok(versions);
+}
+
+function stripJsonComments(text: string): string {
+  let out = "";
+  let i = 0;
+  let inStr = false;
+  let escape = false;
+  while (i < text.length) {
+    const c = text[i]!;
+    if (inStr) {
+      out += c;
+      if (escape) escape = false;
+      else if (c === "\\") escape = true;
+      else if (c === '"') inStr = false;
+      i++;
+      continue;
+    }
+    if (c === '"') {
+      inStr = true;
+      out += c;
+      i++;
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i++;
+      continue;
+    }
+    if (c === "/" && text[i + 1] === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    out += c;
+    i++;
   }
   return out;
 }
 
-function parseBunLock(path: string): Map<string, string> {
-  const out = new Map<string, string>();
-  if (!existsSync(path)) return out;
+function parseBunLock(path: string): LockfileResult {
+  const versions = new Map<string, string>();
+  if (!existsSync(path)) return empty("absent", "bun.lock missing");
   let text: string;
   try {
     text = readFileSync(path, "utf8");
   } catch {
-    return out;
+    return empty("unavailable", "bun.lock could not be read");
+  }
+  if (/[\u0000-\u0008]/.test(text)) {
+    return empty("unavailable", "binary bun.lockb is not parsed; add a text bun.lock");
   }
   try {
-    const json = JSON.parse(text) as {
+    const json = JSON.parse(stripJsonComments(text)) as {
       packages?: Record<string, unknown>;
     };
     if (json.packages && typeof json.packages === "object") {
       for (const [name, rec] of Object.entries(json.packages)) {
         if (name.includes("/") && !name.startsWith("@")) continue;
         const ver = bunVersion(rec);
-        if (ver) out.set(name.startsWith("@") ? name : name.split("/")[0]!, ver);
+        if (!ver) continue;
+        versions.set(name, ver);
       }
     }
+    if (versions.size || json.packages) return ok(versions);
   } catch {
-    // ponytail: bun.lockb is binary; text bun.lock JSON-with-comments
     const re = /"(@?[\w.-]+(?:\/[\w.-]+)?)"\s*:\s*\[\s*"\1@([^"]+)"/g;
     let m: RegExpExecArray | null;
-    while ((m = re.exec(text))) out.set(m[1]!, m[2]!);
+    while ((m = re.exec(text))) versions.set(m[1]!, m[2]!);
+    if (versions.size) return ok(versions);
+    return empty("malformed", "bun.lock is not valid JSON");
   }
-  return out;
+  return empty("malformed", "bun.lock has no packages table");
 }
 
 function bunVersion(rec: unknown): string | undefined {

@@ -1,3 +1,5 @@
+import { isBuiltin } from "node:module";
+
 export interface PackageFamily {
   name: string;
   family: string;
@@ -23,6 +25,9 @@ const FAMILY_ALIAS: Record<string, string> = {
   qs: "qs",
 };
 
+const PROTOCOL = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+const WINDOWS_ABS = /^[a-zA-Z]:[\\/]/;
+
 export function parseSpecifier(specifier: string): {
   name: string;
   subpath: string;
@@ -30,20 +35,44 @@ export function parseSpecifier(specifier: string): {
   if (!specifier || specifier.startsWith(".") || specifier.startsWith("/")) {
     return null;
   }
-  if (specifier.startsWith("node:") || specifier.startsWith("bun:")) return null;
+  if (specifier.startsWith("#")) return null;
+  if (WINDOWS_ABS.test(specifier)) return null;
+  if (PROTOCOL.test(specifier)) return null;
+  if (isBuiltin(specifier) || isBuiltin(`node:${specifier}`)) return null;
   if (specifier.startsWith("@")) {
     const parts = specifier.split("/");
     if (parts.length < 2) return null;
     const name = `${parts[0]}/${parts[1]}`;
+    if (isBuiltin(name)) return null;
     const rest = parts.slice(2).join("/");
     return { name, subpath: rest.replace(/\.js$/, "") };
   }
   const slash = specifier.indexOf("/");
-  if (slash === -1) return { name: specifier, subpath: "" };
+  const name = slash === -1 ? specifier : specifier.slice(0, slash);
+  if (isBuiltin(name) || isBuiltin(`node:${name}`)) return null;
+  if (slash === -1) return { name, subpath: "" };
   return {
-    name: specifier.slice(0, slash),
+    name,
     subpath: specifier.slice(slash + 1).replace(/\.js$/, ""),
   };
+}
+
+export function resolvePackageImports(
+  specifier: string,
+  importMap: unknown,
+): string | null {
+  if (!specifier.startsWith("#")) return specifier;
+  if (!importMap || typeof importMap !== "object") return null;
+  const rec = importMap as Record<string, unknown>;
+  const raw = rec[specifier];
+  const target =
+    typeof raw === "string"
+      ? raw
+      : raw && typeof raw === "object" && typeof (raw as { default?: unknown }).default === "string"
+        ? (raw as { default: string }).default
+        : null;
+  if (!target) return null;
+  return parseSpecifier(target) ? target : null;
 }
 
 export function resolvePackageFamily(specifier: string): PackageFamily | null {

@@ -63,9 +63,22 @@ test("help text documents exit codes and stdout/stderr streams", () => {
   assert.match(helpText(), /Streams: JSON and human reports on stdout/);
 });
 
+test("help text documents scan [dir] and --json", () => {
+  assert.match(helpText(), /slim scan \[dir\] \[--json\]/);
+});
+
 test("docs/help.txt matches shipped HELP", () => {
   const snap = readFileSync(join(ROOT, "docs/help.txt"), "utf8");
   assert.equal(snap, helpText());
+});
+
+test("help-commands scan section matches shipped flags", () => {
+  const text = readFileSync(join(ROOT, "docs/help-commands.txt"), "utf8");
+  const start = text.indexOf("slim scan —");
+  const end = text.indexOf("--------", start + 10);
+  const section = text.slice(start, end === -1 ? undefined : end);
+  assert.match(section, /--json/);
+  assert.doesNotMatch(section, /--diff|--all|--min-size|--fail|--limit/);
 });
 
 test("parseCli doctor --strict", () => {

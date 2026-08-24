@@ -21,6 +21,7 @@ export interface PackageJson {
   optionalDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   scripts?: Record<string, string>;
+  imports?: Record<string, string | Record<string, string>>;
   [key: string]: unknown;
 }
 

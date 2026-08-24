@@ -2,32 +2,125 @@ import { existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_OK, EXIT_USAGE } from "./exit.ts";
-import { loadProject } from "./project.ts";
+import { loadProject, type PackageJson } from "./project.ts";
 import { loadConfig } from "./config.ts";
 import { collectImportSpecifiers, resolvePackageFamily } from "./analyze/index.ts";
-import { estimatePackageSize, gzipGuess } from "./size/estimate.ts";
+import { parseSpecifier, resolvePackageImports } from "./analyze/family.ts";
+import { estimatePackageSize, gzipGuess, readInstalledVersion } from "./size/estimate.ts";
 import { refusePackage, BLOAT_PACKAGES } from "./scan/refuse.ts";
-import { lockfileDirectDeps } from "./scan/lockfile-deps.ts";
-import { scoreSlimmable } from "./envelope/slimmable.ts";
-import { ENVELOPE_VERSION, emptyHyrum, envelopeForDisk } from "./envelope/types.ts";
-import type { Envelope } from "./envelope/types.ts";
+import { lockfileDirectDeps, type LockfileResult } from "./scan/lockfile-deps.ts";
+import { envelopeForDisk } from "./envelope/types.ts";
+import type { Envelope, ImportSite } from "./envelope/types.ts";
+
+export const SCAN_SCHEMA_VERSION = 1 as const;
+
+export type VersionState = "exact" | "range-only" | "malformed" | "unavailable";
+export type ScanRelation = "declared-imported" | "declared-unused" | "imported-undeclared";
+export type DeclaredAs = "dependency" | "optional" | "peer" | "dev" | "none";
+export type ScanVerdict = "candidate" | "review" | "refuse" | "unused";
+export type SizeProvenance = "measured" | "estimated" | "unknown";
+export type SizeState = "measured" | "estimated" | "unknown" | "refused" | "review";
 
 export interface ScanRow {
   name: string;
-  version: string;
   family: string;
+  subpaths: string[];
   importSites: number;
+  version: string;
+  versionState: VersionState;
+  versionReason: string;
+  relation: ScanRelation;
+  declaredAs: DeclaredAs;
+  verdict: ScanVerdict;
+  slimmable: number;
   minBytes: number | null;
   gzipBytes: number | null;
-  slimmable: number;
-  verdict: "slim" | "review" | "refuse" | "unused";
+  sizeProvenance: SizeProvenance;
+  sizeState: SizeState;
   note: string;
 }
 
 export interface ScanReport {
-  root: string;
+  schemaVersion: typeof SCAN_SCHEMA_VERSION;
   lockfile: string | null;
   rows: ScanRow[];
+}
+
+const LOCAL_RANGE = /^(file|workspace|link|portal):/i;
+
+type Declared = { range: string; declaredAs: Exclude<DeclaredAs, "none"> };
+
+function declaredPackages(pkg: PackageJson): Map<string, Declared> {
+  const out = new Map<string, Declared>();
+  const add = (recs: Record<string, string> | undefined, declaredAs: Declared["declaredAs"]) => {
+    for (const [name, range] of Object.entries(recs ?? {})) {
+      if (typeof range === "string") out.set(name, { range, declaredAs });
+    }
+  };
+  add(pkg.peerDependencies, "peer");
+  add(pkg.devDependencies, "dev");
+  add(pkg.optionalDependencies, "optional");
+  add(pkg.dependencies, "dependency");
+  return out;
+}
+
+function subpathsOf(name: string, sites: ImportSite[], importMap: unknown): string[] {
+  const set = new Set<string>();
+  for (const site of sites) {
+    const resolved = resolvePackageImports(site.specifier, importMap) ?? site.specifier;
+    const fam = resolvePackageFamily(resolved);
+    const parsed = parseSpecifier(resolved);
+    if (parsed?.name !== name && fam?.name !== name) continue;
+    const sub = fam?.subpath || parsed?.subpath || "";
+    if (sub) set.add(sub);
+  }
+  return [...set].sort();
+}
+
+function versionFor(
+  name: string,
+  declared: Declared | undefined,
+  locked: LockfileResult,
+  installed: string | null,
+): { version: string; versionState: VersionState; versionReason: string } {
+  if (locked.state === "malformed") {
+    return { version: "unknown", versionState: "malformed", versionReason: locked.reason };
+  }
+  const exact = locked.versions.get(name) ?? installed;
+  if (exact) {
+    return { version: exact, versionState: "exact", versionReason: "" };
+  }
+  if (locked.state === "unavailable") {
+    return { version: "unknown", versionState: "unavailable", versionReason: locked.reason };
+  }
+  if (declared?.range && !LOCAL_RANGE.test(declared.range)) {
+    return {
+      version: "unknown",
+      versionState: "range-only",
+      versionReason: `package.json range only (${declared.range})`,
+    };
+  }
+  return {
+    version: "unknown",
+    versionState: "unavailable",
+    versionReason: "no lockfile version or package.json range",
+  };
+}
+
+function rankVerdict(
+  name: string,
+  sites: number,
+  minBytes: number | null,
+  refuse: string | undefined,
+  unused: boolean,
+): { verdict: ScanVerdict; slimmable: number } {
+  if (refuse) return { verdict: "refuse", slimmable: 0 };
+  if (unused) return { verdict: "unused", slimmable: 0 };
+  const interesting = BLOAT_PACKAGES.has(name) || (minBytes ?? 0) > 20_000;
+  if (interesting && sites > 0 && sites <= 8) {
+    return { verdict: "candidate", slimmable: 60 };
+  }
+  return { verdict: "review", slimmable: 20 };
 }
 
 export function scanProject(cwd = process.cwd()): ScanReport {
@@ -37,119 +130,108 @@ export function scanProject(cwd = process.cwd()): ScanReport {
     include: config.include,
     ignore: config.ignore,
   });
-  const deps = {
-    ...project.packageJson.dependencies,
-    ...project.packageJson.optionalDependencies,
-  };
+  const declared = declaredPackages(project.packageJson);
   const locked = lockfileDirectDeps(project.root, project.lockfile);
-  const names = new Set([...Object.keys(deps ?? {}), ...imports.keys(), ...locked.keys()]);
+  const names = new Set<string>();
+  for (const name of declared.keys()) {
+    if (name.startsWith("@types/")) continue;
+    if (LOCAL_RANGE.test(declared.get(name)!.range)) continue;
+    names.add(name);
+  }
+  for (const name of imports.keys()) {
+    if (name.startsWith("@types/")) continue;
+    const rec = declared.get(name);
+    if (rec && LOCAL_RANGE.test(rec.range)) continue;
+    names.add(name);
+  }
+
   const rows: ScanRow[] = [];
   for (const name of [...names].sort()) {
-    if (name.startsWith("@types/")) continue;
     const fam = resolvePackageFamily(name);
-    const sites = [
-      ...(imports.get(name) ?? []),
-      ...(fam && fam.name !== name ? imports.get(fam.name) ?? [] : []),
-    ];
+    const sites = imports.get(name) ?? [];
     const unique = sites.length;
+    const decl = declared.get(name);
+    const unused = unique === 0 && Boolean(decl);
+    const relation: ScanRelation = !decl
+      ? "imported-undeclared"
+      : unused
+        ? "declared-unused"
+        : "declared-imported";
     const size = estimatePackageSize(project.root, name);
     const refuse = refusePackage(name);
-    const fromRange = (deps[name] ?? "").replace(/^[~^>=<\s]+/, "");
-    const version = locked.get(name) ?? (fromRange || "unknown");
-    const stubEnv: Envelope = {
-      schemaVersion: ENVELOPE_VERSION,
-      package: {
-        name,
-        version,
-        family: fam?.family ?? name,
-        subpath: fam?.subpath ?? "",
-      },
-      env: ["node"],
-      imports: sites,
-      symbols: unique
-        ? [
-            {
-              exportName: "(scan)",
-              packages: [],
-              callSites: [],
-              resultMembers: [],
-              hyrum: emptyHyrum(),
-              coverage: { callSitesStatic: unique, callSitesTraced: 0 },
-            },
-          ]
-        : [],
-      unknowns: [],
-      traces: [],
-      closure: {
-        confidence: "open",
-        readyToGenerate: false,
-        untracedCallSiteIds: [],
-        reason: "scan",
-      },
-      slimmable: {
-        score: 0,
-        verdict: refuse ? "refuse" : unique ? "review" : "review",
-        blockers: refuse ? [refuse.why] : [],
-        reasons: [],
-      },
-      clock: false,
-      cryptoRandom: false,
-    };
-    const slim = scoreSlimmable(stubEnv);
-    const unused = unique === 0 && Boolean(deps[name]);
-    let verdict: ScanRow["verdict"] = slim.verdict;
-    if (unused) verdict = "unused";
-    if (refuse) verdict = "refuse";
-    if (!refuse && unique > 0 && (BLOAT_PACKAGES.has(name) || (size.minBytes ?? 0) > 20_000)) {
-      verdict = slim.verdict === "refuse" ? "refuse" : unique <= 8 ? "slim" : "review";
-    }
+    const ver = versionFor(name, decl, locked, readInstalledVersion(project.root, name));
+    const { verdict, slimmable } = rankVerdict(name, unique, size.minBytes, refuse?.why, unused);
+    const sizeProvenance: SizeProvenance = size.source;
+    const sizeState: SizeState =
+      verdict === "refuse" ? "refused" : verdict === "review" ? "review" : sizeProvenance;
+    const note =
+      refuse?.why ??
+      (relation === "declared-unused"
+        ? "declared but no import specifier"
+        : relation === "imported-undeclared"
+          ? "imported but not declared in package.json"
+          : "");
     rows.push({
       name,
-      version,
       family: fam?.family ?? name,
+      subpaths: subpathsOf(name, sites, project.packageJson.imports),
       importSites: unique,
+      version: ver.version,
+      versionState: ver.versionState,
+      versionReason: ver.versionReason,
+      relation,
+      declaredAs: decl?.declaredAs ?? "none",
+      verdict,
+      slimmable,
       minBytes: size.minBytes,
       gzipBytes: size.minBytes != null ? gzipGuess(size.minBytes) : null,
-      slimmable: refuse ? 0 : unused ? 0 : verdict === "slim" ? Math.max(slim.score, 60) : slim.score,
-      verdict,
-      note: refuse?.why ?? (unused ? "declared but no import specifier" : ""),
+      sizeProvenance,
+      sizeState,
+      note,
     });
   }
-  return { root: project.root, lockfile: project.lockfile, rows };
+  return { schemaVersion: SCAN_SCHEMA_VERSION, lockfile: project.lockfile, rows };
+}
+
+export function scanReportJson(report: ScanReport): string {
+  return JSON.stringify(report, null, 2) + "\n";
+}
+
+export function formatScanHuman(report: ScanReport): string {
+  const lines = [
+    pad("package", 28) +
+      pad("relation", 22) +
+      pad("verdict", 12) +
+      pad("sites", 8) +
+      pad("min", 10) +
+      "note",
+  ];
+  for (const r of report.rows) {
+    const min = r.minBytes != null ? fmtBytes(r.minBytes) : "?";
+    lines.push(
+      pad(r.name, 28) +
+        pad(r.relation, 22) +
+        pad(r.verdict, 12) +
+        pad(String(r.importSites), 8) +
+        pad(min, 10) +
+        (r.note || ""),
+    );
+  }
+  const n = report.rows.filter((r) => r.verdict === "candidate").length;
+  lines.push("");
+  lines.push(
+    `${n} candidate${n === 1 ? "" : "s"}. Scan does not close an envelope. Run slim inspect <pkg> then slim replace <pkg>.`,
+  );
+  return lines.join("\n") + "\n";
 }
 
 export async function runScan(args: CliArgs): Promise<number> {
-  const report = scanProject();
+  const report = scanProject(args.pkg ?? process.cwd());
   if (args.json) {
-    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    process.stdout.write(scanReportJson(report));
     return EXIT_OK;
   }
-  process.stdout.write(
-    pad("package", 28) +
-      pad("verdict", 10) +
-      pad("sites", 8) +
-      pad("min", 10) +
-      pad("score", 8) +
-      "note\n",
-  );
-  for (const r of report.rows) {
-    if (r.verdict === "unused" && r.importSites === 0 && !BLOAT_PACKAGES.has(r.name)) {
-      continue;
-    }
-    const min = r.minBytes != null ? fmtBytes(r.minBytes) : "?";
-    process.stdout.write(
-      pad(r.name, 28) +
-        pad(r.verdict, 10) +
-        pad(String(r.importSites), 8) +
-        pad(min, 10) +
-        pad(String(r.slimmable), 8) +
-        (r.note || "") +
-        "\n",
-    );
-  }
-  process.stdout.write(
-    `\n${report.rows.filter((r) => r.verdict === "slim").length} slimmable. Run slim inspect <pkg> then slim replace <pkg>.\n`,
-  );
+  process.stdout.write(formatScanHuman(report));
   return EXIT_OK;
 }
 

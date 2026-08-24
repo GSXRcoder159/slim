@@ -5,7 +5,7 @@ emits a dependency-free replacement, differentially fuzzes it against the
 original, and opens a PR with a standing regression suite.
 
 Usage:
-  slim scan [--json]
+  slim scan [dir] [--json]
   slim inspect <pkg>
   slim replace <pkg> [options]
   slim check

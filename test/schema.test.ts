@@ -68,6 +68,33 @@ test("docs slices are TypeScript, not 67-line lodash.js", () => {
   assert.deepEqual(lineHits, [], `67-line generate claim in ${lineHits.join(", ")}`);
 });
 
+test("docs/scan.schema.json matches ScanReport required fields", () => {
+  const schema = JSON.parse(readFileSync(join(ROOT, "docs/scan.schema.json"), "utf8")) as {
+    required: string[];
+    $defs: { row: { required: string[] } };
+  };
+  assert.deepEqual(schema.required.sort(), ["lockfile", "rows", "schemaVersion"]);
+  const rowKeys = [
+    "declaredAs",
+    "family",
+    "gzipBytes",
+    "importSites",
+    "minBytes",
+    "name",
+    "note",
+    "relation",
+    "sizeProvenance",
+    "sizeState",
+    "slimmable",
+    "subpaths",
+    "verdict",
+    "version",
+    "versionReason",
+    "versionState",
+  ];
+  assert.deepEqual(schema.$defs.row.required.slice().sort(), rowKeys);
+});
+
 test("friday walkthrough documents --no-install", () => {
   const md = readFileSync(join(ROOT, "docs/friday.md"), "utf8");
   assert.match(md, /--no-install/);

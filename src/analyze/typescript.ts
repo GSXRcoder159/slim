@@ -11,7 +11,7 @@ import type {
   UnknownSite,
 } from "../envelope/types.ts";
 import { ENVELOPE_VERSION, emptyHyrum } from "../envelope/types.ts";
-import { parseSpecifier, resolvePackageFamily } from "./family.ts";
+import { parseSpecifier, resolvePackageFamily, resolvePackageImports } from "./family.ts";
 import { refusePackage } from "../scan/refuse.ts";
 import { readInstalledVersion } from "../size/estimate.ts";
 import { applySlimmable, usedSliceGraphPure } from "../envelope/slimmable.ts";
@@ -231,11 +231,12 @@ export function collectImportSpecifiers(
       root: project.root,
     });
     for (const imp of imports) {
-      const parsed = parseSpecifier(imp.specifier);
-      const key = parsed?.name ?? imp.specifier;
-      const list = map.get(key) ?? [];
+      const resolved = resolvePackageImports(imp.specifier, project.packageJson.imports) ?? imp.specifier;
+      const parsed = parseSpecifier(resolved);
+      if (!parsed) continue;
+      const list = map.get(parsed.name) ?? [];
       list.push(imp);
-      map.set(key, list);
+      map.set(parsed.name, list);
     }
   }
   return map;
