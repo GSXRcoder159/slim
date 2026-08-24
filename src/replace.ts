@@ -1,14 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep, delimiter } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { randomInt } from "node:crypto";
 import type { CliArgs } from "./cli.ts";
-import { siblingModule } from "./runtime-path.ts";
 import { EXIT_FAIL, EXIT_OK, EXIT_REFUSED, EXIT_USAGE, SlimExit } from "./exit.ts";
 import { loadConfig } from "./config.ts";
 import { loadProject, walkSourceFiles, filterSourceFiles } from "./project.ts";
 import { analyzePackage } from "./analyze/index.ts";
-import { mergeTraces } from "./envelope/merge.ts";
 import { closeEnvelope } from "./envelope/close.ts";
 import { hashEnvelope } from "./envelope/hash.ts";
 import { envelopeForDisk } from "./envelope/types.ts";
@@ -30,8 +28,10 @@ import { refreshLockfile, shouldRefreshLockfile } from "./rewrite/lockfile.ts";
 import { writeEvidence } from "./evidence/report.ts";
 import { emitStandingTests } from "./evidence/emit-tests.ts";
 import { maybeCreatePullRequest, prBodyFromEvidence } from "./github/pr.ts";
-import { detectRunner, writeVitestTraceConfig, buildTraceSpawn, traceEnv } from "./trace/runners.ts";
-import { resolvePackageFamily } from "./analyze/family.ts";
+import { detectRunner } from "./trace/runners.ts";
+import { runTraces, withLocalBinPath, writeTracesMeta } from "./trace/run.ts";
+
+export { withLocalBinPath, writeTracesMeta };
 
 export async function runReplace(args: CliArgs): Promise<number> {
   if (!args.pkg) throw new SlimExit(EXIT_USAGE, "usage: slim replace <pkg>");
@@ -51,7 +51,9 @@ export async function runReplace(args: CliArgs): Promise<number> {
   });
 
   if (!args.noTrace) {
-    env = await maybeTrace(project.root, args.pkg, env);
+    env = runTraces(project.root, args.pkg, env);
+    env = closeEnvelope(env, { allowUnknown: args.allowUnknown });
+  } else {
     env = closeEnvelope(env, { allowUnknown: args.allowUnknown });
   }
   assertNoPollutionDependence(env.traces);
@@ -283,7 +285,7 @@ export function runMergeGate(root: string, testCommand: string | null): void {
   if (!cmd) {
     try {
       const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
-        scripts?: Record<string, string>;
+        scripts?: { test?: string };
       };
       cmd = pkg.scripts?.test?.trim() || null;
     } catch {
@@ -303,25 +305,7 @@ export function runMergeGate(root: string, testCommand: string | null): void {
   }
 }
 
-export function withLocalBinPath(
-  root: string,
-  env: NodeJS.ProcessEnv = process.env,
-): NodeJS.ProcessEnv {
-  const bin = join(root, "node_modules", ".bin");
-  return {
-    ...env,
-    PATH: `${bin}${delimiter}${env.PATH ?? ""}`,
-  };
-}
-
-export function writeTracesMeta(pkgDir: string): void {
-  mkdirSync(pkgDir, { recursive: true });
-  writeFileSync(join(pkgDir, "traces.meta.json"), JSON.stringify({ uploaded: false }) + "\n");
-}
-
 const PROTO = "__proto__";
-
-/** True when a lodash-style path (args[1]) contains a `__proto__` segment. */
 function pathHasProtoSegment(path: SlimValue | undefined): boolean {
   if (!path) return false;
   if (path.t === "str") return path.v.split(/[./]/).includes(PROTO);
@@ -356,65 +340,6 @@ function toRelativeSpecifier(fromFile: string, toFile: string): string {
   let rel = relative(dirname(fromFile), toFile).replace(/\\/g, "/");
   if (!rel.startsWith(".")) rel = "./" + rel;
   return rel;
-}
-
-async function maybeTrace(root: string, pkg: string, env: Envelope): Promise<Envelope> {
-  const runner = detectRunner(root);
-  if (runner.kind === "jest") {
-    process.stderr.write(runner.jestSnippet + "\n");
-    process.stderr.write("Jest is detect-only in v1; continuing static-only.\n");
-    return env;
-  }
-  if (runner.kind === "none" || !runner.command) {
-    process.stderr.write(
-      "no traces; generators are static-shape plus catalog mutations, not your runtime distribution\n",
-    );
-    return env;
-  }
-  const pkgDir = join(root, ".slim", env.package.name);
-  const outPath = join(pkgDir, "traces.jsonl");
-  mkdirSync(pkgDir, { recursive: true });
-  writeFileSync(outPath, "");
-  writeTracesMeta(pkgDir);
-  const hook = siblingModule(import.meta.url, "trace/hook");
-  const fam = resolvePackageFamily(pkg);
-  const packages = [pkg, env.package.name, fam?.name, fam?.family].filter(Boolean) as string[];
-  if (fam?.family === "lodash") packages.push("lodash", "lodash-es");
-  const uniq = [...new Set(packages)];
-  const envVars = traceEnv(uniq, outPath);
-  const vitestConfigPath =
-    runner.kind === "vitest" ? writeVitestTraceConfig(root, uniq) : undefined;
-  const spawn = buildTraceSpawn(runner, { hookPath: hook, vitestConfigPath });
-  if (!spawn) return env;
-  process.stderr.write(`tracing via ${runner.kind}…\n`);
-  const r = spawnSync(spawn.file, spawn.args, {
-    cwd: root,
-    env: withLocalBinPath(root, envVars),
-    encoding: "utf8",
-    timeout: 120_000,
-  });
-  if (r.status !== 0) {
-    process.stderr.write(
-      `trace run exited ${r.status} (continuing with static envelope)\n${r.stderr?.slice(0, 400) ?? ""}\n`,
-    );
-  }
-  const traces = readTraces(outPath);
-  if (!traces.length) return env;
-  return mergeTraces(env, traces);
-}
-
-function readTraces(path: string): TraceEvent[] {
-  if (!existsSync(path)) return [];
-  const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
-  const out: TraceEvent[] = [];
-  for (const line of lines) {
-    try {
-      out.push(JSON.parse(line) as TraceEvent);
-    } catch {
-      /* skip */
-    }
-  }
-  return out;
 }
 
 function coverageHoles(env: Envelope): string[] {
@@ -479,5 +404,3 @@ function printDryRun(env: Envelope, source: string, ids: string[]): void {
   process.stdout.write(`catalog ${ids.join(",") || "llm"}\n`);
   process.stdout.write(`---\n${source.slice(0, 2000)}\n`);
 }
-
-void appendFileSync;

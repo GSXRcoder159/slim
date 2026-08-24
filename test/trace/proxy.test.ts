@@ -126,3 +126,80 @@ test("mutatedArgIndexes when callee mutates an object arg", () => {
   wrapped.fill({ x: 1 });
   assert.deepEqual(events[0]!.mutatedArgIndexes, [0]);
 });
+
+test("argc distinguishes omitted args from explicit undefined", () => {
+  const events: TraceEvent[] = [];
+  const mod = {
+    debounce(_fn: () => void, _wait?: number, _opts?: object) {
+      return () => {};
+    },
+  };
+  const wrapped = wrapExports(mod, {
+    packageName: "lodash",
+    onEvent: (e) => events.push(e),
+  }) as typeof mod;
+  wrapped.debounce(() => {});
+  wrapped.debounce(() => {}, undefined);
+  wrapped.debounce(() => {}, undefined, undefined);
+  assert.equal(events[0]!.argc, 1);
+  assert.equal(events[1]!.argc, 2);
+  assert.equal(events[2]!.argc, 3);
+  assert.equal(events[0]!.args.length, 1);
+  assert.equal(events[1]!.args.length, 2);
+  assert.equal(events[1]!.args[1]?.t, "undef");
+});
+
+test("returned function ops carry parentOriginId and resultMember", () => {
+  const events: TraceEvent[] = [];
+  const mod = {
+    debounce(fn: () => number) {
+      function debounced() {
+        return fn();
+      }
+      debounced.cancel = () => "cancelled";
+      debounced.flush = () => "flushed";
+      return debounced;
+    },
+  };
+  const wrapped = wrapExports(mod, {
+    packageName: "lodash",
+    onEvent: (e) => events.push(e),
+  }) as typeof mod;
+  const d = wrapped.debounce(() => 1);
+  d();
+  d.cancel();
+  d.flush();
+  const ctor = events.find((e) => e.symbol === "debounce")!;
+  const invoke = events.find((e) => e.symbol === "debounce()")!;
+  const cancel = events.find((e) => e.symbol === "debounce.cancel")!;
+  const flush = events.find((e) => e.symbol === "debounce.flush")!;
+  assert.ok(ctor.originId);
+  assert.equal(invoke.parentOriginId, ctor.originId);
+  assert.equal(invoke.resultMember, "");
+  assert.equal(cancel.parentOriginId, ctor.originId);
+  assert.equal(cancel.resultMember, "cancel");
+  assert.equal(flush.parentOriginId, ctor.originId);
+  assert.equal(flush.resultMember, "flush");
+  const dump = JSON.stringify(events);
+  assert.equal(dump.includes("at "), false);
+  assert.equal(dump.includes("stack"), false);
+  assert.ok(ctor.site?.line);
+  assert.ok(ctor.site?.file);
+});
+
+test("records thisArg for method-style calls and site for the caller", () => {
+  const events: TraceEvent[] = [];
+  const rec = { n: 1 };
+  const mod = {
+    tap(this: { n: number }, x: number) {
+      return this.n + x;
+    },
+  };
+  const wrapped = wrapExports(mod, {
+    packageName: "x",
+    onEvent: (e) => events.push(e),
+  }) as typeof mod;
+  assert.equal(wrapped.tap.call(rec, 2), 3);
+  assert.equal(events[0]!.thisArg?.t, "obj");
+  assert.equal(events[0]!.argc, 1);
+});

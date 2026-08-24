@@ -57,9 +57,9 @@ test("detects jest and returns a v1 snippet, no wrap command", () => {
   assert.equal(r.kind, "jest");
   assert.equal(r.command, null);
   assert.equal(typeof r.jestSnippet, "string");
-  assert.match(r.jestSnippet!, /moduleNameMapper/);
-  assert.match(r.jestSnippet!, /setupFiles/);
   assert.match(r.jestSnippet!, /does not wrap Jest/i);
+  assert.match(r.jestSnippet!, /--no-trace/);
+  assert.doesNotMatch(r.jestSnippet!, /setupFiles/);
 });
 
 test("returns none when no runner is present", () => {
@@ -79,6 +79,12 @@ test("nodeTestPreloadArgs uses --import and a file URL", () => {
   const args = nodeTestPreloadArgs("/abs/hook.js");
   assert.equal(args[0], "--import");
   assert.equal(args[1], pathToFileURL("/abs/hook.js").href);
+});
+
+test("nodeTestPreloadArgs strips types when the hook is TypeScript", () => {
+  const args = nodeTestPreloadArgs("/abs/hook.ts");
+  assert.equal(args[0], "--experimental-strip-types");
+  assert.equal(args[1], "--import");
 });
 
 test("vitestTraceConfigSource default-exports slimVitest plugin wrap", () => {
@@ -185,6 +191,7 @@ test("buildTraceSpawn preloads node:test hook, not a vitest config", () => {
   );
   assert.ok(spawn);
   assert.equal(spawn.file, "node");
-  assert.equal(spawn.args[0], "--import");
+  assert.equal(spawn.args[0], "--experimental-strip-types");
+  assert.equal(spawn.args[1], "--import");
   assert.equal(spawn.args.at(-1), "--test");
 });

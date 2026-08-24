@@ -1,10 +1,11 @@
-import { appendFileSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { TraceEvent } from "../envelope/types.ts";
 import { siblingModule } from "../runtime-path.ts";
 import { wrapExports } from "./proxy.ts";
-import { matchesTracedUrl, packageFromUrl } from "./hook.ts";
+import { matchesTracedUrl, packageFromUrl, extractEsmExportNames } from "./hook.ts";
+import { sessionLine } from "./session.ts";
 
 export { wrapExports };
 
@@ -63,9 +64,13 @@ function packagesFromEnv(): string[] {
     .filter(Boolean);
 }
 
-export function slimWrapperSource(id: string, packageName: string): string {
+export function slimWrapperSource(id: string, packageName: string, names: string[] = []): string {
   const orig = JSON.stringify(id.includes("?") ? `${id}&slim-orig=1` : `${id}?slim-orig`);
   const spec = JSON.stringify(vitestModuleHref());
+  const named = names
+    .filter((n) => n !== "default")
+    .map((n) => `export const ${n} = wrapped[${JSON.stringify(n)}];`)
+    .join("\n");
   return `import * as orig from ${orig};
 import { wrapExports } from ${spec};
 const wrapped = wrapExports(orig, {
@@ -73,7 +78,7 @@ const wrapped = wrapExports(orig, {
   onEvent: (e) => { globalThis.__slimTraceOnEvent && globalThis.__slimTraceOnEvent(e); },
 });
 export default wrapped.default !== undefined ? wrapped.default : wrapped;
-export * from ${orig};
+${named}
 `;
 }
 
@@ -84,7 +89,11 @@ export function slimVitest(opts?: { packages?: string[] }): SlimVitestPlugin {
     name: "slim-vitest",
     enforce: "pre",
     config() {
-      return { optimizeDeps: { exclude: packages } };
+      return {
+        optimizeDeps: { exclude: packages },
+        ssr: { noExternal: packages },
+        test: { server: { deps: { inline: packages } } },
+      };
     },
     resolveId(id: string) {
       if (id.includes("slim-orig")) return null;
@@ -101,12 +110,34 @@ export function slimVitest(opts?: { packages?: string[] }): SlimVitestPlugin {
         packages.find((p) => id.includes(`/node_modules/${p}`)) ??
         packages[0] ??
         "unknown";
-      return slimWrapperSource(id, pkg);
+      return slimWrapperSource(id, pkg, namesFromId(id));
     },
     transform(_code: string, _id: string) {
       return null;
     },
   };
+}
+
+function namesFromId(id: string): string[] {
+  let file = id.replace(/\?.*$/, "");
+  if (file.startsWith("file:")) {
+    try {
+      file = fileURLToPath(file);
+    } catch {
+      /* keep */
+    }
+  }
+  if (!existsSync(file)) return [];
+  try {
+    const src = readFileSync(file, "utf8");
+    const names = new Set(extractEsmExportNames(src));
+    for (const m of src.matchAll(/\bexports\.([A-Za-z_$][\w$]*)\s*=/g)) {
+      if (m[1]) names.add(m[1]);
+    }
+    return [...names];
+  } catch {
+    return [];
+  }
 }
 
 export default slimVitest;
@@ -119,10 +150,9 @@ function ensureVitestSink(): void {
   const g = globalThis as SlimGlobal;
   if (typeof g.__slimTraceOnEvent === "function") return;
   const outPath = process.env.SLIM_TRACE_OUT;
-  if (!outPath) {
-    g.__slimTraceOnEvent = () => {};
-    return;
-  }
+  if (!outPath) return;
+  mkdirSync(dirname(outPath), { recursive: true });
+  writeFileSync(outPath, sessionLine());
   g.__slimTraceOnEvent = (e: TraceEvent) => {
     mkdirSync(dirname(outPath), { recursive: true });
     appendFileSync(outPath, JSON.stringify(e) + "\n");

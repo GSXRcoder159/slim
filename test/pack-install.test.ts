@@ -9,6 +9,7 @@ import {
   rmSync,
   symlinkSync,
   writeFileSync,
+  cpSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -24,10 +25,13 @@ function run(
   cwd: string,
   extraEnv: NodeJS.ProcessEnv = {},
 ): { status: number; stdout: string; stderr: string } {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv, CI: "1" };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_CHANNEL_FD;
   const r = spawnSync(bin, args, {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, ...extraEnv, CI: "1" },
+    env,
     timeout: 90_000,
   });
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
@@ -175,6 +179,28 @@ test("installed tarball CLI matches source for help, doctor, scan --json, inspec
     assert.equal(hookLoad.status, 0, hookLoad.stderr);
     assert.match(hookLoad.stdout, /hook-ok/);
 
+    const captureDir = join(tmp, "trace-app");
+    mkdirSync(join(captureDir, "node_modules", "tiny-trace-cjs"), { recursive: true });
+    mkdirSync(join(captureDir, "src"), { recursive: true });
+    cpSync(join(ROOT, "test/fixtures/trace/cjs"), join(captureDir, "node_modules", "tiny-trace-cjs"), {
+      recursive: true,
+    });
+    writeFileSync(join(captureDir, "package.json"), JSON.stringify({ name: "app", type: "commonjs" }));
+    writeFileSync(
+      join(captureDir, "src", "index.test.js"),
+      `const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const { add } = require("tiny-trace-cjs");
+test("add", () => { assert.equal(add(2, 3), 5); });
+`,
+    );
+    const srcHook = join(ROOT, "src/trace/hook.ts");
+    const srcEvents = captureHook(srcHook, captureDir, join(captureDir, "traces-src.jsonl"), [
+      "--experimental-strip-types",
+    ]);
+    const pkgEvents = captureHook(hookJs, captureDir, join(captureDir, "traces-pkg.jsonl"), []);
+    assert.deepEqual(pkgEvents, srcEvents);
+
     const vitestLoad = run(
       process.execPath,
       [
@@ -217,3 +243,38 @@ test("installed tarball CLI matches source for help, doctor, scan --json, inspec
     if (existsSync(tarball)) rmSync(tarball, { force: true });
   }
 });
+
+function captureHook(
+  hookPath: string,
+  cwd: string,
+  outPath: string,
+  extraArgs: string[],
+): unknown[] {
+  const r = run(
+    process.execPath,
+    [...extraArgs, "--import", pathToFileURL(hookPath).href, "--test", "src/index.test.js"],
+    cwd,
+    { SLIM_TRACE_PACKAGES: "tiny-trace-cjs", SLIM_TRACE_OUT: outPath },
+  );
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  return canonicalizeTraces(readFileSync(outPath, "utf8"));
+}
+
+function canonicalizeTraces(jsonl: string): unknown[] {
+  return jsonl
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const o = JSON.parse(line) as Record<string, unknown>;
+      if (o.t === "session") return { t: "session", hook: o.hook, v: o.v };
+      delete o.sessionId;
+      delete o.originId;
+      delete o.parentOriginId;
+      delete o.tRelMs;
+      if (o.site && typeof o.site === "object") {
+        const s = o.site as { line: number; column: number };
+        o.site = { line: s.line, column: s.column };
+      }
+      return o;
+    });
+}

@@ -6,7 +6,7 @@
     "family": "lodash",
     "subpath": ""
   },
-  "envelopeHash": "cc4e4fa34efadf4a5a4279e261950a1dc386477519a213cf528f30704ed5bb87",
+  "envelopeHash": "214d05c55226e84d106963f00bcd08894fc0b900079e9d919f63cfb1c3980608",
   "symbols": [
     "get",
     "debounce"
@@ -19,12 +19,12 @@
     "gzipOriginal": 25560
   },
   "fuzz": {
-    "cases": 1829784,
-    "comparisons": 1829804,
+    "cases": 1771205,
+    "comparisons": 1771225,
     "timerCases": 10,
     "tracesReplayed": 12,
-    "wallMs": 30007,
-    "seed": 181670408,
+    "wallMs": 30005,
+    "seed": 141647386,
     "disagreements": 0
   },
   "coverageHoles": [

@@ -14,6 +14,7 @@ import {
   type DebounceScript,
 } from "./debounce-driver.ts";
 import { createPool, loadOrig, loadSlim, withSlimQuery, type FuzzJob, type FuzzResult } from "./workers.ts";
+import { symbolMatches } from "../trace/attribute.ts";
 
 const MAX_DISAGREEMENTS = 20;
 const MINIMIZE_MS = 2000;
@@ -414,10 +415,11 @@ async function recordDebounce(
   });
 }
 
-function traceHits(tr: TraceEvent, sym: SymbolEnvelope): boolean {
-  if (tr.symbol === sym.exportName) return true;
+export function traceHits(tr: TraceEvent, sym: SymbolEnvelope): boolean {
+  if (symbolMatches(sym.exportName, tr.symbol)) return true;
   const path = sym.callSites[0]?.memberPath?.join(".");
-  return path !== undefined && tr.symbol === path;
+  if (path === undefined) return false;
+  return tr.symbol === path || symbolMatches(path, tr.symbol);
 }
 
 function primaryShapes(sym: SymbolEnvelope): ArgShape[] {

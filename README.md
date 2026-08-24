@@ -45,7 +45,7 @@ Exit codes: `0` ok · `1` fail · `2` usage · `3` refused / no catalog and no L
 ## How it works
 
 1. **Envelope** — the target repo's `typescript` walks imports and call sites. Unknowns (`_[k]()`, `eval`, `arr.map(get)`) are recorded, never guessed.
-2. **Traces** — `node --import slim/hooks` for node:test; `slim/vitest` Vite plugin for Vitest. Jest is detect-and-document only.
+2. **Traces** — fail-closed. `node --import slim/hooks` for node:test; `slim/vitest` plugin for Vitest (named exports included). Jest is detect-only (no setup file). `--no-trace` is the only intentional static-only path and cannot claim trace closure.
 3. **Generate** — verified catalog (lodash slice, moment format, uuid v4, ms, nanoid, clsx, …) or clean-room LLM. Catalog disagreements are Slim bugs; they are not LLM-patched.
 4. **Fuzz** — original vs replacement, fake clock for debounce, in-house generators (no fast-check).
 5. **Rewrite** — position splice of import specifiers. Untouched files stay byte-identical.

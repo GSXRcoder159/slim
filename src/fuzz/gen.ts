@@ -1,4 +1,5 @@
 import type { ArgShape, SlimValue, TraceEvent } from "../envelope/types.ts";
+import { deserialize, deserializeEvent } from "../trace/serialize.ts";
 import { clone } from "./clone.ts";
 
 export interface Gen {
@@ -41,7 +42,7 @@ export function createGen(seed: number): Gen {
 }
 
 export function fromTraces(traces: TraceEvent[], _gen: Gen): unknown[][] {
-  return traces.map((tr) => tr.args.map((a) => hydrate(a)));
+  return traces.map((tr) => deserializeEvent({ args: tr.args, thisArg: tr.thisArg, result: tr.result }).args);
 }
 
 export function mutateArgs(args: unknown[], gen: Gen): unknown[] {
@@ -178,81 +179,8 @@ function fromShape(shape: ArgShape, gen: Gen, depth: number): unknown {
   }
 }
 
-export function hydrate(value: SlimValue, refs: Map<number, unknown> = new Map()): unknown {
-  switch (value.t) {
-    case "undef":
-      return undefined;
-    case "null":
-      return null;
-    case "bool":
-      return value.v;
-    case "num":
-      if (value.v === "NaN") return NaN;
-      if (value.v === "-0") return -0;
-      if (value.v === "Infinity") return Infinity;
-      if (value.v === "-Infinity") return -Infinity;
-      return value.v;
-    case "str":
-      return value.v;
-    case "bigint":
-      return BigInt(value.v);
-    case "date":
-      return new Date(value.v);
-    case "err": {
-      const e = new Error(value.message);
-      e.name = value.name;
-      if (value.code !== undefined) (e as Error & { code?: unknown }).code = value.code;
-      return e;
-    }
-    case "arr": {
-      const a: unknown[] = new Array(value.v.length);
-      const holes = new Set(value.holes);
-      for (let i = 0; i < value.v.length; i++) {
-        if (holes.has(i)) continue;
-        const el = value.v[i];
-        if (el) a[i] = hydrate(el, refs);
-      }
-      return a;
-    }
-    case "obj": {
-      const o: Record<string, unknown> = {};
-      for (const k of value.keys) {
-        const v = value.v[k];
-        if (v) o[k] = hydrate(v, refs);
-      }
-      return o;
-    }
-    case "map": {
-      const m = new Map<unknown, unknown>();
-      for (const [k, v] of value.v) m.set(hydrate(k, refs), hydrate(v, refs));
-      return m;
-    }
-    case "set": {
-      const s = new Set<unknown>();
-      for (const v of value.v) s.add(hydrate(v, refs));
-      return s;
-    }
-    case "fn": {
-      const fn = function slimTraceFn() {
-        return undefined;
-      };
-      if (value.name) Object.defineProperty(fn, "name", { value: value.name });
-      if (value.length !== undefined) Object.defineProperty(fn, "length", { value: value.length });
-      return fn;
-    }
-    case "bytes": {
-      if (value.b64) return Buffer.from(value.b64, "base64");
-      return Buffer.alloc(value.len ?? 0);
-    }
-    case "ref":
-      return refs.get(value.id) ?? { __slimRef: value.id };
-    case "promise":
-      return Promise.resolve(undefined);
-    case "regexp":
-      return new RegExp(value.source, value.flags);
-    default:
-      return undefined;
-  }
+export function hydrate(value: SlimValue, _refs?: Map<number, unknown>): unknown {
+  return deserialize(value);
 }
 
 function junkValue(gen: Gen): unknown {

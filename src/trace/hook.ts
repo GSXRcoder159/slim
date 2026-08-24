@@ -1,10 +1,11 @@
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { siblingModule } from "../runtime-path.ts";
 import { registerHooks } from "node:module";
 import type { TraceEvent } from "../envelope/types.ts";
 import { wrapExports } from "./proxy.ts";
+import { sessionLine } from "./session.ts";
 
 type LoadResult = {
   format?: string | null;
@@ -109,7 +110,7 @@ function siblingHref(name: string): string {
   return pathToFileURL(siblingModule(import.meta.url, name)).href;
 }
 
-function extractEsmExportNames(source: string): string[] {
+export function extractEsmExportNames(source: string): string[] {
   const names = new Set<string>();
   for (const m of source.matchAll(
     /\bexport\s+(?:async\s+)?(?:function\*?|class)\s+([A-Za-z_$][\w$]*)/g,
@@ -230,6 +231,18 @@ function installHooks(): void {
   });
 }
 
+function ensureSessionFile(outPath: string): void {
+  mkdirSync(dirname(outPath), { recursive: true });
+  if (!existsSync(outPath) || statSync(outPath).size === 0) {
+    writeFileSync(outPath, sessionLine());
+    return;
+  }
+  const head = readFileSync(outPath, "utf8").slice(0, 120);
+  if (!head.includes('"t":"session"')) {
+    writeFileSync(outPath, sessionLine() + readFileSync(outPath));
+  }
+}
+
 export function createSlimHooks(opts: {
   packages: string[];
   outPath?: string;
@@ -241,14 +254,13 @@ export function createSlimHooks(opts: {
   function onEvent(e: TraceEvent): void {
     events.push(e);
     if (!outPath) return;
-    mkdirSync(dirname(outPath), { recursive: true });
+    ensureSessionFile(outPath);
     appendFileSync(outPath, JSON.stringify(e) + "\n");
   }
 
   function flush(): void {
     if (!outPath) return;
-    mkdirSync(dirname(outPath), { recursive: true });
-    writeFileSync(outPath, events.map((e) => JSON.stringify(e) + "\n").join(""));
+    ensureSessionFile(outPath);
   }
 
   function register(): void {
@@ -257,6 +269,7 @@ export function createSlimHooks(opts: {
     }
     if (!eventSinks.includes(onEvent)) eventSinks.push(onEvent);
     if (!flushers.includes(flush)) flushers.push(flush);
+    if (outPath) ensureSessionFile(outPath);
     installHooks();
   }
 

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { closeEnvelope } from "../src/envelope/close.ts";
 import { renderEvidenceMd, writeEvidence, type EvidenceJson } from "../src/evidence/report.ts";
 import { findBundleEntry, maybeBundleBytes } from "../src/size/bundle.ts";
 import { ENVELOPE_VERSION, emptyHyrum } from "../src/envelope/types.ts";
@@ -29,6 +30,8 @@ function env(family = "lodash"): Envelope {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "",
     },
@@ -133,6 +136,27 @@ test("writeEvidence residual risk is never empty", () => {
   assert.match(md, /## Residual risk/);
   assert.match(md, /strong evidence, not proof/);
 });
+
+test("zero traces cannot claim trace-closed and residual risk names unobserved runtime", () => {
+  const closed = closeEnvelope(env());
+  assert.notEqual(closed.closure.confidence, "trace-closed");
+  assert.match(closed.closure.reason, /runtime distribution/);
+  const root = mkdtempSync(join(tmpdir(), "slim-ev-static-"));
+  const { mdPath } = writeEvidence({
+    root,
+    env: closed,
+    replacementBytes: 100,
+    originalMin: 1000,
+    fuzz: { ...fuzz, tracesReplayed: 0 },
+    catalogIds: [],
+    coverageHoles: ["zero traces replayed"],
+    bundle: null,
+  });
+  const md = readFileSync(mdPath, "utf8");
+  assert.match(md, /runtime distribution was not observed|not your runtime distribution/);
+  assert.doesNotMatch(md, /trace-closed/);
+});
+
 
 test("findBundleEntry reads wrangler.toml main", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-bdl-"));

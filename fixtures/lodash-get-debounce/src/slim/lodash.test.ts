@@ -214,16 +214,8 @@ const pairs = [
     ],
     "threw": null,
     "result": {
-      "t": "obj",
-      "keys": [
-        "c"
-      ],
-      "v": {
-        "c": {
-          "t": "num",
-          "v": 1
-        }
-      }
+      "t": "ref",
+      "id": 2
     }
   },
   {
@@ -274,16 +266,8 @@ const pairs = [
     ],
     "threw": null,
     "result": {
-      "t": "obj",
-      "keys": [
-        "c"
-      ],
-      "v": {
-        "c": {
-          "t": "num",
-          "v": 1
-        }
-      }
+      "t": "ref",
+      "id": 2
     }
   },
   {
@@ -324,16 +308,8 @@ const pairs = [
     ],
     "threw": null,
     "result": {
-      "t": "obj",
-      "keys": [
-        "c"
-      ],
-      "v": {
-        "c": {
-          "t": "num",
-          "v": 1
-        }
-      }
+      "t": "ref",
+      "id": 2
     }
   },
   {
@@ -384,16 +360,8 @@ const pairs = [
     ],
     "threw": null,
     "result": {
-      "t": "obj",
-      "keys": [
-        "c"
-      ],
-      "v": {
-        "c": {
-          "t": "num",
-          "v": 1
-        }
-      }
+      "t": "ref",
+      "id": 2
     }
   },
   {
@@ -489,16 +457,8 @@ const pairs = [
     ],
     "threw": null,
     "result": {
-      "t": "obj",
-      "keys": [
-        "c"
-      ],
-      "v": {
-        "c": {
-          "t": "num",
-          "v": 7
-        }
-      }
+      "t": "ref",
+      "id": 2
     }
   },
   {
@@ -549,16 +509,8 @@ const pairs = [
     ],
     "threw": null,
     "result": {
-      "t": "obj",
-      "keys": [
-        "c"
-      ],
-      "v": {
-        "c": {
-          "t": "num",
-          "v": 7
-        }
-      }
+      "t": "ref",
+      "id": 2
     }
   }
 ];
@@ -678,9 +630,17 @@ function revive(v: any): unknown {
     return v.v;
   }
   if (v.t === "arr") return v.v.map(revive);
+  if (v.t === "trunc") return undefined;
   if (v.t === "obj") {
-    const o: Record<string, unknown> = {};
-    for (const k of v.keys ?? Object.keys(v.v ?? {})) o[k] = revive(v.v[k]);
+    const o = Object.create(null);
+    for (const k of v.keys ?? Object.keys(v.v ?? {})) {
+      Object.defineProperty(o, k, {
+        value: revive(v.v[k]),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
+    }
     return o;
   }
   if (v.t === "date") return new Date(v.v);

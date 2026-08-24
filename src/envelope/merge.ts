@@ -1,5 +1,6 @@
 import type { Envelope, HyrumFlags, SlimValue, TraceEvent } from "./types.ts";
 import { emptyHyrum } from "./types.ts";
+import { attributeTraces, locMatch, symbolMatches } from "../trace/attribute.ts";
 
 export function hyrumFromTraces(traces: TraceEvent[]): Partial<HyrumFlags> {
   const h: Partial<HyrumFlags> = {};
@@ -15,6 +16,7 @@ export function hyrumFromTraces(traces: TraceEvent[]): Partial<HyrumFlags> {
 
 function walkSlim(v: SlimValue, h: Partial<HyrumFlags>, depth = 0): void {
   if (depth > 24) return;
+  if (v.t === "trunc") return;
   if (v.t === "num") {
     if (v.v === "NaN") h.nan = true;
     if (v.v === "-0") h.signedZero = true;
@@ -49,25 +51,24 @@ function orHyrum(base: HyrumFlags, extra: Partial<HyrumFlags>): HyrumFlags {
   return out;
 }
 
-export function mergeTraces(env: Envelope, traces: TraceEvent[]): Envelope {
-  const bySymbol = new Map<string, TraceEvent[]>();
-  for (const t of traces) {
-    const list = bySymbol.get(t.symbol) ?? [];
-    list.push(t);
-    bySymbol.set(t.symbol, list);
-  }
+export function mergeTraces(
+  env: Envelope,
+  traces: TraceEvent[],
+  opts?: { root?: string },
+): Envelope {
+  const attributed = opts?.root ? attributeTraces(env, traces, opts.root) : traces;
   const symbols = env.symbols.map((s) => {
-    const hits = [
-      ...(bySymbol.get(s.exportName) ?? []),
-      ...traces.filter((t) => t.symbol.startsWith(s.exportName + ".")),
-    ];
-    const uniqueHits = [...new Set(hits)];
+    const hits = attributed.filter((t) => symbolMatches(s.exportName, t.symbol));
+    const tracedIds = new Set<string>();
+    for (const t of hits) {
+      if (t.callSiteId && !t.unmatched) tracedIds.add(t.callSiteId);
+    }
     return {
       ...s,
-      hyrum: orHyrum(s.hyrum, hyrumFromTraces(uniqueHits)),
+      hyrum: orHyrum(s.hyrum, hyrumFromTraces(hits)),
       coverage: {
         callSitesStatic: s.callSites.length,
-        callSitesTraced: uniqueHits.length ? s.callSites.length : s.coverage.callSitesTraced,
+        callSitesTraced: tracedIds.size,
       },
     };
   });
@@ -75,13 +76,18 @@ export function mergeTraces(env: Envelope, traces: TraceEvent[]): Envelope {
     if (u.kind !== "dynamic-member") return u;
     const members = [
       ...new Set(
-        traces
-          .map((t) => t.symbol)
+        attributed
+          .filter((t) => t.site && locMatch(t.site, u.loc, opts?.root ?? process.cwd()))
+          .map((t) => (t.resultMember ? `${baseSymbol(t.symbol)}.${t.resultMember}` : t.symbol))
           .filter((name) => name.length > 0),
       ),
     ];
     if (!members.length) return u;
     return { ...u, traceObservedMembers: members };
   });
-  return { ...env, symbols, unknowns, traces: [...env.traces, ...traces] };
+  return { ...env, symbols, unknowns, traces: [...env.traces, ...attributed] };
+}
+
+function baseSymbol(symbol: string): string {
+  return symbol.replace(/\(\)$/, "").split(".")[0] ?? symbol;
 }

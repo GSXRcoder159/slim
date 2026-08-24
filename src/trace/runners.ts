@@ -15,16 +15,10 @@ export interface DetectedRunner {
 }
 
 const JEST_SNIPPET = `// Slim v1 does not wrap Jest.
-// Use moduleNameMapper and setupFiles as a manual escape hatch:
-//
-//   moduleNameMapper: {
-//     '^lodash$': '<rootDir>/node_modules/lodash/lodash.js',
-//     '^lodash-es$': '<rootDir>/node_modules/lodash-es/index.js',
-//   },
-//   setupFiles: ['<rootDir>/slim-jest-setup.js'],
-//
-// Prefer node:test (--import slim/hooks) or Vitest with the slim/vitest
-// plugin for automatic tracing.`;
+// Jest has no first-class Slim tracing and no shipped setup file.
+// Use node:test with --import slim/hooks, or Vitest with the slim/vitest plugin.
+// Otherwise run: slim replace <pkg> --no-trace
+// Static-only evidence cannot claim runtime/trace closure.`;
 
 export function detectRunner(projectRoot: string): DetectedRunner {
   let pkg: {
@@ -79,16 +73,19 @@ export function detectRunner(projectRoot: string): DetectedRunner {
   return { kind: "none", command: null };
 }
 
-export function traceEnv(packages: string[], outPath: string): NodeJS.ProcessEnv {
+export function traceEnv(packages: string[], outPath: string, root?: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     SLIM_TRACE_PACKAGES: packages.join(","),
     SLIM_TRACE_OUT: outPath,
+    ...(root ? { SLIM_TRACE_ROOT: root } : {}),
   };
 }
 
 export function nodeTestPreloadArgs(hookModuleAbsPath: string): string[] {
-  return ["--import", pathToFileURL(hookModuleAbsPath).href];
+  const args = ["--import", pathToFileURL(hookModuleAbsPath).href];
+  if (hookModuleAbsPath.endsWith(".ts")) args.unshift("--experimental-strip-types");
+  return args;
 }
 
 const VITEST_CONFIG_NAMES = [

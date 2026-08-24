@@ -9,7 +9,7 @@ import {
   type TraceEvent,
 } from "../../src/envelope/types.ts";
 import { EXIT_REFUSED, SlimExit } from "../../src/exit.ts";
-import { runFuzz, defaultWorkerCount } from "../../src/fuzz/run.ts";
+import { runFuzz, defaultWorkerCount, traceHits } from "../../src/fuzz/run.ts";
 import { TAXONOMY } from "../../src/fuzz/debounce-driver.ts";
 
 function toPath(path: unknown): string[] {
@@ -123,6 +123,8 @@ function envelopeForGet(): Envelope {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "test",
     },
@@ -246,6 +248,8 @@ function envelopeForDebounce(argcObserved: number[]): Envelope {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "test",
     },
@@ -355,6 +359,8 @@ function envelopePkg(
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "test",
     },
@@ -479,4 +485,47 @@ test("fuzz refuses network/native packages and native/network blockers", async (
       workers: 1,
     }),
   );
+});
+
+test("traceHits includes debounce invoke/cancel/flush via parent symbol", () => {
+  const debounce: SymbolEnvelope = {
+    exportName: "debounce",
+    packages: [],
+    callSites: [
+      {
+        id: "d1",
+        loc: loc(),
+        exportName: "debounce",
+        memberPath: ["debounce"],
+        thisBinding: { kind: "unbound" },
+        argc: { min: 2, max: 2, observed: [2] },
+        argShapes: [],
+        spread: false,
+        resultMembers: ["cancel", "flush"],
+      },
+    ],
+    resultMembers: ["cancel", "flush"],
+    hyrum: emptyHyrum(),
+    coverage: { callSitesStatic: 1, callSitesTraced: 1 },
+  };
+  assert.equal(traceHits({ symbol: "debounce", args: [] }, debounce), true);
+  assert.equal(
+    traceHits({ symbol: "debounce()", args: [], resultMember: "", parentOriginId: "p" }, debounce),
+    true,
+  );
+  assert.equal(
+    traceHits(
+      { symbol: "debounce.cancel", args: [], resultMember: "cancel", parentOriginId: "p" },
+      debounce,
+    ),
+    true,
+  );
+  assert.equal(
+    traceHits(
+      { symbol: "debounce.flush", args: [], resultMember: "flush", parentOriginId: "p" },
+      debounce,
+    ),
+    true,
+  );
+  assert.equal(traceHits({ symbol: "get", args: [] }, debounce), false);
 });

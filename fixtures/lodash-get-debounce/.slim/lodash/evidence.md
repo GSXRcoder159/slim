@@ -13,7 +13,7 @@ Differential fuzzing over the inferred envelope is strong evidence, not proof.
 - Call sites: 6
 - Unknowns: 0
 - Catalog: lodash.get, lodash.debounce
-- Envelope hash: `cc4e4fa34efadf4a5a4279e261950a1dc386477519a213cf528f30704ed5bb87`
+- Envelope hash: `214d05c55226e84d106963f00bcd08894fc0b900079e9d919f63cfb1c3980608`
 
 ## 3. Byte delta
 
@@ -26,13 +26,13 @@ The cap that bites Workers is **1s startup parse**, not gzip 3MB/10MB (those lim
 
 ## 5. Fuzz
 
-- cases: 1829784
-- comparisons: 1829804
+- cases: 1771205
+- comparisons: 1771225
 - timerCases: 10
 - traces replayed: 12
 - disagreements: 0
-- wall: 30007 ms
-- seed: 181670408
+- wall: 30005 ms
+- seed: 141647386
 
 ## 6. Coverage holes
 

@@ -1,15 +1,22 @@
 import { createHash } from "node:crypto";
-import type { SlimValue } from "../envelope/types.ts";
+import type { SlimValue, TraceEvent } from "../envelope/types.ts";
 
 const REDACT_RE = /password|token|secret|authorization/i;
 const MAX_STRING = 4096; /* ponytail: 4KiB cap */
 const DEFAULT_BUDGET = 10_000;
+const SOURCE_HINT =
+  /\b(module\.exports|export\s+(?:default|async|function|const|class)|function\s+[A-Za-z_$])/;
+const STACK_HINT = /(?:^|\n)\s+at\s+\S+.+:\d+:\d+/;
+
+type WalkState = {
+  seen: Map<object, number>;
+  ids: { next: number };
+  budget: { n: number; truncated: boolean };
+};
 
 export function serialize(value: unknown, opts?: { budget?: number }): SlimValue {
-  const budget = { n: opts?.budget ?? DEFAULT_BUDGET };
-  const seen = new Map<object, number>();
-  const ids = { next: 0 };
-  return walk(value, seen, ids, budget);
+  const st = newState(opts?.budget);
+  return walk(value, st);
 }
 
 export function deserialize(v: SlimValue): unknown {
@@ -18,7 +25,43 @@ export function deserialize(v: SlimValue): unknown {
 }
 
 export function snapshot(args: unknown[]): SlimValue[] {
-  return args.map((a) => serialize(a));
+  const st = newState();
+  return args.map((a) => walk(a, st));
+}
+
+export function serializeEvent(input: {
+  args: unknown[];
+  thisArg?: unknown;
+  result?: unknown;
+}): Pick<TraceEvent, "args" | "thisArg" | "result" | "truncated"> {
+  const st = newState();
+  const args = input.args.map((a) => walk(a, st));
+  const thisArg =
+    input.thisArg === undefined ? undefined : walk(input.thisArg, st);
+  const result =
+    input.result === undefined ? undefined : walk(input.result, st);
+  return {
+    args,
+    ...(thisArg !== undefined ? { thisArg } : {}),
+    ...(result !== undefined ? { result } : {}),
+    truncated: st.budget.truncated,
+  };
+}
+
+export function deserializeEvent(e: {
+  args: SlimValue[];
+  thisArg?: SlimValue;
+  result?: SlimValue;
+}): { args: unknown[]; thisArg?: unknown; result?: unknown } {
+  const seen: unknown[] = [];
+  const args = e.args.map((a) => decode(a, seen));
+  const thisArg = e.thisArg === undefined ? undefined : decode(e.thisArg, seen);
+  const result = e.result === undefined ? undefined : decode(e.result, seen);
+  return {
+    args,
+    ...(thisArg !== undefined ? { thisArg } : {}),
+    ...(result !== undefined ? { result } : {}),
+  };
 }
 
 export function mutatedArgIndexes(before: SlimValue[], after: SlimValue[]): number[] {
@@ -30,14 +73,35 @@ export function mutatedArgIndexes(before: SlimValue[], after: SlimValue[]): numb
   return out;
 }
 
-function walk(
-  value: unknown,
-  seen: Map<object, number>,
-  ids: { next: number },
-  budget: { n: number },
-): SlimValue {
-  if (budget.n <= 0) return { t: "undef" };
-  budget.n--;
+export function createWalker(budget?: number): {
+  value(v: unknown): SlimValue;
+  readonly truncated: boolean;
+} {
+  const st = newState(budget);
+  return {
+    value(v: unknown): SlimValue {
+      return walk(v, st);
+    },
+    get truncated() {
+      return st.budget.truncated;
+    },
+  };
+}
+
+function newState(budget = DEFAULT_BUDGET): WalkState {
+  return {
+    seen: new Map(),
+    ids: { next: 0 },
+    budget: { n: budget, truncated: false },
+  };
+}
+
+function walk(value: unknown, st: WalkState): SlimValue {
+  if (st.budget.n <= 0) {
+    st.budget.truncated = true;
+    return { t: "trunc" };
+  }
+  st.budget.n--;
 
   if (value === undefined) return { t: "undef" };
   if (value === null) return { t: "null" };
@@ -55,10 +119,10 @@ function walk(
 
   if (typeof value === "function" || (typeof value === "object" && value !== null)) {
     const obj = value as object;
-    const existing = seen.get(obj);
+    const existing = st.seen.get(obj);
     if (existing !== undefined) return { t: "ref", id: existing };
-    const id = ids.next++;
-    seen.set(obj, id);
+    const id = st.ids.next++;
+    st.seen.set(obj, id);
   } else {
     return { t: "undef" };
   }
@@ -95,18 +159,16 @@ function walk(
   if (value instanceof Map) {
     const entries: [SlimValue, SlimValue][] = [];
     for (const [k, val] of value.entries()) {
-      const keySv = walk(k, seen, ids, budget);
+      const keySv = walk(k, st);
       const valSv =
-        typeof k === "string" && REDACT_RE.test(k)
-          ? redacted()
-          : walk(val, seen, ids, budget);
+        typeof k === "string" && REDACT_RE.test(k) ? redacted() : walk(val, st);
       entries.push([keySv, valSv]);
     }
     return { t: "map", v: entries };
   }
   if (value instanceof Set) {
     const items: SlimValue[] = [];
-    for (const item of value) items.push(walk(item, seen, ids, budget));
+    for (const item of value) items.push(walk(item, st));
     return { t: "set", v: items };
   }
   if (Array.isArray(value)) {
@@ -117,29 +179,52 @@ function walk(
         holes.push(i);
         items.push({ t: "undef" });
       } else {
-        items.push(walk(value[i], seen, ids, budget));
+        items.push(walk(value[i], st));
       }
     }
     return { t: "arr", v: items, holes };
   }
 
-  const rec = value as Record<string, unknown>;
-  const keys = Object.keys(rec);
-  const fields: Record<string, SlimValue> = {};
+  const keys = ownStringKeys(value);
+  const fields = Object.create(null) as Record<string, SlimValue>;
   for (const k of keys) {
-    fields[k] = REDACT_RE.test(k) ? redacted() : walk(rec[k], seen, ids, budget);
+    const child = REDACT_RE.test(k)
+      ? redacted()
+      : walk((value as Record<string, unknown>)[k], st);
+    defineOwn(fields, k, child);
   }
   return { t: "obj", keys, v: fields };
 }
 
+function ownStringKeys(value: object): string[] {
+  return Reflect.ownKeys(value).filter((k): k is string => typeof k === "string");
+}
+
+function defineOwn(o: object, key: string, value: unknown): void {
+  Object.defineProperty(o, key, {
+    value,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+}
+
 function serializeString(s: string): SlimValue {
-  if (REDACT_RE.test(s)) return redacted();
+  if (REDACT_RE.test(s) || looksLikeSource(s) || looksLikeStack(s)) return redacted();
   if (s.length > MAX_STRING) {
-    /* ponytail: 4KiB cap */
     const hash = createHash("sha256").update(s).digest("hex");
     return { t: "str", v: s.slice(0, MAX_STRING) + "\nsha256:" + hash };
   }
   return { t: "str", v: s };
+}
+
+function looksLikeSource(s: string): boolean {
+  return s.includes("\n") && s.length >= 80 && SOURCE_HINT.test(s);
+}
+
+function looksLikeStack(s: string): boolean {
+  if (!s.includes("\n") || !STACK_HINT.test(s)) return false;
+  return (s.match(/\n\s+at\s+/g) ?? []).length >= 2;
 }
 
 function redacted(): SlimValue {
@@ -150,6 +235,7 @@ function decode(v: SlimValue | undefined, seen: unknown[]): unknown {
   if (!v) return undefined;
   switch (v.t) {
     case "undef":
+    case "trunc":
       return undefined;
     case "null":
       return null;
@@ -198,9 +284,9 @@ function decode(v: SlimValue | undefined, seen: unknown[]): unknown {
       return a;
     }
     case "obj": {
-      const o: Record<string, unknown> = {};
+      const o = Object.create(null) as Record<string, unknown>;
       seen.push(o);
-      for (const k of v.keys) o[k] = decode(v.v[k], seen);
+      for (const k of v.keys) defineOwn(o, k, decode(v.v[k], seen));
       return o;
     }
     case "map": {
@@ -247,6 +333,7 @@ function slimEq(a: SlimValue | undefined, b: SlimValue | undefined): boolean {
     case "undef":
     case "null":
     case "promise":
+    case "trunc":
       return true;
     case "bool":
     case "num":

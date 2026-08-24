@@ -33,6 +33,8 @@ function env(opts: {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "test",
     },
@@ -247,4 +249,44 @@ test("vitest flavor standing tests import vitest", () => {
   assert.match(body, /toEqual/);
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { scripts?: Record<string, string> };
   assert.match(pkg.scripts!["slim:evidence"]!, /vitest/);
+});
+
+test("standing revive uses null-prototype objects and defineProperty", () => {
+  const dir = tmpProject();
+  writeFileSync(
+    join(dir, "src", "lodash.ts"),
+    `export function get(object: Record<string, unknown>, path: string) {\n  return object[path];\n}\n`,
+  );
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "lodash",
+    env: env({ symbols: ["get"] }),
+    traces: [
+      {
+        symbol: "get",
+        args: [
+          {
+            t: "obj",
+            keys: ["__proto__", "a"],
+            v: { __proto__: { t: "str", v: "nope" }, a: { t: "num", v: 1 } },
+          },
+          { t: "str", v: "a" },
+        ],
+        result: { t: "num", v: 1 },
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./lodash.ts",
+  });
+  const body = readFileSync(file, "utf8");
+  assert.match(body, /Object\.create\(null\)/);
+  assert.match(body, /defineProperty/);
+  const before = Object.prototype.hasOwnProperty("polluted");
+  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--test", file], {
+    encoding: "utf8",
+    cwd: dir,
+  });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.equal(Object.prototype.hasOwnProperty("polluted"), before);
 });

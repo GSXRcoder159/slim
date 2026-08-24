@@ -1,8 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, cpSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import {
   createSlimHooks,
@@ -47,6 +49,9 @@ test("createSlimHooks writes JSONL on events via flush sink", () => {
   h.register();
   assert.deepEqual(h.events(), []);
   h.flush();
+  const text = readFileSync(outPath, "utf8");
+  assert.match(text, /"t":"session"/);
+  assert.match(text, /"hook":true/);
 });
 
 test("registerHooks wraps a tiny local CJS package under node_modules", async () => {
@@ -90,6 +95,46 @@ test("slim/vitest plugin is duck-typed and skips slim-orig", () => {
   assert.match(String(wrapped), /\?slim-orig/);
   assert.match(String(wrapped), /file:/);
   assert.doesNotMatch(String(wrapped), /from ["']slim\/vitest["']/);
+  assert.doesNotMatch(String(wrapped), /export \* from/);
   assert.equal(plugin.load?.(origId) ?? null, null);
   assert.equal(plugin.transform?.("", wrapId) ?? null, null);
+});
+
+test("registerHooks wraps a tiny ESM package under --import", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-hook-esm-"));
+  const pkgDir = join(dir, "node_modules", "tiny-trace-esm");
+  mkdirSync(pkgDir, { recursive: true });
+  const fixture = join(dirname(fileURLToPath(import.meta.url)), "../fixtures/trace/esm");
+  cpSync(fixture, pkgDir, { recursive: true });
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({ name: "app", type: "module", scripts: { test: "node --test src/index.test.js" } }),
+  );
+  mkdirSync(join(dir, "src"), { recursive: true });
+  writeFileSync(
+    join(dir, "src", "index.test.js"),
+    `import { test } from "node:test";
+import assert from "node:assert/strict";
+import { add } from "tiny-trace-esm";
+test("add", () => { assert.equal(add(2, 3), 5); });
+`,
+  );
+  const outPath = join(dir, "traces.jsonl");
+  const hook = join(dirname(fileURLToPath(import.meta.url)), "../../src/trace/hook.ts");
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    SLIM_TRACE_PACKAGES: "tiny-trace-esm",
+    SLIM_TRACE_OUT: outPath,
+  };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_CHANNEL_FD;
+  const r = spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", "--import", pathToFileURL(hook).href, "--test", "src/index.test.js"],
+    { cwd: dir, encoding: "utf8", env },
+  );
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  const jsonl = readFileSync(outPath, "utf8");
+  assert.match(jsonl, /"t":"session"/);
+  assert.match(jsonl, /"symbol":"add"/);
 });

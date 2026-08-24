@@ -42,6 +42,13 @@ test("parseCli --allow-flaky", () => {
   assert.equal(a.allowFlaky, true);
 });
 
+test("parseCli --no-trace", () => {
+  const a = parseCli(["replace", "lodash", "--no-trace"]);
+  assert.equal(a.noTrace, true);
+  const b = parseCli(["replace", "lodash"]);
+  assert.equal(b.noTrace, false);
+});
+
 test("parseCli --no-install", () => {
   const a = parseCli(["replace", "lodash", "--no-install"]);
   assert.equal(a.noInstall, true);
@@ -49,14 +56,21 @@ test("parseCli --no-install", () => {
   assert.equal(b.noInstall, false);
 });
 
+
 test("help text names evidence not proof", () => {
   assert.match(helpText(), /Evidence, not proof/i);
   assert.match(helpText(), /slim replace/);
 });
 
+test("help text documents --no-trace as static-only", () => {
+  assert.match(helpText(), /--no-trace/);
+  assert.match(helpText(), /never trace-closed/);
+});
+
 test("help text documents --no-install", () => {
   assert.match(helpText(), /--no-install/);
 });
+
 
 test("help text documents exit codes and stdout/stderr streams", () => {
   assert.match(helpText(), /Exit codes: 0 ok/);

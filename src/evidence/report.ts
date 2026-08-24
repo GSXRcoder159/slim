@@ -147,8 +147,11 @@ function residualRisk(env: Envelope, fuzz: EvidenceJson["fuzz"]): string[] {
   const r: string[] = [
     "Differential fuzzing over the inferred envelope is strong evidence, not proof. Unobserved call shapes can still disagree.",
   ];
-  if (!fuzz.tracesReplayed) {
+  if (!fuzz.tracesReplayed || env.traces.length === 0) {
     r.push("No runtime traces. Generators are static-shape plus catalog mutations, not your runtime distribution.");
+  }
+  if (env.closure.confidence === "trace-closed" && env.traces.length === 0) {
+    r.push("Static-only evidence cannot claim trace closure.");
   }
   if (env.unknowns.length) {
     r.push(`Unknown sites remain: ${env.unknowns.map((u) => u.kind).join(", ")}.`);
