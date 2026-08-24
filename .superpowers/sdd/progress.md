@@ -25,3 +25,16 @@
 - Task 6 Check + Actions + release: complete (commits cda96dd..c3f2458, review clean; minor: Node 22 vs 22.18 check)
 - Task 7 Upstream regenerate: complete (commits c3f2458..cbe461e, review clean; minor: oracle kind not labeled in evidence)
 - Task 8 Doctor, oracles, golden fixture, docs: complete
+
+## Close v1 gaps (working tree, uncommitted)
+
+- Task config-scan: complete (include/ignore + lockfile versions)
+- Task hyrum-traces: complete
+- Task evidence-report: complete (sections 1–8 + optional bundle dry-run)
+- Task repair-loop: complete
+- Task golden-fixture: complete (Worker-shaped; tracesReplayed=12; env=node,worker; lodash 4.17.21; wrapFn cache-before-copy). Review: Approved ([Review](41e08b2c-ee31-4938-9afa-6d2634fac940))
+- Task docs-size: complete (~250-line honesty). Review: Approved ([Review](91fa67f8-2f9d-42d6-8918-7315929a7de8))
+- Standing fn-trace filter: complete
+- npm test: 386 pass / 0 fail
+- fixture slim check: pass
+

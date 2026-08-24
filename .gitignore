@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.worktrees/
 .tmp/
 *.tsbuildinfo
 .tmp.mjs
@@ -15,3 +16,5 @@ coverage/
 *.log
 .env
 .env.*
+
+PRODUCTION_READINESS_PLAN.md
