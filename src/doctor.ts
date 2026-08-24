@@ -4,6 +4,7 @@ import { registerHooks } from "node:module";
 import { EXIT_OK, EXIT_ENV } from "./exit.ts";
 import type { CliArgs } from "./cli.ts";
 import { loadProject } from "./project.ts";
+import { MIN_NODE_LABEL, nodeMeetsMinimum } from "./node-min.ts";
 
 export const CJS_HOOKS_LINE =
   "cjs hooks      recommend Node >= 22.22.3 (documented CJS sync-hook fixes)";
@@ -39,13 +40,10 @@ export function collectDoctor(
   opts?: { porcelain?: string },
 ): DoctorReport {
   const issues: string[] = [];
-  const majorMinor = process.versions.node.split(".").map(Number);
-  const nodeOk =
-    (majorMinor[0] ?? 0) > 22 ||
-    ((majorMinor[0] ?? 0) === 22 && (majorMinor[1] ?? 0) >= 18);
+  const nodeOk = nodeMeetsMinimum();
   if (!nodeOk) {
     issues.push(
-      `Node ${process.versions.node} is older than 22.18. Slim needs registerHooks (22.15+) and CJS sync-hook fixes (22.22.3+ recommended).`,
+      `Node ${process.versions.node} is older than ${MIN_NODE_LABEL}. Slim needs registerHooks (22.15+) and CJS sync-hook fixes (22.22.3+ recommended).`,
     );
   }
   const hooks = typeof registerHooks === "function";

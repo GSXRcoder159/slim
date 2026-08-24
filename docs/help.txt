@@ -1,31 +1,37 @@
-slim — delete a JS/TS dependency by replacing it with a verified slice
+slim — delete your dependencies
+
+Evidence, not proof. Slim infers the slice of a package you actually use,
+emits a dependency-free replacement, differentially fuzzes it against the
+original, and opens a PR with a standing regression suite.
 
 Usage:
-  slim <command> [options]
-
-Commands:
-  scan              Find packages you only use a few functions of
-  inspect <pkg>     Show call sites, envelope, and whether Slim will try
-  replace <pkg>     Write a slice, fuzz it against the original, open a PR
-  check             Re-run standing tests; envelope still matches call sites
-  watch             See if upstream advisories/releases touch your slice
-  doctor            Check Node, git, gh, slices, and the watch workflow
-
-Alias:  slim upstream → slim watch
-
-Global options:
-  -h, --help        Help for this command
-  -V, --version     Print version
-      --cwd <dir>   Project root (default: find package.json upward)
-  -q, --quiet       No progress on stderr
-      --verbose     Extra progress on stderr
-      --json        Machine output on stdout; progress stays on stderr
-
-This is not a package manager. It writes files in your repo.
-
-Examples:
-  slim scan
-  slim inspect lodash
-  slim replace lodash
+  slim scan [--json]
+  slim inspect <pkg>
+  slim replace <pkg> [options]
   slim check
-  slim watch --write-workflow
+  slim upstream [--pr]
+  slim watch                  (alias of upstream)
+  slim doctor [--strict]
+
+Replace options:
+  --budget-ms <n>     fuzz wall clock (default 30000, 300000 if CI=1)
+  --no-trace          skip running tests for traces
+  --no-pr             write files, do not open a GitHub PR
+  --allow-unknown     generate even with dynamic access (never claimed closed)
+  --force             skip size / save heuristics
+  --out <dir>         default src/slim
+  --dry-run           analyze and print, do not write
+  --template-only     catalog only, no LLM
+  --llm               force LLM even if catalog matches
+  --keep-original     do not uninstall the package
+  --no-install        rewrite package.json but skip lockfile refresh
+  --allow-flaky       fuzz unseeded RNG packages
+  --workers <n>
+  --seed <n>
+  --max-attempts <n>  LLM repair loop (default 3)
+
+Doctor options:
+  --strict            dirty working tree exits 4 (default: list it, still 0 if Node/hooks ok)
+
+Exit codes: 0 ok  1 fail  2 usage  3 refused  4 environment
+Streams: JSON and human reports on stdout. Progress, warnings, and errors on stderr.

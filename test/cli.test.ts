@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseCli, helpText } from "../src/cli.ts";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 test("parseCli help", () => {
   const a = parseCli(["--help"]);
@@ -51,6 +56,16 @@ test("help text names evidence not proof", () => {
 
 test("help text documents --no-install", () => {
   assert.match(helpText(), /--no-install/);
+});
+
+test("help text documents exit codes and stdout/stderr streams", () => {
+  assert.match(helpText(), /Exit codes: 0 ok/);
+  assert.match(helpText(), /Streams: JSON and human reports on stdout/);
+});
+
+test("docs/help.txt matches shipped HELP", () => {
+  const snap = readFileSync(join(ROOT, "docs/help.txt"), "utf8");
+  assert.equal(snap, helpText());
 });
 
 test("parseCli doctor --strict", () => {

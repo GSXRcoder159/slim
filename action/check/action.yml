@@ -13,5 +13,5 @@ runs:
         fi
       shell: bash
     - name: slim check
-      run: node --experimental-strip-types "${{ github.action_path }}/../../src/github/check-action.ts"
+      run: node "${{ github.action_path }}/../run.mjs" check
       shell: bash

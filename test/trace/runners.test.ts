@@ -99,6 +99,8 @@ test("writeVitestTraceConfig writes .slim/vitest.trace.ts", () => {
   assert.match(src, /export default/);
   assert.match(src, /slimVitest\(\{\s*packages:/);
   assert.match(src, /lodash/);
+  assert.match(src, /from ["']file:/);
+  assert.doesNotMatch(src, /from ["']slim\/vitest["']/);
 });
 
 test("vitestTraceConfigSource merges user config via mergeConfig", () => {

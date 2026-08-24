@@ -257,10 +257,10 @@ test("worker thread specifier matches current module extension", () => {
   );
   assert.equal(existsSync(fileURLToPath(resolved)), true, `missing ${resolved.href}`);
 
-  const fromTs = workerThreadUrl("file:///app/src/fuzz/workers.ts");
-  assert.ok(fromTs.href.endsWith("/worker-thread.ts"), fromTs.href);
-  const fromJs = workerThreadUrl("file:///app/dist/fuzz/workers.js");
-  assert.ok(fromJs.href.endsWith("/worker-thread.js"), fromJs.href);
+  assert.throws(
+    () => workerThreadUrl("file:///app/src/fuzz/workers.ts"),
+    /runtime file missing/,
+  );
 });
 
 test("cloneable roundtrip preserves function arity", () => {

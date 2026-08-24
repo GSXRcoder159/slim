@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { Node, Statement } from "typescript";
 import { catalogRoot, guardedReadFileSync, slimRoot } from "./guard.ts";
 import { generatedHeader } from "./header.ts";
 import { loadTargetTypescript } from "../project.ts";
@@ -7,8 +8,8 @@ import type { Envelope } from "../envelope/types.ts";
 
 const INTERNAL_SPEC = /(?:^|\/)_internal(?:\.\w+)?$/;
 
-export function assembleCatalogModule(env: Envelope): string | null {
-  const ts = loadTargetTypescript(slimRoot());
+export function assembleCatalogModule(env: Envelope, projectRoot = slimRoot()): string | null {
+  const ts = loadTargetTypescript(projectRoot);
   const family = env.package.family;
   const symbols = env.symbols
     .map((s) => s.exportName)
@@ -123,13 +124,13 @@ function treeShakeInternal(
   roots: Set<string>,
 ): string {
   const sf = ts.createSourceFile("_internal.ts", src, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  const byName = new Map<string, ts.Statement>();
+  const byName = new Map<string, Statement>();
   for (const stmt of sf.statements) {
     for (const n of statementNames(ts, stmt)) {
       byName.set(n, stmt);
     }
   }
-  const keep = new Set<ts.Statement>();
+  const keep = new Set<Statement>();
   const queue = [...roots];
   const seen = new Set<string>();
   while (queue.length) {
@@ -151,7 +152,7 @@ function treeShakeInternal(
   return pieces.join("\n\n");
 }
 
-function statementNames(ts: typeof import("typescript"), stmt: ts.Statement): string[] {
+function statementNames(ts: typeof import("typescript"), stmt: Statement): string[] {
   const names: string[] = [];
   if (
     (ts.isFunctionDeclaration(stmt) ||
@@ -172,12 +173,12 @@ function statementNames(ts: typeof import("typescript"), stmt: ts.Statement): st
 
 function statementRefs(
   ts: typeof import("typescript"),
-  stmt: ts.Statement,
-  declared: Map<string, ts.Statement>,
+  stmt: Statement,
+  declared: Map<string, Statement>,
 ): Set<string> {
   const refs = new Set<string>();
   const own = new Set(statementNames(ts, stmt));
-  const visit = (node: ts.Node) => {
+  const visit = (node: Node) => {
     if (ts.isIdentifier(node) && declared.has(node.text) && !own.has(node.text)) {
       const parent = node.parent;
       const isProp =

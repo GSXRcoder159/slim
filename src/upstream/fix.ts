@@ -37,7 +37,7 @@ export interface UpstreamDeps {
   cwd?: string;
   queryOsv?: (name: string, version: string) => Promise<OsvVuln[]>;
   npmLatest?: (name: string) => Promise<NpmLatest>;
-  assembleCatalogModule?: (env: Envelope) => string | null;
+  assembleCatalogModule?: (env: Envelope, projectRoot?: string) => string | null;
   matchCatalog?: typeof matchCatalog;
   runFuzz?: (opts: {
     original?: Record<string, Function>;
@@ -114,7 +114,7 @@ export async function applyUpstreamFix(
   let usedCatalog = false;
 
   if (catalog.missing.length === 0 && catalog.matched.length) {
-    source = assemble(env);
+    source = assemble(env, opts.root);
     if (!source) {
       throw new SlimExit(EXIT_FAIL, `catalog matched but assemble failed for ${opts.pkg}`);
     }

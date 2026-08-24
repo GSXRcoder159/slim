@@ -13,7 +13,7 @@ runs:
         fi
       shell: bash
     - name: slim upstream
-      run: node --experimental-strip-types "${{ github.action_path }}/../../src/github/upstream-action.ts"
+      run: node "${{ github.action_path }}/../run.mjs" upstream
       shell: bash
       env:
         SLIM_UPSTREAM_PR: "1"

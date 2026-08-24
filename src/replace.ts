@@ -2,8 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } fr
 import { dirname, join, relative, resolve, sep, delimiter } from "node:path";
 import { spawnSync } from "node:child_process";
 import { randomInt } from "node:crypto";
-import { fileURLToPath } from "node:url";
 import type { CliArgs } from "./cli.ts";
+import { siblingModule } from "./runtime-path.ts";
 import { EXIT_FAIL, EXIT_OK, EXIT_REFUSED, EXIT_USAGE, SlimExit } from "./exit.ts";
 import { loadConfig } from "./config.ts";
 import { loadProject, walkSourceFiles, filterSourceFiles } from "./project.ts";
@@ -77,7 +77,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
   let usedCatalog = false;
 
   if (!args.llm && catalog.missing.length === 0 && catalog.matched.length) {
-    const assembled = assembleCatalogModule(env);
+    const assembled = assembleCatalogModule(env, project.root);
     if (!assembled) {
       throw new SlimExit(EXIT_FAIL, "catalog matched but assemble failed");
     }
@@ -376,7 +376,7 @@ async function maybeTrace(root: string, pkg: string, env: Envelope): Promise<Env
   mkdirSync(pkgDir, { recursive: true });
   writeFileSync(outPath, "");
   writeTracesMeta(pkgDir);
-  const hook = join(dirname(fileURLToPath(import.meta.url)), "trace", "hook.ts");
+  const hook = siblingModule(import.meta.url, "trace/hook");
   const fam = resolvePackageFamily(pkg);
   const packages = [pkg, env.package.name, fam?.name, fam?.family].filter(Boolean) as string[];
   if (fam?.family === "lodash") packages.push("lodash", "lodash-es");

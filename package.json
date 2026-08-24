@@ -10,18 +10,30 @@
     "slim": "./dist/main.js"
   },
   "exports": {
-    ".": "./dist/main.js",
-    "./vitest": "./dist/trace/vitest.js",
-    "./hooks": "./dist/trace/hook.js"
+    ".": {
+      "types": "./dist/main.d.ts",
+      "default": "./dist/main.js"
+    },
+    "./vitest": {
+      "types": "./dist/trace/vitest.d.ts",
+      "default": "./dist/trace/vitest.js"
+    },
+    "./hooks": {
+      "types": "./dist/trace/hook.d.ts",
+      "default": "./dist/trace/hook.js"
+    }
   },
+  "types": "./dist/main.d.ts",
   "files": [
     "dist",
     "action",
+    "slim.schema.json",
     "LICENSE",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/copy-pack-assets.mjs",
+    "prepack": "npm run build",
     "test": "node --experimental-strip-types --test --test-reporter=spec test/*.test.ts test/*/*.test.ts",
     "slim": "node --experimental-strip-types src/main.ts",
     "refresh:golden": "node --experimental-strip-types scripts/refresh-golden-fixture.ts"

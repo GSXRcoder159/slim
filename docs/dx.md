@@ -33,7 +33,8 @@ Confirmations: only if stdin is a TTY and `--yes` is absent. CI is non-interacti
 | 2 | Usage. Help was printed to stderr. |
 | 3 | Refused / envelope too wide / native / network / fs. Human-readable error already on stderr. |
 | 4 | Environment: Node too old, network required but failed (OSV/npm), `gh` required for `--pr` and missing, no `package.json`. |
-| 5 | Bug in Slim. Message includes `slim doctor` and the issue tracker. |
+
+The shipped CLI uses **0–4 only**. Code 5 is reserved for an internal bug path and is not emitted yet.
 
 SIGINT → 130. Do not invent other codes in v1.
 
@@ -50,9 +51,9 @@ SIGINT → 130. Do not invent other codes in v1.
     --json
 ```
 
-`--help` with a command prints that command’s help and exits 0. Bare `slim` prints top-level help and exits 2 (same as git: you did not ask for a command). `slim --help` exits 0.
+`--help` with a command prints that command’s help and exits 0. Bare `slim` and `slim --help` print top-level help on stdout and exit 0. An unknown command prints `unknown command:` plus help on stderr and exits 2.
 
-Top-level help lives in [`help.txt`](./help.txt). Keep that file and `src/cli.js` in lockstep; `test/help.test.js` diffs them.
+Shipped top-level help is the `HELP` string in `src/cli.ts` (`slim --help`). Keep [`help.txt`](./help.txt) equal to that string; `test/cli.test.ts` diffs them.
 
 ### `slim scan [dir]`
 

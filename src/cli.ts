@@ -37,6 +37,7 @@ Doctor options:
   --strict            dirty working tree exits 4 (default: list it, still 0 if Node/hooks ok)
 
 Exit codes: 0 ok  1 fail  2 usage  3 refused  4 environment
+Streams: JSON and human reports on stdout. Progress, warnings, and errors on stderr.
 `;
 
 export interface CliArgs {

@@ -2,6 +2,7 @@ import { Worker } from "node:worker_threads";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { join } from "node:path";
+import { siblingModule } from "../runtime-path.ts";
 import { invoke, equalResults, equal } from "./equal.ts";
 import { createFakeClock, type FakeClock } from "./clock.ts";
 import {
@@ -48,10 +49,9 @@ export function createPool(opts: {
   return createInProcessPool(opts);
 }
 
-/** Resolve worker-thread next to this module: `.ts` under src, `.js` after tsc. */
+/** Resolve worker-thread next to this module. Prefers `.js` (pack) then `.ts` (source). */
 export function workerThreadUrl(metaUrl: string = import.meta.url): URL {
-  const ext = metaUrl.endsWith(".ts") ? ".ts" : ".js";
-  return new URL(`./worker-thread${ext}`, metaUrl);
+  return pathToFileURL(siblingModule(metaUrl, "worker-thread"));
 }
 
 /** Bust ESM cache of the slim module for this generate attempt. */

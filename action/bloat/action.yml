@@ -13,5 +13,5 @@ runs:
         fi
       shell: bash
     - name: slim bloat
-      run: node --experimental-strip-types "${{ github.action_path }}/../../src/github/bloat-action.ts"
+      run: node "${{ github.action_path }}/../run.mjs" bloat
       shell: bash

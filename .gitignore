@@ -16,5 +16,7 @@ coverage/
 *.log
 .env
 .env.*
+/slim.schema.json
+
 
 PRODUCTION_READINESS_PLAN.md

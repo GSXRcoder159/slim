@@ -88,6 +88,8 @@ test("slim/vitest plugin is duck-typed and skips slim-orig", () => {
   assert.equal(typeof wrapped, "string");
   assert.match(String(wrapped), /wrapExports/);
   assert.match(String(wrapped), /\?slim-orig/);
+  assert.match(String(wrapped), /file:/);
+  assert.doesNotMatch(String(wrapped), /from ["']slim\/vitest["']/);
   assert.equal(plugin.load?.(origId) ?? null, null);
   assert.equal(plugin.transform?.("", wrapId) ?? null, null);
 });

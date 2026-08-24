@@ -8,7 +8,7 @@ Single npm package. Not a 12-package monorepo. Slim’s own `package.json` has *
 
 ```
 slim/
-  package.json                 # name: slim, bin: slim → src/cli.js, dependencies: {}
+  package.json                 # name: slim, bin: slim → dist/main.js, dependencies: {}
   package-lock.json
   README.md
   LICENSE                      # Apache-2.0
@@ -105,9 +105,9 @@ slim/
   .gitignore
 ```
 
-No `packages/`, no workspaces, no TypeScript build, no bundler for the CLI. `"type": "module"`. Shebang `#!/usr/bin/env node` on `src/cli.js`.
+No `packages/`, no workspaces, no bundler for the CLI. TypeScript compiles to `dist/` with `tsc`. `"type": "module"`. Shebang `#!/usr/bin/env node` on `src/main.ts` → `dist/main.js`. `package.json` `"files"` ships `dist`, `action/`, and `slim.schema.json`.
 
-Fixtures are **mini-apps**, not unit mocks: each has `package.json`, one or two source files, and a lockfile. `test/fixtures.test.js` runs `node src/cli.js --cwd fixtures/worker-lodash scan|inspect|replace --no-pr` and asserts exit codes + files.
+Fixtures are **mini-apps**, not unit mocks: each has `package.json`, one or two source files, and a lockfile. Tests invoke the compiled CLI (`dist/main.js`) or `src/main.ts` under `--experimental-strip-types`.
 
 ---
 
@@ -118,13 +118,14 @@ Fixtures are **mini-apps**, not unit mocks: each has `package.json`, one or two 
   "name": "slim",
   "version": "0.1.0",
   "description": "Delete a JS/TS dependency by replacing it with a verified slice",
-  "bin": { "slim": "./src/cli.js" },
+  "bin": { "slim": "./dist/main.js" },
   "type": "module",
-  "engines": { "node": ">=20.12" },
-  "files": ["src", "action", "slim.schema.json", "LICENSE", "NOTICE", "README.md"],
+  "engines": { "node": ">=22.18.0" },
+  "files": ["dist", "action", "slim.schema.json", "LICENSE", "README.md"],
   "scripts": {
-    "test": "node --test test/**/*.test.js",
-    "slim": "node src/cli.js"
+    "build": "tsc -p tsconfig.json && node scripts/copy-pack-assets.mjs",
+    "test": "node --experimental-strip-types --test test/*.test.ts test/*/*.test.ts",
+    "slim": "node --experimental-strip-types src/main.ts"
   },
   "license": "Apache-2.0",
   "repository": { "type": "git", "url": "git+https://github.com/slim-js/slim.git" },
@@ -184,7 +185,7 @@ MIT for the CLI is the fallback if Apache friction shows up in npm comments. Do 
 
 ### CONTRIBUTING.md
 
-- Node 20.12+.
+- Node 22.18+.
 - `npm test` (node --test).
 - No new production dependencies. Argue in the PR if you think you need one.
 - First-wave package work = a generator + a fixture mini-app + an inspect transcript.
@@ -265,7 +266,7 @@ Copy-ready specs already in `docs/`. Implementation creates the rest.
 | File | Notes |
 | --- | --- |
 | `package.json` | exact shape above |
-| `src/cli.js` | parseArgs; help text must match `docs/help.txt` |
+| `src/cli.ts` | parseArgs; help text must match `docs/help.txt` |
 | `src/help.js` | |
 | `src/config.js` | schema = `slim.schema.json` |
 | `src/io.js` | stdout/stderr/`--json`/GITHUB_ACTIONS |
@@ -323,7 +324,7 @@ Slim deletes a JS/TS dependency by replacing it with a verified slice.
 You read a slice readable in one sitting (~250 lines for get+debounce) and an evidence report. Evidence, not proof.
 CI: slim check. Upstream CVEs: slim watch (a cron Action, not a SaaS).
 
-Requires Node 20.12+. Zero runtime dependencies.
+Requires Node 22.18+. Zero runtime dependencies.
 ```
 
 Then the Friday transcript from dx.md, then a link to `docs/packages.md` for what v1 will refuse.

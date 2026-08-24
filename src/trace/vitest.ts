@@ -1,10 +1,16 @@
 import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { TraceEvent } from "../envelope/types.ts";
+import { siblingModule } from "../runtime-path.ts";
 import { wrapExports } from "./proxy.ts";
 import { matchesTracedUrl, packageFromUrl } from "./hook.ts";
 
 export { wrapExports };
+
+function vitestModuleHref(): string {
+  return pathToFileURL(siblingModule(import.meta.url, "vitest")).href;
+}
 
 /** Source for `.slim/vitest.trace.ts` used only for the TRACE run. */
 export type VitestTraceConfigOpts = {
@@ -59,8 +65,9 @@ function packagesFromEnv(): string[] {
 
 export function slimWrapperSource(id: string, packageName: string): string {
   const orig = JSON.stringify(id.includes("?") ? `${id}&slim-orig=1` : `${id}?slim-orig`);
+  const spec = JSON.stringify(vitestModuleHref());
   return `import * as orig from ${orig};
-import { wrapExports } from "slim/vitest";
+import { wrapExports } from ${spec};
 const wrapped = wrapExports(orig, {
   packageName: ${JSON.stringify(packageName)},
   onEvent: (e) => { globalThis.__slimTraceOnEvent && globalThis.__slimTraceOnEvent(e); },

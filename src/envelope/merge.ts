@@ -43,8 +43,8 @@ function walkSlim(v: SlimValue, h: Partial<HyrumFlags>, depth = 0): void {
 
 function orHyrum(base: HyrumFlags, extra: Partial<HyrumFlags>): HyrumFlags {
   const out: HyrumFlags = { ...emptyHyrum(), ...base };
-  for (const [k, val] of Object.entries(extra) as Array<[keyof HyrumFlags, boolean | undefined]>) {
-    if (val) (out as Record<string, boolean | undefined>)[k] = true;
+  for (const k of Object.keys(extra) as (keyof HyrumFlags)[]) {
+    if (extra[k]) out[k] = true;
   }
   return out;
 }

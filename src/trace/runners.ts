@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
+import { siblingModule } from "../runtime-path.ts";
 import { vitestTraceConfigSource } from "./vitest.ts";
 
 export { vitestTraceConfigSource };
@@ -121,11 +122,7 @@ function userConfigHasSlimPlugin(configPath: string): boolean {
 }
 
 function slimVitestSpecifier(): string {
-  const jsPath = fileURLToPath(new URL("./vitest.js", import.meta.url));
-  const tsPath = fileURLToPath(new URL("./vitest.ts", import.meta.url));
-  if (existsSync(jsPath)) return pathToFileURL(jsPath).href;
-  if (existsSync(tsPath)) return pathToFileURL(tsPath).href;
-  return "slim/vitest";
+  return pathToFileURL(siblingModule(import.meta.url, "vitest")).href;
 }
 
 export function writeVitestTraceConfig(root: string, packages: string[]): string {

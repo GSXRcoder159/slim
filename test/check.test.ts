@@ -192,7 +192,7 @@ test("slim-upstream.yml keeps weekly cron and runs upstream --pr", () => {
 test("ci.yml checks golden fixture without inspect overwrite", () => {
   const yml = readFileSync(join(REPO_ROOT, ".github/workflows/ci.yml"), "utf8");
   assert.match(yml, /fixtures\/lodash-get-debounce/);
-  assert.match(yml, /main\.ts check/);
+  assert.match(yml, /dist\/main.js check/);
   assert.equal(
     /inspect\s+lodash/.test(yml),
     false,
@@ -218,19 +218,14 @@ test("release.yml publishes with provenance on v* tags", () => {
   assert.match(yml, /registry-url:/);
 });
 
-test("action.yml files run strip-types src, not committed dist", () => {
+test("action.yml files invoke action/run.mjs and require Node 22.18", () => {
   for (const name of ["check", "bloat", "upstream"] as const) {
     const yml = readFileSync(join(REPO_ROOT, `action/${name}/action.yml`), "utf8");
-    assert.equal(
-      /dist\/github\//.test(yml),
-      false,
-      `${name} action.yml still points at dist/`,
-    );
-    assert.match(yml, /experimental-strip-types/);
+    assert.match(yml, /\.\.\/run\.mjs/);
+    assert.doesNotMatch(yml, /experimental-strip-types/);
     assert.match(yml, /using:\s*composite/);
     assert.match(yml, /Node >= 22\.18/);
     assert.match(yml, /node-version: '22\.18'/);
-    // Fail 22.0–22.17, not only major < 22.
     assert.match(yml, /split\('\.'\)\[1\]/);
     assert.match(yml, /-lt 18/);
   }

@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { siblingModule } from "../runtime-path.ts";
 import { registerHooks } from "node:module";
 import type { TraceEvent } from "../envelope/types.ts";
 import { wrapExports } from "./proxy.ts";
@@ -105,8 +106,7 @@ function stripQuery(url: string): string {
 }
 
 function siblingHref(name: string): string {
-  if (import.meta.url.endsWith(".ts")) return new URL(`./${name}.ts`, import.meta.url).href;
-  return new URL(`./${name}.js`, import.meta.url).href;
+  return pathToFileURL(siblingModule(import.meta.url, name)).href;
 }
 
 function extractEsmExportNames(source: string): string[] {
