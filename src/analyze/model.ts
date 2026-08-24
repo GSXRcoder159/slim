@@ -68,8 +68,8 @@ export function locOf(sf: ts.SourceFile, node: ts.Node, root: string): SourceLoc
   };
 }
 
-export function uid(prefix: string, sf: ts.SourceFile, node: ts.Node): string {
-  return `${prefix}:${relative(process.cwd(), sf.fileName)}:${node.getStart(sf)}`;
+export function uid(prefix: string, sf: ts.SourceFile, node: ts.Node, root: string): string {
+  return `${prefix}:${toProjectRel(sf.fileName, root)}:${node.getStart(sf)}`;
 }
 
 export function toProjectRel(file: string, root: string): string {

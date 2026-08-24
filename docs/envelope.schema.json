@@ -1,0 +1,244 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/envelope.schema.json",
+  "title": "Slim envelope",
+  "description": "Closed or open static envelope. inspect --json stdout is { envelope, hash, decision, reason }. schemaVersion 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "package",
+    "env",
+    "imports",
+    "symbols",
+    "unknowns",
+    "traces",
+    "closure",
+    "slimmable",
+    "clock",
+    "cryptoRandom"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "package": { "$ref": "#/$defs/packageRef" },
+    "env": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["node", "worker", "browser", "jsdom", "unknown"] }
+    },
+    "imports": { "type": "array", "items": { "$ref": "#/$defs/importSite" } },
+    "symbols": { "type": "array", "items": { "$ref": "#/$defs/symbolEnvelope" } },
+    "unknowns": { "type": "array", "items": { "$ref": "#/$defs/unknownSite" } },
+    "traces": {
+      "type": "array",
+      "description": "Persisted envelope.json always stores traces: []. Runtime events live in gitignored .slim/<pkg>/traces.jsonl; see $defs/traceEvent. envelopeForDisk strips them.",
+      "items": { "$ref": "#/$defs/traceEvent" }
+    },
+    "closure": { "$ref": "#/$defs/closure" },
+    "slimmable": { "$ref": "#/$defs/slimmable" },
+    "clock": { "type": "boolean" },
+    "cryptoRandom": { "type": "boolean" }
+  },
+  "$defs": {
+    "packageRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "family", "subpath"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "family": { "type": "string" },
+        "subpath": { "type": "string" }
+      }
+    },
+    "loc": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "line", "column", "endLine", "endColumn"],
+      "properties": {
+        "file": { "type": "string" },
+        "line": { "type": "integer" },
+        "column": { "type": "integer" },
+        "endLine": { "type": "integer" },
+        "endColumn": { "type": "integer" }
+      }
+    },
+    "importSite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["loc", "specifier", "kind", "names"],
+      "properties": {
+        "loc": { "$ref": "#/$defs/loc" },
+        "specifier": { "type": "string" },
+        "kind": {
+          "type": "string",
+          "enum": ["named", "default", "namespace", "cjs-require", "subpath-default", "side-effect"]
+        },
+        "names": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "argShape": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["literal", "union", "object", "array", "function", "date", "any", "unknown"]
+        },
+        "literals": { "type": "array" },
+        "props": { "type": "object", "additionalProperties": { "$ref": "#/$defs/argShape" } },
+        "elements": { "type": "array", "items": { "$ref": "#/$defs/argShape" } },
+        "fnArity": { "type": "integer" }
+      }
+    },
+    "thisBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["unbound", "method", "call", "apply", "bind", "unknown"] },
+        "reason": { "type": "string" }
+      }
+    },
+    "callSite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "loc",
+        "exportName",
+        "memberPath",
+        "thisBinding",
+        "argc",
+        "argShapes",
+        "spread",
+        "resultMembers"
+      ],
+      "properties": {
+        "id": { "type": "string" },
+        "loc": { "$ref": "#/$defs/loc" },
+        "exportName": { "type": "string" },
+        "memberPath": { "type": "array", "items": { "type": "string" } },
+        "thisBinding": { "$ref": "#/$defs/thisBinding" },
+        "argc": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["min", "max", "observed"],
+          "properties": {
+            "min": { "type": "integer" },
+            "max": { "type": ["integer", "null"] },
+            "observed": { "type": "array", "items": { "type": "integer" } }
+          }
+        },
+        "argShapes": { "type": "array", "items": { "$ref": "#/$defs/argShape" } },
+        "spread": { "type": "boolean" },
+        "resultMembers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "symbolEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exportName", "packages", "callSites", "resultMembers", "hyrum", "coverage"],
+      "properties": {
+        "exportName": { "type": "string" },
+        "packages": { "type": "array", "items": { "$ref": "#/$defs/packageRef" } },
+        "callSites": { "type": "array", "items": { "$ref": "#/$defs/callSite" } },
+        "resultMembers": { "type": "array", "items": { "type": "string" } },
+        "hyrum": { "type": "object" },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["callSitesStatic", "callSitesTraced"],
+          "properties": {
+            "callSitesStatic": { "type": "integer" },
+            "callSitesTraced": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "unknownSite": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "loc", "kind", "detail", "widensTo", "traceObservedMembers"],
+      "properties": {
+        "id": { "type": "string" },
+        "loc": { "$ref": "#/$defs/loc" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "dynamic-member",
+            "dynamic-specifier",
+            "spread-args",
+            "binding-escape",
+            "namespace-escape",
+            "eval",
+            "ts-any"
+          ]
+        },
+        "detail": { "type": "string" },
+        "widensTo": { "type": "string", "enum": ["all-exports", "full-signature", "refuse"] },
+        "traceObservedMembers": { "type": ["array", "null"], "items": { "type": "string" } }
+      }
+    },
+    "closure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "confidence",
+        "readyToGenerate",
+        "staticCallSiteIds",
+        "tracedCallSiteIds",
+        "untracedCallSiteIds",
+        "reason"
+      ],
+      "properties": {
+        "confidence": { "type": "string", "enum": ["closed", "trace-closed", "open"] },
+        "readyToGenerate": { "type": "boolean" },
+        "staticCallSiteIds": { "type": "array", "items": { "type": "string" } },
+        "tracedCallSiteIds": { "type": "array", "items": { "type": "string" } },
+        "untracedCallSiteIds": { "type": "array", "items": { "type": "string" } },
+        "reason": { "type": "string" }
+      }
+    },
+    "slimmable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "verdict", "blockers", "reasons"],
+      "properties": {
+        "score": { "type": "number" },
+        "verdict": { "type": "string", "enum": ["slim", "review", "refuse"] },
+        "blockers": { "type": "array", "items": { "type": "string" } },
+        "reasons": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "traceEvent": {
+      "type": "object",
+      "description": "One JSONL record from traces.jsonl (not stored in envelope.json).",
+      "properties": {
+        "symbol": { "type": "string" },
+        "originId": { "type": "string" },
+        "parentOriginId": { "type": "string" },
+        "callSiteId": { "type": ["string", "null"] },
+        "unmatched": { "type": "boolean" },
+        "resultMember": { "type": "string" },
+        "argc": { "type": "integer" },
+        "args": { "type": "array" },
+        "thisArg": {},
+        "result": {},
+        "threw": { "type": "object" },
+        "mutatedArgIndexes": { "type": "array", "items": { "type": "integer" } },
+        "truncated": { "type": "boolean" },
+        "tRelMs": { "type": "number" },
+        "sessionId": { "type": "string" },
+        "site": {
+          "type": "object",
+          "properties": {
+            "file": { "type": "string" },
+            "line": { "type": "integer" },
+            "column": { "type": "integer" }
+          }
+        }
+      }
+    }
+  }
+}

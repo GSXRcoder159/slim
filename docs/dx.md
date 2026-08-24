@@ -29,10 +29,10 @@ Confirmations: only if stdin is a TTY and `--yes` is absent. CI is non-interacti
 | Code | When |
 | --- | --- |
 | 0 | Success. `watch`: slice not exposed. `check`: all standing tests + envelope match. `scan`: always 0 unless usage/internal (findings are data). |
-| 1 | Operational failure: tests failed, envelope drifted, slice **exposed** or **uncertain** on an advisory, replace fuzz mismatch, dirty tree blocked a commit. |
+| 1 | Operational failure: tests failed, malformed/oversize traces, envelope drifted, slice **exposed** or **uncertain** on an advisory, replace fuzz mismatch, dirty tree blocked a commit. |
 | 2 | Usage. Help was printed to stderr. |
 | 3 | Refused / envelope too wide / native / network / fs. Human-readable error already on stderr. |
-| 4 | Environment: Node too old, network required but failed (OSV/npm), `gh` required for `--pr` and missing, no `package.json`. |
+| 4 | Environment: Node too old, network required but failed (OSV/npm), `gh` required for `--pr` and missing, no `package.json`, Jest/no-runner/missing hook/timeout when traces are required. |
 
 The shipped CLI uses **0–4 only**. Code 5 is reserved for an internal bug path and is not emitted yet.
 
@@ -71,15 +71,16 @@ Does not network. Unpacked or estimated size is local; missing size is `unknown`
 
 ### `slim inspect <pkg>`
 
-One package. No writes. This is the “should I?” command.
+One package. Writes `.slim/<pkg>/envelope.json` (replace depends on it). This is the “should I?” command.
 
 ```
-# no extra flags beyond global
+    --json              One document: { envelope, hash, decision, reason }
+    --allow-unknown     Ready despite unknowns; never claims closed
 ```
 
-Exit 0 if Slim would try. Exit 3 if it would refuse (still print the full inspect report; the code is the refuse). Exit 1 if the package is not a dependency.
+Exit 0 if Slim would try (closed, or `--allow-unknown` made ready). Exit 3 if the envelope is open/incomplete or refused (still print the full inspect report; the code is the refuse). JSON mode does not mix progress on stdout.
 
-JSON: envelope object plus `{ decision: "try"|"refuse", reason }`.
+`--force` does not claim closed. `--allow-unknown` may set `readyToGenerate` while `confidence` stays `open`.
 
 ### `slim replace <pkg>`
 
@@ -99,15 +100,16 @@ Steps, in order, stop on first failure:
 1. Resolve pkg in package.json / lockfile. Missing → exit 1.
 2. Refuse gates (native, network, fs, framework, envelope-too-wide) → exit 3.
 3. Build envelope from call sites.
-4. Generate slice + standing tests + evidence report.
-5. Fuzz slice against the installed original (oracle). Mismatch → exit 1, keep no files (or write to a temp dir and print the failing input).
-6. Rewrite imports/requires to the slice file.
-7. Remove the package from `package.json` (and the obvious lockfile via `npm uninstall --package-lock-only` / `pnpm remove` / `yarn` if we can detect; if not, edit package.json and tell the human to reinstall).
-8. Run standing tests. Run `testCommand` if set/detected.
-9. Unless `--no-commit`: create branch `slim/replace-<pkg>`, commit.
-10. Unless `--no-pr`: `gh pr create`. No `gh` → exit 4 after the commit exists, with the exact `gh pr create` command.
+4. Tracing (unless `--no-trace`): run detected node:test or Vitest with `slim/hooks` / `slim/vitest`. Jest, no runner, missing hook, or timeout → exit 4. Failed tests, malformed JSONL, or oversize traces → exit 1. `--force` does not skip tracing. `--no-trace` is static-only and cannot claim `trace-closed`.
+5. Generate slice + standing tests + evidence report.
+6. Fuzz slice against the installed original (oracle). Mismatch → exit 1, keep no files (or write to a temp dir and print the failing input).
+7. Rewrite imports/requires to the slice file.
+8. Remove the package from `package.json` (and the obvious lockfile via `npm uninstall --package-lock-only` / `pnpm remove` / `yarn` if we can detect; if not, edit package.json and tell the human to reinstall).
+9. Run standing tests. Run `testCommand` if set/detected.
+10. Unless `--no-commit`: create branch `slim/replace-<pkg>`, commit.
+11. Unless `--no-pr`: `gh pr create`. No `gh` → exit 4 after the commit exists, with the exact `gh pr create` command.
 
-Default when TTY: after step 8, one prompt:
+Default when TTY: after step 9, one prompt:
 
 ```
 Open PR 'slim/replace-lodash'? [Y/n]

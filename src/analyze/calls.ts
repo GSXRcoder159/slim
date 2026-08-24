@@ -1,9 +1,17 @@
 import type ts from "typescript";
-import type { CallSite, ThisBinding, UnknownSite } from "../envelope/types.ts";
+import type { ArgShape, CallSite, UnknownSite } from "../envelope/types.ts";
 import type { Binding, CollectExtra } from "./model.ts";
-import { exportNameOf, locOf, toProjectRel, uid } from "./model.ts";
+import { locOf, toProjectRel, uid } from "./model.ts";
 import { localFromImportCall, specifierMatches } from "./reexports.ts";
 import { argIsTsAny, shapeOf } from "./shapes.ts";
+import {
+  asBindingEscape,
+  namespaceIdent,
+  peelCallApplyBind,
+  resolveCallee,
+  thisOf,
+  unwrapExpr,
+} from "./callee.ts";
 
 export function walkUses(
   ts: typeof import("typescript"),
@@ -31,12 +39,23 @@ export function walkUses(
     return undefined;
   };
 
+  const pushNsEscape = (node: ts.Node, b: Binding) => {
+    unknowns.push({
+      id: uid("nsesc", sf, node, extra.root),
+      loc: locOf(sf, node, extra.root),
+      kind: "namespace-escape",
+      detail: `namespace value of ${b.specifier} escaped`,
+      widensTo: "all-exports",
+      traceObservedMembers: null,
+    });
+  };
+
   const visit = (node: ts.Node) => {
     const scoped = isBindingScope(ts, node);
     if (scoped) resultScopes.push(new Map());
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "eval") {
       unknowns.push({
-        id: uid("eval", sf, node),
+        id: uid("eval", sf, node, extra.root),
         loc: locOf(sf, node, extra.root),
         kind: "eval",
         detail: "eval()",
@@ -46,7 +65,7 @@ export function walkUses(
     }
     if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Function") {
       unknowns.push({
-        id: uid("fn", sf, node),
+        id: uid("fn", sf, node, extra.root),
         loc: locOf(sf, node, extra.root),
         kind: "eval",
         detail: "new Function",
@@ -54,12 +73,38 @@ export function walkUses(
         traceObservedMembers: null,
       });
     }
+    if (ts.isCallExpression(node)) {
+      const cal = unwrapExpr(ts, node.expression);
+      if (ts.isIdentifier(cal) && cal.text === "Function") {
+        unknowns.push({
+          id: uid("fncall", sf, node, extra.root),
+          loc: locOf(sf, node, extra.root),
+          kind: "eval",
+          detail: "Function()",
+          widensTo: "refuse",
+          traceObservedMembers: null,
+        });
+      }
+      if (ts.isIdentifier(cal) && cal.text === "require") {
+        const arg = node.arguments[0];
+        if (arg && !ts.isStringLiteral(arg) && !ts.isNoSubstitutionTemplateLiteral(arg)) {
+          unknowns.push({
+            id: uid("dynreq", sf, node, extra.root),
+            loc: locOf(sf, node, extra.root),
+            kind: "dynamic-specifier",
+            detail: "require(non-literal)",
+            widensTo: "refuse",
+            traceObservedMembers: null,
+          });
+        }
+      }
+    }
 
     if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
       const arg = node.arguments[0];
       if (arg && !ts.isStringLiteral(arg) && !ts.isNoSubstitutionTemplateLiteral(arg)) {
         unknowns.push({
-          id: uid("dynimp", sf, node),
+          id: uid("dynimp", sf, node, extra.root),
           loc: locOf(sf, node, extra.root),
           kind: "dynamic-specifier",
           detail: "import(non-literal)",
@@ -69,12 +114,13 @@ export function walkUses(
       }
     }
 
-    if (localSet.size && ts.isCallExpression(node)) {
-      const info = resolveCallee(ts, node.expression, localSet);
+    if (ts.isCallExpression(node)) {
+      const peeled = peelCallApplyBind(ts, node.expression, localSet, wanted);
+      const info = resolveCallee(ts, peeled.callee, localSet, wanted);
       if (info) {
         if (info.dynamic) {
           unknowns.push({
-            id: uid("dyn", sf, node),
+            id: uid("dyn", sf, node, extra.root),
             loc: locOf(sf, node, extra.root),
             kind: "dynamic-member",
             detail: `computed member on ${info.exportName}`,
@@ -82,34 +128,29 @@ export function walkUses(
             traceObservedMembers: null,
           });
         } else {
-          const spread = node.arguments.some((a) => ts.isSpreadElement(a));
-          const argc = node.arguments.length;
-          const argShapes = node.arguments.map((a) => {
-            if (argIsTsAny(ts, a, checker)) return { kind: "unknown" as const };
-            return shapeOf(ts, a, checker);
-          });
-          const thisBinding = thisOf(ts, node.expression);
+          const built = callArgs(ts, node, peeled.thisKind?.kind ?? null, checker);
+          const thisBinding = peeled.thisKind ?? thisOf(ts, peeled.callee);
           const site: CallSite = {
-            id: uid("call", sf, node),
+            id: uid("call", sf, node, extra.root),
             loc: locOf(sf, node, extra.root),
             exportName: info.exportName,
             memberPath: info.memberPath,
             thisBinding,
             argc: {
-              min: spread ? 0 : argc,
-              max: spread ? null : argc,
-              observed: [argc],
+              min: built.spread ? 0 : built.argc,
+              max: built.spread ? null : built.argc,
+              observed: [built.argc],
             },
-            argShapes,
-            spread,
+            argShapes: built.argShapes,
+            spread: built.spread,
             resultMembers: [],
           };
           callSites.push(site);
           const resultLocal = localFromImportCall(ts, node);
           if (resultLocal) resultScopes[resultScopes.length - 1]!.set(resultLocal, site);
-          if (spread) {
+          if (built.spread) {
             unknowns.push({
-              id: uid("spread", sf, node),
+              id: uid("spread", sf, node, extra.root),
               loc: locOf(sf, node, extra.root),
               kind: "spread-args",
               detail: `spread arguments on ${info.exportName}`,
@@ -117,10 +158,10 @@ export function walkUses(
               traceObservedMembers: null,
             });
           }
-          for (const a of node.arguments) {
+          for (const a of built.rawArgs) {
             if (!argIsTsAny(ts, a, checker)) continue;
             unknowns.push({
-              id: uid("any", sf, a),
+              id: uid("any", sf, a, extra.root),
               loc: locOf(sf, a, extra.root),
               kind: "ts-any",
               detail: `any-typed argument to ${info.exportName}`,
@@ -132,44 +173,57 @@ export function walkUses(
       }
       for (const arg of node.arguments) {
         const escaped = asBindingEscape(ts, arg, localSet);
-        if (escaped) {
-          unknowns.push({
-            id: uid("esc", sf, arg),
+        if (!escaped) continue;
+        if (escaped.namespace) {
+          const expr = ts.isSpreadElement(arg) ? arg.expression : arg;
+          const b = namespaceIdent(ts, expr, localSet);
+          if (b) pushNsEscape(arg, b);
+          continue;
+        }
+        unknowns.push({
+          id: uid("esc", sf, arg, extra.root),
+          loc: locOf(sf, arg, extra.root),
+          kind: "binding-escape",
+          detail: `${escaped.name} passed as callback (iteratee arity 3 assumed for get)`,
+          widensTo: "full-signature",
+          traceObservedMembers: null,
+        });
+        if (escaped.name === "get" || escaped.name.endsWith(".get")) {
+          callSites.push({
+            id: uid("mapget", sf, arg, extra.root),
             loc: locOf(sf, arg, extra.root),
-            kind: "binding-escape",
-            detail: `${escaped} passed as callback (iteratee arity 3 assumed for get)`,
-            widensTo: "full-signature",
-            traceObservedMembers: null,
+            exportName: "get",
+            memberPath: ["get"],
+            thisBinding: { kind: "unknown", reason: "iteratee" },
+            argc: { min: 1, max: 3, observed: [3] },
+            argShapes: [{ kind: "any" }, { kind: "any" }, { kind: "any" }],
+            spread: false,
+            resultMembers: [],
           });
-          if (escaped === "get" || escaped.endsWith(".get")) {
-            callSites.push({
-              id: uid("mapget", sf, arg),
-              loc: locOf(sf, arg, extra.root),
-              exportName: "get",
-              memberPath: ["get"],
-              thisBinding: { kind: "unknown", reason: "iteratee" },
-              argc: { min: 1, max: 3, observed: [3] },
-              argShapes: [{ kind: "any" }, { kind: "any" }, { kind: "any" }],
-              spread: false,
-              resultMembers: [],
-            });
-          }
         }
       }
+    }
+
+    if (ts.isSpreadElement(node) && ts.isArrayLiteralExpression(node.parent)) {
+      const b = namespaceIdent(ts, node.expression, localSet);
+      if (b) pushNsEscape(node, b);
+    }
+    if (ts.isSpreadAssignment(node)) {
+      const b = namespaceIdent(ts, node.expression, localSet);
+      if (b) pushNsEscape(node, b);
     }
 
     if (ts.isPropertyAccessExpression(node)) {
       const obj = unwrapExpr(ts, node.expression);
       const resultSite = ts.isIdentifier(obj) ? lookupResult(obj.text) : undefined;
       if (resultSite && ts.isIdentifier(node.name)) {
-        const site = resultSite;
         const mem = node.name.text;
-        if (!site.resultMembers.includes(mem)) site.resultMembers.push(mem);
-        const set = resultMembers.get(site.exportName) ?? new Set();
+        if (!resultSite.resultMembers.includes(mem)) resultSite.resultMembers.push(mem);
+        const set = resultMembers.get(resultSite.exportName) ?? new Set();
         set.add(mem);
-        resultMembers.set(site.exportName, set);
+        resultMembers.set(resultSite.exportName, set);
       }
-      const info = resolveCallee(ts, node.expression, localSet);
+      const info = resolveCallee(ts, node.expression, localSet, wanted);
       if (info && !info.dynamic && ts.isIdentifier(node.name)) {
         const parentCall = ts.isCallExpression(node.parent) && node.parent.expression === node;
         if (!parentCall) {
@@ -186,7 +240,7 @@ export function walkUses(
         const arg = node.argumentExpression;
         if (arg && !ts.isStringLiteral(arg) && !ts.isNumericLiteral(arg)) {
           unknowns.push({
-            id: uid("dynm", sf, node),
+            id: uid("dynm", sf, node, extra.root),
             loc: locOf(sf, node, extra.root),
             kind: "dynamic-member",
             detail: `computed access ${obj.text}[...]`,
@@ -203,135 +257,36 @@ export function walkUses(
   visit(sf);
 }
 
-function unwrapExpr(ts: typeof import("typescript"), expr: ts.Expression): ts.Expression {
-  let cur: ts.Expression = expr;
-  for (;;) {
-    if (ts.isParenthesizedExpression(cur)) {
-      cur = cur.expression;
-      continue;
-    }
-    if (ts.isAsExpression(cur) || ts.isTypeAssertionExpression(cur) || ts.isSatisfiesExpression(cur)) {
-      cur = cur.expression;
-      continue;
-    }
-    if (ts.isNonNullExpression(cur)) {
-      cur = cur.expression;
-      continue;
-    }
-    return cur;
-  }
-}
-
-function resolveCallee(
+function callArgs(
   ts: typeof import("typescript"),
-  expr: ts.Expression,
-  localSet: Map<string, Binding>,
-): { exportName: string; memberPath: string[]; dynamic: boolean } | null {
-  expr = unwrapExpr(ts, expr);
-  if (ts.isIdentifier(expr) && localSet.has(expr.text)) {
-    const b = localSet.get(expr.text)!;
-    const exportName = exportNameOf(b);
-    if (exportName === "*") {
-      return { exportName: "*", memberPath: [], dynamic: false };
-    }
-    return {
-      exportName,
-      memberPath: exportName === "default" ? [] : [exportName],
-      dynamic: false,
-    };
-  }
-  if (ts.isPropertyAccessExpression(expr) && ts.isIdentifier(expr.name)) {
-    const obj = unwrapExpr(ts, expr.expression);
-    if (ts.isIdentifier(obj) && localSet.has(obj.text)) {
-      const b = localSet.get(obj.text)!;
-      if (b.imported === "*" || b.imported === "default") {
-        return {
-          exportName: expr.name.text,
-          memberPath: [expr.name.text],
-          dynamic: false,
-        };
-      }
+  node: ts.CallExpression,
+  invoke: string | null,
+  checker?: ts.TypeChecker,
+): { argc: number; argShapes: ArgShape[]; spread: boolean; rawArgs: ts.Expression[] } {
+  let args: ts.Expression[] = [...node.arguments];
+  let spread = args.some((a) => ts.isSpreadElement(a));
+  if (invoke === "call" || invoke === "bind") {
+    args = args.slice(1);
+    spread = args.some((a) => ts.isSpreadElement(a));
+  } else if (invoke === "apply") {
+    const arr = args[1] ? unwrapExpr(ts, args[1]) : undefined;
+    if (arr && ts.isArrayLiteralExpression(arr)) {
+      args = [...arr.elements.filter((e): e is ts.Expression => !ts.isOmittedExpression(e))];
+      spread = args.some((a) => ts.isSpreadElement(a));
+    } else {
       return {
-        exportName: b.imported,
-        memberPath: [b.imported, expr.name.text],
-        dynamic: false,
-      };
-    }
-    const inner = resolveCallee(ts, expr.expression, localSet);
-    if (inner) {
-      return {
-        exportName: inner.exportName,
-        memberPath: [...inner.memberPath, expr.name.text],
-        dynamic: inner.dynamic,
+        argc: 0,
+        argShapes: [{ kind: "unknown" }],
+        spread: true,
+        rawArgs: args[1] ? [args[1]] : [],
       };
     }
   }
-  if (ts.isElementAccessExpression(expr)) {
-    const obj = unwrapExpr(ts, expr.expression);
-    if (ts.isIdentifier(obj) && localSet.has(obj.text)) {
-      const arg = expr.argumentExpression;
-      if (arg && ts.isStringLiteral(unwrapExpr(ts, arg))) {
-        const lit = unwrapExpr(ts, arg) as ts.StringLiteral;
-        return { exportName: lit.text, memberPath: [lit.text], dynamic: false };
-      }
-      return { exportName: "*", memberPath: [], dynamic: true };
-    }
-    const inner = resolveCallee(ts, expr.expression, localSet);
-    if (inner) {
-      const arg = expr.argumentExpression;
-      if (arg && ts.isStringLiteral(unwrapExpr(ts, arg))) {
-        const lit = unwrapExpr(ts, arg) as ts.StringLiteral;
-        return {
-          exportName: lit.text,
-          memberPath: [...inner.memberPath, lit.text],
-          dynamic: inner.dynamic,
-        };
-      }
-      return { ...inner, dynamic: true };
-    }
-  }
-  if (ts.isCallExpression(expr) && ts.isPropertyAccessExpression(expr.expression)) {
-    // lodash.bind(obj, 'map') — treat as unknown
-    const name = expr.expression.name;
-    if (ts.isIdentifier(name) && (name.text === "bind" || name.text === "call" || name.text === "apply")) {
-      const inner = resolveCallee(ts, expr.expression.expression, localSet);
-      if (inner) {
-        return { ...inner, dynamic: true };
-      }
-    }
-  }
-  return null;
-}
-
-function asBindingEscape(
-  ts: typeof import("typescript"),
-  arg: ts.Expression,
-  localSet: Map<string, Binding>,
-): string | null {
-  if (ts.isSpreadElement(arg)) return asBindingEscape(ts, arg.expression, localSet);
-  if (ts.isIdentifier(arg) && localSet.has(arg.text)) {
-    const b = localSet.get(arg.text)!;
-    return b.imported === "default" ? b.local : b.imported;
-  }
-  if (ts.isPropertyAccessExpression(arg) && ts.isIdentifier(arg.name)) {
-    if (ts.isIdentifier(arg.expression) && localSet.has(arg.expression.text)) {
-      return arg.name.text;
-    }
-  }
-  return null;
-}
-
-function thisOf(ts: typeof import("typescript"), expr: ts.Expression): ThisBinding {
-  if (ts.isPropertyAccessExpression(expr) || ts.isElementAccessExpression(expr)) {
-    return { kind: "method" };
-  }
-  if (ts.isCallExpression(expr) && ts.isPropertyAccessExpression(expr.expression)) {
-    const n = expr.expression.name;
-    if (ts.isIdentifier(n) && n.text === "call") return { kind: "call" };
-    if (ts.isIdentifier(n) && n.text === "apply") return { kind: "apply" };
-    if (ts.isIdentifier(n) && n.text === "bind") return { kind: "bind" };
-  }
-  return { kind: "unbound" };
+  const argShapes = args.map((a) => {
+    if (ts.isSpreadElement(a) || argIsTsAny(ts, a, checker)) return { kind: "unknown" as const };
+    return shapeOf(ts, a, checker);
+  });
+  return { argc: args.length, argShapes, spread, rawArgs: args };
 }
 
 function isBindingScope(ts: typeof import("typescript"), node: ts.Node): boolean {

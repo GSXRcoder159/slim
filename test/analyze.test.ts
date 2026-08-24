@@ -149,6 +149,8 @@ test("allow-unknown with untraced dynamic members is not closed", () => {
   const env = analyzePackage(loadProject(root), "lodash", { allowUnknown: true });
   assert.notEqual(env.closure.confidence, "closed");
   assert.notEqual(env.closure.confidence, "trace-closed");
+  assert.equal(env.closure.readyToGenerate, true);
+  assert.match(env.closure.reason, /--allow-unknown/);
 });
 
 test("worker env tag if wrangler present", () => {
@@ -158,7 +160,7 @@ test("worker env tag if wrangler present", () => {
     { devDependencies: { typescript: "^5.9.0", wrangler: "^4.0.0" } },
   );
   assert.ok(env.env.includes("worker"));
-  assert.ok(env.env.includes("node"));
+  assert.equal(env.env.includes("node"), false);
 });
 
 test("worker env tag if wrangler.toml present", () => {
@@ -166,7 +168,7 @@ test("worker env tag if wrangler.toml present", () => {
   writeFileSync(join(dir, "wrangler.toml"), `name = "w"\nmain = "src/app.ts"\n`);
   const env = analyzePackage(loadProject(dir), "lodash");
   assert.ok(env.env.includes("worker"));
-  assert.ok(env.env.includes("node"));
+  assert.equal(env.env.includes("node"), false);
 });
 
 test("loadTargetTypescript refuses third-party repo without typescript", () => {
@@ -429,6 +431,8 @@ test("inspect writes envelope under package.name not family", async () => {
   });
   const cwd = process.cwd();
   process.chdir(root);
+  const origWrite = process.stdout.write.bind(process.stdout);
+  process.stdout.write = (() => true) as typeof process.stdout.write;
   try {
     await runInspect(parseCli(["inspect", "lodash-es", "--json"]));
     assert.ok(existsSync(join(root, ".slim", "lodash-es", "envelope.json")));
@@ -443,6 +447,7 @@ test("inspect writes envelope under package.name not family", async () => {
       assert.equal(imp.loc.file.includes(root), false, imp.loc.file);
     }
   } finally {
+    process.stdout.write = origWrite;
     process.chdir(cwd);
   }
 });

@@ -14,10 +14,14 @@ Never claims slim/closed. Example:  slim scan --json
 slim inspect — show call sites, envelope, and whether Slim will try
 
 Usage:
-  slim inspect <pkg>
+  slim inspect <pkg> [--json] [--allow-unknown]
 
-Exit 0 if Slim would try. 3 if it would refuse (report still printed).
-Example:  slim inspect lodash
+      --json             { envelope, hash, decision, reason } on stdout
+      --allow-unknown    generate-ready despite unknowns (never claimed closed)
+
+Writes .slim/<pkg>/envelope.json. Exit 0 if Slim would try (closed, or
+unsafe override). Exit 3 if the envelope is open/incomplete or refused
+(report still printed). Example:  slim inspect lodash
 ------------------------------------------------------------------------
 slim replace — write a verified slice and (usually) open a PR
 
@@ -27,12 +31,14 @@ Usage:
   -y, --yes              Don't ask. Write, test, PR if gh is available
       --no-pr            Write files, don't open a PR
       --no-commit        Write files, don't git commit
+      --no-trace         Skip tests; static-only evidence (cannot claim trace-closed)
       --dry-run          Show the envelope and plan, write nothing
       --fuzz-iterations <n>
       --out <dir>        Default: src/slim
 
-Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz failed.
-      3 Slim refuses this envelope. 4 missing gh/git when PR required.
+Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz failed or malformed traces.
+      3 Slim refuses this envelope. 4 missing gh/git, or Jest/no-runner/hook/timeout
+      when traces are required. `--force` does not skip tracing.
 
 Example:  slim replace lodash
 ------------------------------------------------------------------------

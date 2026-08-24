@@ -36,6 +36,8 @@ function env(): Envelope {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "",
     },

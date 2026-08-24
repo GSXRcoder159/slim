@@ -17,7 +17,13 @@ export function shapeOf(
   if (node.kind === ts.SyntaxKind.NullKeyword) return { kind: "literal", literals: [null] };
   if (node.kind === ts.SyntaxKind.UndefinedKeyword) return { kind: "literal", literals: [undefined] };
   if (ts.isArrayLiteralExpression(node)) {
-    return { kind: "array" };
+    return {
+      kind: "array",
+      elements: node.elements.map((el) => {
+        if (ts.isOmittedExpression(el) || ts.isSpreadElement(el)) return { kind: "unknown" as const };
+        return shapeOf(ts, el, checker);
+      }),
+    };
   }
   if (ts.isObjectLiteralExpression(node)) {
     const props: Record<string, ArgShape> = {};

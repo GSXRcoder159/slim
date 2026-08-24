@@ -9,6 +9,7 @@
 | [evidence.lodash.sample.md](./evidence.lodash.sample.md) | The 90-second report |
 | [slim.schema.json](./slim.schema.json) | Config schema (seven fields) |
 | [scan.schema.json](./scan.schema.json) | `slim scan --json` report schema |
+| [envelope.schema.json](./envelope.schema.json) | Envelope JSON (`inspect --json` / `.slim/<pkg>/envelope.json`) |
 | [transcripts/friday-lodash.txt](./transcripts/friday-lodash.txt) | Magical moment, stdout/stderr |
 | [samples/lodash.slice.js](./samples/lodash.slice.js) | Historical JS sketch; the Friday slice is TypeScript in `fixtures/lodash-get-debounce/` (~250 lines) |
 | [examples/](./examples/) | User-repo GitHub workflows |

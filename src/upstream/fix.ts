@@ -410,6 +410,8 @@ function synthesizeEnvelope(pkg: string, rec: ManifestReplacement): Envelope {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "no traces — generators are static-shape plus catalog mutations, not your runtime distribution",
     },

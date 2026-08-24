@@ -28,6 +28,8 @@ function env(symbols: string[], kinds: EnvKind[] = ["node"]): Envelope {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "test",
     },

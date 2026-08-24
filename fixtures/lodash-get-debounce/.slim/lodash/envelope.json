@@ -149,7 +149,21 @@
               "kind": "any"
             },
             {
-              "kind": "array"
+              "kind": "array",
+              "elements": [
+                {
+                  "kind": "literal",
+                  "literals": [
+                    "a"
+                  ]
+                },
+                {
+                  "kind": "literal",
+                  "literals": [
+                    "b"
+                  ]
+                }
+              ]
             }
           ],
           "spread": false,
@@ -322,6 +336,22 @@
   "closure": {
     "confidence": "closed",
     "readyToGenerate": true,
+    "staticCallSiteIds": [
+      "call:src/index.ts:122",
+      "call:src/index.ts:248",
+      "call:src/index.ts:345",
+      "call:src/index.ts:392",
+      "call:src/index.ts:510",
+      "call:src/index.ts:605"
+    ],
+    "tracedCallSiteIds": [
+      "call:src/index.ts:392",
+      "call:src/index.ts:122",
+      "call:src/index.ts:248",
+      "call:src/index.ts:345",
+      "call:src/index.ts:605",
+      "call:src/index.ts:510"
+    ],
     "untracedCallSiteIds": [],
     "reason": "static envelope closed"
   },

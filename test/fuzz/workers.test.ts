@@ -81,6 +81,8 @@ function envelopeGet(): Envelope {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "workers",
     },
@@ -126,6 +128,8 @@ function envelopeDebounce(): Envelope {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "workers",
     },
@@ -217,6 +221,8 @@ function envelopeAlwaysDisagree(): Envelope {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "cap",
     },

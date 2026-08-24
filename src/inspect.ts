@@ -26,8 +26,15 @@ export async function runInspect(args: CliArgs): Promise<number> {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "envelope.json"), JSON.stringify(envelopeForDisk(env), null, 2) + "\n");
 
+  const decision = env.closure.readyToGenerate ? "try" : "refuse";
   if (args.json) {
-    process.stdout.write(JSON.stringify({ envelope: env, hash: hashEnvelope(env) }, null, 2) + "\n");
+    process.stdout.write(
+      JSON.stringify(
+        { envelope: env, hash: hashEnvelope(env), decision, reason: env.closure.reason },
+        null,
+        2,
+      ) + "\n",
+    );
   } else {
     process.stdout.write(`package     ${env.package.name}@${env.package.version}  family=${env.package.family}\n`);
     process.stdout.write(`confidence  ${env.closure.confidence}  ready=${env.closure.readyToGenerate}\n`);
@@ -40,6 +47,9 @@ export async function runInspect(args: CliArgs): Promise<number> {
     }
     process.stdout.write(`clock       ${env.clock}  cryptoRandom=${env.cryptoRandom}\n`);
     process.stdout.write(`reason      ${env.closure.reason}\n`);
+    if (args.allowUnknown && env.closure.confidence === "open") {
+      process.stdout.write(`override    --allow-unknown (unsafe; not closed)\n`);
+    }
     process.stdout.write(`envelope    ${join(dir, "envelope.json")}\n`);
     process.stdout.write(`hash        ${hashEnvelope(env).slice(0, 16)}…\n`);
     if (refuse) process.stdout.write("\n" + formatRefuse(refuse) + "\n");
@@ -49,6 +59,7 @@ export async function runInspect(args: CliArgs): Promise<number> {
       );
     }
   }
+  if (!env.closure.readyToGenerate) return EXIT_REFUSED;
   if (refuse && env.slimmable.verdict === "refuse") return EXIT_REFUSED;
   return EXIT_OK;
 }

@@ -54,7 +54,7 @@ export function analyzePackage(
   const clockSymbols = new Set(["debounce", "throttle", "delay", "now"]);
   let clock = false;
   let cryptoRandom = pkg === "uuid" || pkg === "nanoid";
-  const envKinds = detectEnv(project);
+  const envKinds = detectEnv(project, files);
 
   const sourceCache = new Map<string, ts.SourceFile>();
   const getSfLite = (file: string) => {
@@ -193,6 +193,8 @@ export function analyzePackage(
     closure: {
       confidence: "open",
       readyToGenerate: false,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "",
     },
@@ -242,22 +244,50 @@ export function collectImportSpecifiers(
   return map;
 }
 
-function detectEnv(project: Project): Envelope["env"] {
+function detectEnv(project: Project, files: string[]): Envelope["env"] {
   const deps = {
     ...project.packageJson.dependencies,
     ...project.packageJson.devDependencies,
   };
-  const env: Envelope["env"] = ["node"];
+  const tags: Envelope["env"] = [];
+  const engines = (project.packageJson as { engines?: { node?: string } }).engines?.node;
+  let hasNodeSpecifier = false;
+  for (const f of files) {
+    try {
+      if (/\bnode:/.test(readFileSync(f, "utf8"))) {
+        hasNodeSpecifier = true;
+        break;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (deps["@types/node"] || engines || hasNodeSpecifier) tags.push("node");
   if (
     deps["wrangler"] ||
     deps["@cloudflare/workers-types"] ||
     deps["@cloudflare/vitest-pool-workers"] ||
     existsSync(join(project.root, "wrangler.toml"))
   ) {
-    env.push("worker");
+    tags.push("worker");
   }
-  if (deps["jsdom"] || deps["@testing-library/dom"]) env.push("jsdom");
-  return env;
+  if (deps["jsdom"] || deps["@testing-library/dom"]) tags.push("jsdom");
+  const browserField = project.packageJson.browser;
+  const hasDomRuntime = Boolean(deps["react-dom"] || deps["preact"]);
+  let hasDomLib = false;
+  if (project.tsconfigPath) {
+    try {
+      const raw = readFileSync(project.tsconfigPath, "utf8");
+      if (/"DOM"/i.test(raw) || /'DOM'/i.test(raw)) hasDomLib = true;
+    } catch {
+      /* ignore */
+    }
+  }
+  if (browserField || hasDomRuntime || (hasDomLib && !tags.includes("node"))) {
+    tags.push("browser");
+  }
+  if (tags.length === 0) tags.push("unknown");
+  return tags;
 }
 
 function installedFromPkg(project: Project, name: string): string {

@@ -28,6 +28,8 @@ function envWith(symbol: string): Envelope {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "",
     },

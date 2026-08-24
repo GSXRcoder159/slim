@@ -1,0 +1,7 @@
+{
+  "name": "analyze-env-browser",
+  "private": true,
+  "type": "module",
+  "browser": { "./src/app.ts": "./src/app.ts" },
+  "dependencies": { "react-dom": "19.0.0" }
+}

@@ -64,6 +64,7 @@ export interface ArgShape {
     | "unknown";
   literals?: unknown[];
   props?: Record<string, ArgShape>;
+  elements?: ArgShape[];
   fnArity?: number;
 }
 
@@ -117,11 +118,23 @@ export interface UnknownSite {
 
 export interface TraceEvent {
   symbol: string;
+  /** Correlation id for this call. Result-member ops point at the constructor via parentOriginId. */
+  originId?: string;
+  parentOriginId?: string;
+  /** Matched envelope CallSite.id; null/absent until attributed. */
+  callSiteId?: string | null;
+  unmatched?: boolean;
+  /** "" = invoke of a returned function; "cancel" / "flush" / etc. */
+  resultMember?: string;
+  argc?: number;
   args: SlimValue[];
   thisArg?: SlimValue;
   result?: SlimValue;
   threw?: { name: string; message: string; code?: string };
   mutatedArgIndexes?: number[];
+  truncated?: boolean;
+  /** User call site captured at wrap time (file/line/column only; never a stack dump). */
+  site?: { file: string; line: number; column: number };
   tRelMs?: number;
   sessionId?: string;
 }
@@ -143,7 +156,8 @@ export type SlimValue =
   | { t: "bytes"; kind?: string; len?: number; b64?: string }
   | { t: "ref"; id: number }
   | { t: "promise" }
-  | { t: "regexp"; source: string; flags: string };
+  | { t: "regexp"; source: string; flags: string }
+  | { t: "trunc" };
 
 export interface Envelope {
   schemaVersion: typeof ENVELOPE_VERSION;
@@ -156,6 +170,8 @@ export interface Envelope {
   closure: {
     confidence: Confidence;
     readyToGenerate: boolean;
+    staticCallSiteIds: string[];
+    tracedCallSiteIds: string[];
     untracedCallSiteIds: string[];
     reason: string;
   };

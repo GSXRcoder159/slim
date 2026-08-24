@@ -87,6 +87,8 @@ function minimalEnvelope(pkg: string, symbols: string[], version: string): Envel
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "test",
     },

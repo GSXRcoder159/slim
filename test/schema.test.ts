@@ -95,6 +95,40 @@ test("docs/scan.schema.json matches ScanReport required fields", () => {
   assert.deepEqual(schema.$defs.row.required.slice().sort(), rowKeys);
 });
 
+test("docs/envelope.schema.json requires envelope + closure ID lists", () => {
+  const schema = JSON.parse(readFileSync(join(ROOT, "docs/envelope.schema.json"), "utf8")) as {
+    required: string[];
+    $defs: { closure: { required: string[] } };
+  };
+  assert.deepEqual(
+    schema.required.sort(),
+    [
+      "clock",
+      "closure",
+      "cryptoRandom",
+      "env",
+      "imports",
+      "package",
+      "schemaVersion",
+      "slimmable",
+      "symbols",
+      "traces",
+      "unknowns",
+    ].sort(),
+  );
+  assert.deepEqual(
+    schema.$defs.closure.required.slice().sort(),
+    [
+      "confidence",
+      "readyToGenerate",
+      "reason",
+      "staticCallSiteIds",
+      "tracedCallSiteIds",
+      "untracedCallSiteIds",
+    ].sort(),
+  );
+});
+
 test("friday walkthrough documents --no-install", () => {
   const md = readFileSync(join(ROOT, "docs/friday.md"), "utf8");
   assert.match(md, /--no-install/);

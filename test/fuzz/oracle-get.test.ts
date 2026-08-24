@@ -107,6 +107,8 @@ test(
       closure: {
         confidence: "closed",
         readyToGenerate: true,
+        staticCallSiteIds: [],
+        tracedCallSiteIds: [],
         untracedCallSiteIds: [],
         reason: "oracle",
       },
@@ -231,6 +233,8 @@ test(
       closure: {
         confidence: "closed",
         readyToGenerate: true,
+        staticCallSiteIds: [],
+        tracedCallSiteIds: [],
         untracedCallSiteIds: [],
         reason: "oracle",
       },

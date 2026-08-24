@@ -9,7 +9,7 @@ original, and opens a PR with a standing regression suite.
 
 Usage:
   slim scan [dir] [--json]
-  slim inspect <pkg>
+  slim inspect <pkg> [--json] [--allow-unknown]
   slim replace <pkg> [options]
   slim check
   slim upstream [--pr]
@@ -18,7 +18,7 @@ Usage:
 
 Replace options:
   --budget-ms <n>     fuzz wall clock (default 30000, 300000 if CI=1)
-  --no-trace          skip running tests for traces
+  --no-trace          skip tests; static-only evidence, never trace-closed
   --no-pr             write files, do not open a GitHub PR
   --allow-unknown     generate even with dynamic access (never claimed closed)
   --force             skip size / save heuristics

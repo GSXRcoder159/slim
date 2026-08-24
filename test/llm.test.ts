@@ -35,6 +35,8 @@ test("generateWithLlm uses a fake provider", async () => {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "",
     },

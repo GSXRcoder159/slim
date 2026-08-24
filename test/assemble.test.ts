@@ -34,6 +34,8 @@ function env(symbols: string[], imports: { kind: ImportKind; names?: string[] }[
     closure: {
       confidence: "closed",
       readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
       untracedCallSiteIds: [],
       reason: "test",
     },
