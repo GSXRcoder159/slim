@@ -33,7 +33,7 @@ Stock lodash uses `Function(String)` and is rejected on Cloudflare/Vercel Edge. 
 ```
 slim scan [dir] [--json]
 slim inspect <pkg>
-slim replace <pkg> [--budget-ms 30000] [--no-trace] [--no-pr] [--allow-unknown] [--force] [--out src/slim]
+slim replace <pkg> [--budget-ms 30000] [--no-trace] [--no-pr] [--dry-run] [--keep-original] [--no-install] [--allow-unknown] [--force] [--out src/slim]
 slim check
 slim upstream [--pr]
 slim watch                  # alias of upstream

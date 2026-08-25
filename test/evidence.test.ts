@@ -8,6 +8,20 @@ import { renderEvidenceMd, writeEvidence, type EvidenceJson } from "../src/evide
 import { findBundleEntry, maybeBundleBytes } from "../src/size/bundle.ts";
 import { ENVELOPE_VERSION, emptyHyrum } from "../src/envelope/types.ts";
 import type { Envelope } from "../src/envelope/types.ts";
+import type { RevertPlan } from "../src/rewrite/revert.ts";
+
+function sampleRevert(pkg = "lodash"): RevertPlan {
+  return {
+    package: pkg,
+    version: "1.0.0",
+    module: `src/slim/${pkg}.ts`,
+    tests: `src/slim/${pkg}.test.ts`,
+    cjsCompanion: null,
+    rewrites: [{ file: "src/index.ts", original: pkg, replacement: `./slim/${pkg}.ts` }],
+    lockfile: "npm",
+    installCommand: "npm install",
+  };
+}
 
 function env(family = "lodash"): Envelope {
   return {
@@ -63,7 +77,7 @@ test("evidence markdown has sections 1 through 8 in order", () => {
     fuzz,
     coverageHoles: ["zero traces replayed"],
     residualRisk: ["always"],
-    revert: "git revert",
+    revert: sampleRevert(),
   };
   const md = renderEvidenceMd(json, env(), ["lodash.get"]);
   assert.match(md, /^# EVIDENCE, NOT PROOF/m);
@@ -91,7 +105,7 @@ test("Edge is n/a for non-lodash families", () => {
     fuzz,
     coverageHoles: [],
     residualRisk: ["always"],
-    revert: "git revert",
+    revert: sampleRevert(),
   };
   const md = renderEvidenceMd(json, e, []);
   assert.match(md, /## 4\. Edge\n\nn\/a/);
@@ -114,7 +128,7 @@ test("byte delta includes esbuild dry-run line when bundle is present", () => {
     fuzz,
     coverageHoles: [],
     residualRisk: ["always"],
-    revert: "git revert",
+    revert: sampleRevert(),
   };
   const md = renderEvidenceMd(json, env(), []);
   assert.match(md, /esbuild dry-run of `src\/index\.ts`: 1234 B/);
@@ -131,6 +145,7 @@ test("writeEvidence residual risk is never empty", () => {
     catalogIds: [],
     coverageHoles: [],
     bundle: null,
+    revert: sampleRevert(),
   });
   const md = readFileSync(mdPath, "utf8");
   assert.match(md, /## Residual risk/);
@@ -151,6 +166,7 @@ test("zero traces cannot claim trace-closed and residual risk names unobserved r
     catalogIds: [],
     coverageHoles: ["zero traces replayed"],
     bundle: null,
+    revert: sampleRevert(),
   });
   const md = readFileSync(mdPath, "utf8");
   assert.match(md, /runtime distribution was not observed|not your runtime distribution/);
@@ -171,6 +187,7 @@ test("allow-flaky evidence is marked not production-ready", () => {
     catalogIds: [],
     coverageHoles: [],
     bundle: null,
+    revert: sampleRevert("chance"),
   });
   const md = readFileSync(mdPath, "utf8");
   const json = JSON.parse(readFileSync(jsonPath, "utf8")) as { fuzz: { allowFlaky?: boolean }; residualRisk: string[] };

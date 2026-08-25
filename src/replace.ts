@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { randomInt } from "node:crypto";
+import { tmpdir } from "node:os";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_FAIL, EXIT_OK, EXIT_REFUSED, EXIT_USAGE, SlimExit } from "./exit.ts";
 import { loadConfig } from "./config.ts";
@@ -25,12 +26,22 @@ import { runFuzz, type FuzzReport } from "./fuzz/run.ts";
 import { repairLoop } from "./generate/repair.ts";
 import { rewriteProjectImports } from "./rewrite/splice.ts";
 import { rewritePackageJson } from "./rewrite/packagejson.ts";
-import { refreshLockfile, shouldRefreshLockfile } from "./rewrite/lockfile.ts";
+import { installCommandFor, refreshLockfile, shouldRefreshLockfile } from "./rewrite/lockfile.ts";
 import { writeEvidence } from "./evidence/report.ts";
 import { emitStandingTests } from "./evidence/emit-tests.ts";
 import { maybeCreatePullRequest, prBodyFromEvidence } from "./github/pr.ts";
 import { detectRunner } from "./trace/runners.ts";
 import { runTraces, withLocalBinPath, writeTracesMeta } from "./trace/run.ts";
+import { MutationTxn, lockfilePath } from "./rewrite/transaction.ts";
+import { rewriteSpecifiers as envelopeSpecifiers, removeDependencyNames } from "./rewrite/siblings.ts";
+import {
+  assertInsideRoot,
+  assertNoOutputCollision,
+  fileBase,
+  isSafeToRewrite,
+} from "./rewrite/paths.ts";
+import { emitCjsSource, isCjsConsumer } from "./rewrite/cjs-emit.ts";
+import type { RevertPlan } from "./rewrite/revert.ts";
 
 export { withLocalBinPath, writeTracesMeta };
 
@@ -52,7 +63,12 @@ export async function runReplace(args: CliArgs): Promise<number> {
   });
 
   if (!args.noTrace) {
-    env = runTraces(project.root, args.pkg, env);
+    const traceDir = mkdtempSync(join(tmpdir(), "slim-trace-"));
+    try {
+      env = runTraces(project.root, args.pkg, env, { traceDir });
+    } finally {
+      rmSync(traceDir, { recursive: true, force: true });
+    }
     env = closeEnvelope(env, { allowUnknown: args.allowUnknown });
   } else {
     env = closeEnvelope(env, { allowUnknown: args.allowUnknown });
@@ -69,6 +85,11 @@ export async function runReplace(args: CliArgs): Promise<number> {
     throw new SlimExit(EXIT_REFUSED, `envelope not closed: ${env.closure.reason}`);
   }
   if (!env.symbols.length) {
+    const rec = config.replacements[args.pkg] ?? config.replacements[env.package.name];
+    if (rec?.module && existsSync(join(project.root, rec.module))) {
+      process.stdout.write(`already replaced ${env.package.name} (${rec.module}); nothing to do\n`);
+      return EXIT_OK;
+    }
     throw new SlimExit(EXIT_FAIL, `no used symbols found for ${args.pkg}`);
   }
 
@@ -116,14 +137,15 @@ export async function runReplace(args: CliArgs): Promise<number> {
   const seed = args.seed ?? randomInt(1, 2 ** 31);
   const budget = args.budgetMs ?? config.budgetMs;
   const outDir = args.out ?? config.outDir;
-  const slimPath = join(project.root, outDir, `${fileBase(env.package.name)}.ts`);
+  const outAbs = assertInsideRoot(project.root, outDir);
+  const slimPath = join(outAbs, `${fileBase(env.package.name)}.ts`);
+  assertNoOutputCollision(project.root, slimPath, env.package.name);
 
   if (args.dryRun) {
     printDryRun(env, source, catalogIds);
     return EXIT_OK;
   }
 
-  mkdirSync(dirname(slimPath), { recursive: true });
   const transpile = (src: string) =>
     ts.transpileModule(src, {
       compilerOptions: {
@@ -133,7 +155,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
       },
       fileName: slimPath,
     }).outputText;
-  const tmpSlim = slimPath + ".tmp.mjs";
+  const tmpSlim = join(tmpdir(), `slim-fuzz-${process.pid}-${randomInt(1e9)}.mjs`);
   const fuzzSource = async (src: string, hashExtra = ""): Promise<FuzzReport> => {
     writeFileSync(tmpSlim, transpile(src));
     return runFuzz({
@@ -151,22 +173,30 @@ export async function runReplace(args: CliArgs): Promise<number> {
 
   process.stderr.write(`fuzzing (budget ${budget}ms, seed ${seed})…\n`);
   let report: FuzzReport;
-  if (!usedCatalog && llm) {
-    const pub = loadPublicApi(project.root, env.package.name);
-    const repaired = await repairLoop({
-      envelope: env,
-      publicApi: pub,
-      initial: source,
-      maxAttempts: args.maxAttempts,
-      llm,
-      projectRoot: project.root,
-      catalog: false,
-      fuzz: (src) => fuzzSource(src),
-    });
-    source = repaired.source;
-    report = repaired.report as FuzzReport;
-  } else {
-    report = await fuzzSource(source);
+  try {
+    if (!usedCatalog && llm) {
+      const pub = loadPublicApi(project.root, env.package.name);
+      const repaired = await repairLoop({
+        envelope: env,
+        publicApi: pub,
+        initial: source,
+        maxAttempts: args.maxAttempts,
+        llm,
+        projectRoot: project.root,
+        catalog: false,
+        fuzz: (src) => fuzzSource(src),
+      });
+      source = repaired.source;
+      report = repaired.report as FuzzReport;
+    } else {
+      report = await fuzzSource(source);
+    }
+  } finally {
+    try {
+      unlinkSync(tmpSlim);
+    } catch {
+      /* gone */
+    }
   }
 
   if (report.disagreements.length) {
@@ -177,100 +207,150 @@ export async function runReplace(args: CliArgs): Promise<number> {
     throw new SlimExit(EXIT_FAIL, msg);
   }
 
-  writeFileSync(slimPath, source);
-  try {
-    const { unlinkSync } = await import("node:fs");
-    unlinkSync(tmpSlim);
-  } catch {
-    /* keep */
-  }
-
-  const fromSpecs = new Set(env.imports.map((i) => i.specifier));
-  fromSpecs.add(args.pkg);
-  fromSpecs.add(env.package.name);
-  if (env.package.family === "lodash") {
-    fromSpecs.add("lodash");
-    fromSpecs.add("lodash-es");
-  }
-  const outAbs = resolve(project.root, outDir);
+  const txn = new MutationTxn(project.root);
+  const fromSpecs = envelopeSpecifiers(env, args.pkg);
+  const declared = [
+    ...Object.keys(project.packageJson.dependencies ?? {}),
+    ...Object.keys(project.packageJson.devDependencies ?? {}),
+    ...Object.keys(project.packageJson.optionalDependencies ?? {}),
+  ];
+  const removeNames = args.keepOriginal ? new Set<string>() : removeDependencyNames(env, declared);
+  const pkgType = project.packageJson.type;
   const files = filterSourceFiles(walkSourceFiles(project.root), project.root, {
     include: config.include,
     ignore: config.ignore,
   }).filter((f) => {
     if (f === slimPath || f.endsWith(".tmp.mjs")) return false;
     if (f === outAbs || f.startsWith(outAbs + sep)) return false;
+    if (!isSafeToRewrite(project.root, f)) return false;
     return true;
   });
-  const changed: string[] = [];
-  for (const file of files) {
-    const rel = toRelativeSpecifier(file, slimPath);
-    const did = rewriteProjectImports(project.root, [file], fromSpecs, rel);
-    changed.push(...did);
-  }
+  const needsCjs = files.some((f) => isCjsConsumer(f, pkgType));
+  const cjsPath = needsCjs ? join(outAbs, `${fileBase(env.package.name)}.cjs`) : null;
+  const standingTestRel = relative(
+    project.root,
+    join(outAbs, `${fileBase(env.package.name)}.test.ts`),
+  ).replace(/\\/g, "/");
+  const moduleRel = relative(project.root, slimPath).replace(/\\/g, "/");
+  const cjsRel = cjsPath ? relative(project.root, cjsPath).replace(/\\/g, "/") : null;
 
-  if (!args.keepOriginal) {
-    rewritePackageJson(project.packageJsonPath, env.package.name);
-    if (env.package.family === "lodash" && env.package.name !== "lodash-es") {
-      rewritePackageJson(project.packageJsonPath, "lodash-es");
+  try {
+    txn.writeFile(slimPath, source);
+    if (cjsPath) {
+      txn.writeFile(cjsPath, emitCjsSource(ts, source, cjsPath));
     }
-  }
-  if (shouldRefreshLockfile({ keepOriginal: args.keepOriginal, noInstall: args.noInstall })) {
-    refreshLockfile(project);
-  }
 
-  const holes = coverageHoles(env);
-  writeEvidence({
-    root: project.root,
-    env,
-    replacementBytes: Buffer.byteLength(source),
-    originalMin: originalSize.minBytes,
-    fuzz: {
-      cases: report.cases,
-      comparisons: report.comparisons,
-      timerCases: report.timerCases,
-      tracesReplayed: report.tracesReplayed,
-      wallMs: report.wallMs,
-      seed: report.seed,
-      disagreements: report.disagreements.length,
-      ...(report.allowFlaky ? { allowFlaky: true } : {}),
-    },
-    catalogIds,
-    coverageHoles: holes,
-  });
+    const changed: string[] = [];
+    const rewrites: RevertPlan["rewrites"] = [];
+    for (const file of files) {
+      const dest = needsCjs && isCjsConsumer(file, pkgType) && cjsPath ? cjsPath : slimPath;
+      const rel = toRelativeSpecifier(file, dest);
+      txn.snapshot(file);
+      const did = rewriteProjectImports(project.root, [file], fromSpecs, rel);
+      if (did.length) {
+        changed.push(...did);
+        const orig = env.imports.find((i) => join(project.root, i.loc.file) === file)?.specifier;
+        rewrites.push({
+          file: relative(project.root, file).replace(/\\/g, "/"),
+          original: orig ?? env.package.name,
+          replacement: rel,
+        });
+      }
+    }
 
-  const runner = detectRunner(project.root);
-  const testRunner = runner.kind === "vitest" ? "vitest" : "node:test";
-  const modSpec = toRelativeSpecifier(
-    join(project.root, outDir, `${fileBase(env.package.name)}.test.ts`),
-    slimPath,
-  );
-  emitStandingTests({
-    root: project.root,
-    outDir,
-    pkg: fileBase(env.package.name),
-    env,
-    traces: env.traces,
-    runner: testRunner,
-    moduleSpecifier: modSpec,
-  });
+    txn.snapshot(project.packageJsonPath);
+    if (!args.keepOriginal) {
+      for (const name of removeNames) rewritePackageJson(project.packageJsonPath, name);
+    }
+    const lf = lockfilePath(project.root, project.lockfile);
+    if (lf) txn.snapshot(lf);
+    if (shouldRefreshLockfile({ keepOriginal: args.keepOriginal, noInstall: args.noInstall })) {
+      refreshLockfile(project);
+      txn.lockfileRefreshed = true;
+    }
 
-  writeManifest(project.root, env, slimPath);
-  writeSlimJson(project.root, env, slimPath);
+    const holes = coverageHoles(env);
+    const revert: RevertPlan = {
+      package: env.package.name,
+      version: env.package.version,
+      module: moduleRel,
+      tests: standingTestRel,
+      cjsCompanion: cjsRel,
+      rewrites,
+      lockfile: project.lockfile,
+      installCommand: installCommandFor(project.lockfile),
+    };
+    const evidenceDir = join(project.root, ".slim", env.package.name);
+    txn.prepareWrite(join(evidenceDir, "evidence.md"));
+    txn.prepareWrite(join(evidenceDir, "evidence.json"));
+    writeEvidence({
+      root: project.root,
+      env,
+      replacementBytes: Buffer.byteLength(source),
+      originalMin: originalSize.minBytes,
+      fuzz: {
+        cases: report.cases,
+        comparisons: report.comparisons,
+        timerCases: report.timerCases,
+        tracesReplayed: report.tracesReplayed,
+        wallMs: report.wallMs,
+        seed: report.seed,
+        disagreements: report.disagreements.length,
+        ...(report.allowFlaky ? { allowFlaky: true } : {}),
+      },
+      catalogIds,
+      coverageHoles: holes,
+      revert,
+    });
 
-  const pkgSlimDir = join(project.root, ".slim", env.package.name);
-  mkdirSync(pkgSlimDir, { recursive: true });
-  writeFileSync(join(pkgSlimDir, "envelope.json"), JSON.stringify(envelopeForDisk(env), null, 2) + "\n");
-  writeTracesMeta(pkgSlimDir);
+    const runner = detectRunner(project.root);
+    const testRunner = runner.kind === "vitest" ? "vitest" : "node:test";
+    const testAbs = join(project.root, standingTestRel);
+    txn.prepareWrite(testAbs);
+    const modSpec = toRelativeSpecifier(testAbs, slimPath);
+    emitStandingTests({
+      root: project.root,
+      outDir,
+      pkg: fileBase(env.package.name),
+      env,
+      traces: env.traces,
+      runner: testRunner,
+      moduleSpecifier: modSpec,
+    });
 
-  process.stdout.write(
-    `wrote ${relative(project.root, slimPath)}  (${replacementBytes} B, hash ${hashEnvelope(env).slice(0, 12)}…)\n`,
-  );
-  process.stdout.write(`fuzz cases=${report.cases} comparisons=${report.comparisons} timerCases=${report.timerCases}\n`);
-  process.stdout.write("EVIDENCE, NOT PROOF — see .slim/" + env.package.name + "/evidence.md\n");
-  if (changed.length) process.stdout.write(`rewrote ${changed.length} import files\n`);
+    txn.prepareWrite(join(project.root, ".slim", "manifest.json"));
+    writeManifest(project.root, env, slimPath);
+    txn.prepareWrite(join(project.root, "slim.json"));
+    writeSlimJson(project.root, env, slimPath);
 
-  if (shouldRunMergeGate(args)) {
-    runMergeGate(project.root, config.testCommand);
+    const pkgSlimDir = join(project.root, ".slim", env.package.name);
+    txn.prepareWrite(join(pkgSlimDir, "envelope.json"));
+    writeFileSync(join(pkgSlimDir, "envelope.json"), JSON.stringify(envelopeForDisk(env), null, 2) + "\n");
+    txn.prepareWrite(join(pkgSlimDir, "traces.meta.json"));
+    writeTracesMeta(pkgSlimDir);
+
+    process.stdout.write(
+      `wrote ${relative(project.root, slimPath)}  (${replacementBytes} B, hash ${hashEnvelope(env).slice(0, 12)}…)\n`,
+    );
+    process.stdout.write(`fuzz cases=${report.cases} comparisons=${report.comparisons} timerCases=${report.timerCases}\n`);
+    process.stdout.write("EVIDENCE, NOT PROOF — see .slim/" + env.package.name + "/evidence.md\n");
+    if (changed.length) process.stdout.write(`rewrote ${changed.length} import files\n`);
+
+    if (shouldRunMergeGate(args)) {
+      runMergeGate(project.root, config.testCommand);
+    }
+    txn.commit();
+  } catch (err) {
+    const ranInstall = txn.lockfileRefreshed;
+    txn.rollback();
+    if (ranInstall) {
+      try {
+        refreshLockfile(project, { keepOriginal: false, noInstall: false });
+      } catch {
+        process.stderr.write("lockfile restored; node_modules may need a manual install\n");
+      }
+    }
+    throw err;
   }
 
   if (!args.noPr) {
@@ -339,10 +419,6 @@ export function assertNoPollutionDependence(traces: TraceEvent[]): void {
         `Remove __proto__ paths from runtime usage or do not replace this package.`,
     );
   }
-}
-
-function fileBase(name: string): string {
-  return name.replace(/^@/, "").replace(/\//g, "-");
 }
 
 function toRelativeSpecifier(fromFile: string, toFile: string): string {

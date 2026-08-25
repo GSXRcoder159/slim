@@ -26,6 +26,19 @@ export function removeDependencyKey(
   return { text: out.join("\n"), removed };
 }
 
+export function restoreDependencyKey(
+  packageJsonText: string,
+  depName: string,
+  version: string,
+): string {
+  const json = JSON.parse(packageJsonText) as {
+    dependencies?: Record<string, string>;
+  };
+  json.dependencies = json.dependencies ?? {};
+  json.dependencies[depName] = version;
+  return JSON.stringify(json, null, 2) + "\n";
+}
+
 export function rewritePackageJson(path: string, depName: string): boolean {
   const text = readFileSync(path, "utf8");
   const next = removeDependencyKey(text, depName);

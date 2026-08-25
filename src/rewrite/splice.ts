@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import type ts from "typescript";
+import { resolvePackageFamily } from "../analyze/family.ts";
 import { loadTargetTypescript } from "../project.ts";
 
 export interface SpliceEdit {
@@ -18,6 +19,14 @@ export function applySplices(source: string, edits: SpliceEdit[]): string {
   return out;
 }
 
+/** Named catalog export for a per-method specifier (`lodash/get`, `lodash.get`). */
+export function methodExportName(specifier: string): string | null {
+  const fam = resolvePackageFamily(specifier);
+  if (!fam?.subpath) return null;
+  const last = fam.subpath.split("/").pop() ?? "";
+  return last || null;
+}
+
 export function rewriteSpecifiers(
   ts: typeof import("typescript"),
   source: string,
@@ -33,12 +42,16 @@ export function rewriteSpecifiers(
       node.moduleSpecifier &&
       ts.isStringLiteral(node.moduleSpecifier)
     ) {
-      if (fromSpecifiers.has(node.moduleSpecifier.text)) {
+      const spec = node.moduleSpecifier.text;
+      if (fromSpecifiers.has(spec)) {
         edits.push({
           start: node.moduleSpecifier.getStart(sf),
           end: node.moduleSpecifier.getEnd(),
           text: JSON.stringify(toSpecifier),
         });
+        if (ts.isImportDeclaration(node)) {
+          rewriteDefaultPerMethodClause(ts, sf, node, spec, edits);
+        }
       }
     }
     if (
@@ -54,12 +67,38 @@ export function rewriteSpecifiers(
         end: node.arguments[0].getEnd(),
         text: JSON.stringify(toSpecifier),
       });
+      const method = methodExportName(node.arguments[0].text);
+      const parent = node.parent;
+      if (
+        method &&
+        parent &&
+        ts.isVariableDeclaration(parent) &&
+        ts.isIdentifier(parent.name) &&
+        parent.initializer === node
+      ) {
+        edits.push({ start: node.getEnd(), end: node.getEnd(), text: `.${method}` });
+      }
     }
     ts.forEachChild(node, visit);
   };
   visit(sf);
   if (!edits.length) return { text: source, changed: false };
   return { text: applySplices(source, edits), changed: true };
+}
+
+function rewriteDefaultPerMethodClause(
+  ts: typeof import("typescript"),
+  sf: ts.SourceFile,
+  node: ts.ImportDeclaration,
+  spec: string,
+  edits: SpliceEdit[],
+): void {
+  const method = methodExportName(spec);
+  const clause = node.importClause;
+  if (!method || !clause?.name || clause.namedBindings) return;
+  const local = clause.name.text;
+  const named = local === method ? `{ ${method} }` : `{ ${method} as ${local} }`;
+  edits.push({ start: clause.getStart(sf), end: clause.getEnd(), text: named });
 }
 
 export function rewriteProjectImports(

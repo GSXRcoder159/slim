@@ -45,7 +45,11 @@ Slim will watch this slice via `slim upstream` / osv.dev. Registry: https://www.
 
 ## 8. How to revert
 
-git revert the Slim PR, or restore the dependency in package.json and delete src/slim/<pkg>.ts
+1. Restore `lodash@4.17.21` in package.json.
+2. Delete `src/slim/lodash.ts` and `src/slim/lodash.test.ts`.
+3. Restore import specifiers in: src/index.ts
+4. Run `npm install`.
+Or: git revert the Slim PR.
 
 ## Residual risk
 

@@ -36,5 +36,20 @@
     "Timer taxonomy is sampled, not exhaustive of every interleaving.",
     "Upstream may patch bugs outside this slice; slim upstream watches advisories for used symbols."
   ],
-  "revert": "git revert the Slim PR, or restore the dependency in package.json and delete src/slim/<pkg>.ts"
+  "revert": {
+    "package": "lodash",
+    "version": "4.17.21",
+    "module": "src/slim/lodash.ts",
+    "tests": "src/slim/lodash.test.ts",
+    "cjsCompanion": null,
+    "rewrites": [
+      {
+        "file": "src/index.ts",
+        "original": "lodash",
+        "replacement": "./slim/lodash.ts"
+      }
+    ],
+    "lockfile": "npm",
+    "installCommand": "npm install"
+  }
 }

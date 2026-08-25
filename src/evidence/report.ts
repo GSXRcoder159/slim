@@ -4,6 +4,7 @@ import type { Envelope } from "../envelope/types.ts";
 import { hashEnvelope } from "../envelope/hash.ts";
 import { gzipGuess } from "../size/estimate.ts";
 import { maybeBundleBytes, type BundleDelta } from "../size/bundle.ts";
+import { formatRevert, type RevertPlan } from "../rewrite/revert.ts";
 
 export interface EvidenceJson {
   slogan: "EVIDENCE, NOT PROOF";
@@ -30,7 +31,7 @@ export interface EvidenceJson {
   };
   coverageHoles: string[];
   residualRisk: string[];
-  revert: string;
+  revert: RevertPlan;
 }
 
 export function writeEvidence(opts: {
@@ -42,6 +43,7 @@ export function writeEvidence(opts: {
   catalogIds: string[];
   coverageHoles: string[];
   bundle?: BundleDelta | null;
+  revert: RevertPlan;
 }): { mdPath: string; jsonPath: string } {
   const dir = join(opts.root, ".slim", opts.env.package.name);
   mkdirSync(dir, { recursive: true });
@@ -65,7 +67,7 @@ export function writeEvidence(opts: {
     fuzz: opts.fuzz,
     coverageHoles: opts.coverageHoles,
     residualRisk: residual,
-    revert: "git revert the Slim PR, or restore the dependency in package.json and delete src/slim/<pkg>.ts",
+    revert: opts.revert,
   };
   const md = renderEvidenceMd(json, opts.env, opts.catalogIds);
   const mdPath = join(dir, "evidence.md");
@@ -136,7 +138,7 @@ Slim will watch this slice via \`slim upstream\` / osv.dev. Registry: https://ww
 
 ## 8. How to revert
 
-${json.revert}
+${formatRevert(json.revert)}
 
 ## Residual risk
 

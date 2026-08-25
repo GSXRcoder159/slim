@@ -34,8 +34,10 @@ Usage:
       --allow-flaky      Fuzz unseeded RNG packages (not production-ready evidence)
       --no-pr            Write files, don't open a PR
       --no-trace         Skip tests; static-only evidence (cannot claim trace-closed)
-      --dry-run          Show the envelope and plan, write nothing
+      --dry-run          Show the envelope and plan, write nothing (including traces)
       --out <dir>        Default: src/slim
+      --keep-original    Do not uninstall the package
+      --no-install       Rewrite package.json but skip lockfile refresh
 
 Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz failed or malformed traces.
       3 Slim refuses this envelope. 4 missing gh/git, or Jest/no-runner/hook/timeout

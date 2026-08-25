@@ -221,6 +221,16 @@ export async function applyUpstreamFix(
             },
         catalogIds: usedCatalog ? catalog.matched.map((m) => m.id) : [],
         coverageHoles: fuzzSkipReason ? [fuzzSkipReason] : [],
+        revert: {
+          package: env.package.name,
+          version: env.package.version,
+          module: opts.rec.module,
+          tests: opts.rec.module.replace(/\.ts$/, ".test.ts"),
+          cjsCompanion: null,
+          rewrites: [],
+          lockfile: null,
+          installCommand: "npm install",
+        },
       });
 
       updateManifest(opts.root, opts.pkg, opts.rec, {

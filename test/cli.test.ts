@@ -56,6 +56,13 @@ test("parseCli --no-install", () => {
   assert.equal(b.noInstall, false);
 });
 
+test("parseCli --keep-original", () => {
+  const a = parseCli(["replace", "lodash", "--keep-original"]);
+  assert.equal(a.keepOriginal, true);
+  const b = parseCli(["replace", "lodash"]);
+  assert.equal(b.keepOriginal, false);
+});
+
 
 test("help text names evidence not proof", () => {
   assert.match(helpText(), /Evidence, not proof/i);
@@ -69,6 +76,10 @@ test("help text documents --no-trace as static-only", () => {
 
 test("help text documents --no-install", () => {
   assert.match(helpText(), /--no-install/);
+});
+
+test("help text documents --keep-original", () => {
+  assert.match(helpText(), /--keep-original/);
 });
 
 

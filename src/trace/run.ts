@@ -49,7 +49,7 @@ export function runTraces(
   root: string,
   pkg: string,
   env: Envelope,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; traceDir?: string },
 ): Envelope {
   const runner = detectRunner(root);
   if (runner.kind === "jest") {
@@ -66,7 +66,7 @@ export function runTraces(
     );
   }
 
-  const pkgDir = join(root, ".slim", env.package.name);
+  const pkgDir = opts?.traceDir ?? join(root, ".slim", env.package.name);
   const outPath = join(pkgDir, "traces.jsonl");
   mkdirSync(pkgDir, { recursive: true });
   writeFileSync(outPath, "");
@@ -91,7 +91,9 @@ export function runTraces(
     SLIM_TRACE_ROOT: root,
   };
   const vitestConfigPath =
-    runner.kind === "vitest" ? writeVitestTraceConfig(root, uniq) : undefined;
+    runner.kind === "vitest"
+      ? writeVitestTraceConfig(root, uniq, opts?.traceDir ?? join(root, ".slim"))
+      : undefined;
   const spawn = buildTraceSpawn(runner, { hookPath: hook, vitestConfigPath });
   if (!spawn) {
     throw new SlimExit(EXIT_ENV, `cannot build ${runner.kind} trace spawn`);

@@ -122,8 +122,12 @@ function slimVitestSpecifier(): string {
   return pathToFileURL(siblingModule(import.meta.url, "vitest")).href;
 }
 
-export function writeVitestTraceConfig(root: string, packages: string[]): string {
-  const dir = join(root, ".slim");
+export function writeVitestTraceConfig(
+  root: string,
+  packages: string[],
+  configDir = join(root, ".slim"),
+): string {
+  const dir = configDir;
   mkdirSync(dir, { recursive: true });
   const path = join(dir, "vitest.trace.ts");
   const userAbs = findVitestUserConfig(root);

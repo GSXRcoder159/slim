@@ -22,7 +22,7 @@ Parser: `node:util.parseArgs`. No commander, yargs, cac, meow. Subcommands are a
 
 TTY: color on stdout/stderr when `isatty` and `NO_COLOR` unset. Never color JSON.
 
-Confirmations: only if stdin is a TTY and `--yes` is absent. CI is non-interactive: missing `--yes` on a destructive/PR step is not an error; `replace` writes files and skips the PR with a one-line stderr note.
+Confirmations: none. `--no-pr` skips GitHub. CI is non-interactive.
 
 ### Exit codes
 
@@ -95,35 +95,29 @@ Always on (substitution safety; flags still recorded from traces): `nan` (NaN eq
 The product.
 
 ```
--y, --yes               Skip TTY confirm
-    --no-pr             Write files; do not commit or open a PR
-    --no-commit         Write files; do not git commit (implies no PR)
-    --dry-run           Print the plan; write nothing
-    --fuzz-iterations <n>  Override config (default 200)
+    --no-pr             Write files; do not open a PR
+    --no-trace          Static-only evidence (cannot claim trace-closed)
+    --dry-run           Print the plan; write nothing (including traces)
+    --keep-original     Do not uninstall the package
+    --no-install        Rewrite package.json but skip lockfile refresh
     --out <dir>         Override slices dir (default src/slim)
+    --force             Skip size / refuse heuristics; does not skip fuzz or merge-gate
 ```
 
-Steps, in order, stop on first failure:
+Steps, in order, stop on first failure. After the first project write, failure **rolls back** the target tree (slice, rewrites, package.json, lockfile, evidence, standing tests, manifest).
 
 1. Resolve pkg in package.json / lockfile. Missing → exit 1.
 2. Refuse gates (native, network, fs, framework, envelope-too-wide) → exit 3.
 3. Build envelope from call sites.
-4. Tracing (unless `--no-trace`): run detected node:test or Vitest with `slim/hooks` / `slim/vitest`. Jest, no runner, missing hook, or timeout → exit 4. Failed tests, malformed JSONL, or oversize traces → exit 1. `--force` does not skip tracing. `--no-trace` is static-only and cannot claim `trace-closed`.
-5. Generate slice + standing tests + evidence report.
-6. Fuzz slice against the installed original (oracle). Mismatch → exit 1, keep no files (or write to a temp dir and print the failing input).
-7. Rewrite imports/requires to the slice file.
-8. Remove the package from `package.json` (and the obvious lockfile via `npm uninstall --package-lock-only` / `pnpm remove` / `yarn` if we can detect; if not, edit package.json and tell the human to reinstall).
-9. Run standing tests. Run `testCommand` if set/detected.
-10. Unless `--no-commit`: create branch `slim/replace-<pkg>`, commit.
-11. Unless `--no-pr`: `gh pr create`. No `gh` → exit 4 after the commit exists, with the exact `gh pr create` command.
+4. Tracing (unless `--no-trace`): run detected node:test or Vitest with `slim/hooks` / `slim/vitest`. Trace artifacts go to a temp dir and are deleted; they are not written into the project until a successful replace records `.slim/<pkg>/traces.meta.json`. Jest, no runner, missing hook, or timeout → exit 4. Failed tests, malformed JSONL, or oversize traces → exit 1. `--force` does not skip tracing. `--no-trace` is static-only and cannot claim `trace-closed`. `--dry-run` still traces in a temp dir unless `--no-trace`.
+5. Generate slice. Validate. `--dry-run` prints the plan and exits 0 with no project writes.
+6. Fuzz slice against the installed original (oracle) using a temp module outside the project. Mismatch → exit 1, project unchanged.
+7. Write slice (and a `.cjs` companion when CJS `require()` sites exist). Rewrite imports/requires to the slice. Remove only the replaced package and family siblings that have import sites in this envelope.
+8. Refresh the lockfile with `npm install` / `pnpm install` / `yarn install` / `bun install`. Failure → exit 1 (or 4 if the package manager is missing) and rollback. `--no-install` skips this. `--keep-original` skips package.json and lockfile changes.
+9. Write evidence (including revert steps), standing tests, manifest, envelope. Run merge-gate (`testCommand` or `scripts.test`). Failure → rollback.
+10. Unless `--no-pr`: `gh pr create`. No `gh` → exit 4 after local writes exist.
 
-Default when TTY: after step 9, one prompt:
-
-```
-Open PR 'slim/replace-lodash'? [Y/n]
-```
-
-Default when not TTY: behave like `--yes` for the write+test, skip PR unless `--yes` (CI replace is rare; the Action is `check`/`watch`, not `replace`).
+Default without `--no-pr`: attempt a PR after a successful merge-gate. There is no TTY confirm and no `--yes` / `--no-commit` flag.
 
 ### `slim check [pkg]`
 
@@ -169,15 +163,15 @@ slim replace — write a verified slice and (usually) open a PR
 Usage:
   slim replace <pkg> [options]
 
-  -y, --yes              Don't ask. Write, test, PR if gh is available
       --no-pr            Write files, don't open a PR
-      --no-commit        Write files, don't git commit
-      --dry-run          Show the envelope and plan, write nothing
-      --fuzz-iterations <n>
+      --no-trace         Static-only evidence (cannot claim trace-closed)
+      --dry-run          Show the envelope and plan, write nothing including traces
+      --keep-original    Do not uninstall the package
+      --no-install       Rewrite package.json but skip lockfile refresh
       --out <dir>        Default: src/slim
 
-Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz failed.
-      3 Slim refuses this envelope. 4 missing gh/git when PR required.
+Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate failed.
+      3 Slim refuses this envelope. 4 missing gh/git when PR required, or missing package manager.
 
 Example:
   slim replace lodash
