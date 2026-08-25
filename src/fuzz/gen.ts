@@ -111,8 +111,24 @@ export function mutateArgs(args: unknown[], gen: Gen): unknown[] {
   return out;
 }
 
-export function fromShapes(shapes: ArgShape[], gen: Gen): unknown[] {
-  return shapes.map((s) => fromShape(s, gen, 0));
+export function fromShapes(shapes: ArgShape[], gen: Gen, argc = shapes.length): unknown[] {
+  const n = Math.max(0, argc);
+  const out: unknown[] = [];
+  for (let i = 0; i < n; i++) {
+    const s = shapes[i];
+    out.push(s ? fromShape(s, gen, 0) : junkValue(gen));
+  }
+  return out;
+}
+
+/** Result-member / returned-function traces are not top-level export calls. */
+export function isExportTrace(tr: TraceEvent): boolean {
+  return tr.parentOriginId === undefined && tr.resultMember === undefined;
+}
+
+export function pickObservedArgc(observed: number[], gen: Gen, fallback = 2): number {
+  if (!observed.length) return fallback;
+  return gen.pick(observed);
 }
 
 export function junkArgs(argc: number, gen: Gen): unknown[] {
@@ -154,6 +170,9 @@ function fromShape(shape: ArgShape, gen: Gen, depth: number): unknown {
       return o;
     }
     case "array": {
+      if (shape.elements && shape.elements.length) {
+        return shape.elements.map((el) => fromShape(el, gen, depth + 1));
+      }
       const n = gen.int(0, 3);
       const inner: ArgShape = shape.props
         ? { kind: "object", props: shape.props }

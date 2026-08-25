@@ -138,6 +138,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
       seed,
       workers: args.workers ?? undefined,
       allowFlaky: args.allowFlaky,
+      projectRoot: project.root,
     });
   };
 
@@ -224,6 +225,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
       wallMs: report.wallMs,
       seed: report.seed,
       disagreements: report.disagreements.length,
+      ...(report.allowFlaky ? { allowFlaky: true } : {}),
     },
     catalogIds,
     coverageHoles: holes,

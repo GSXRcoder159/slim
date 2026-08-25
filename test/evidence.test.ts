@@ -157,6 +157,28 @@ test("zero traces cannot claim trace-closed and residual risk names unobserved r
   assert.doesNotMatch(md, /trace-closed/);
 });
 
+test("allow-flaky evidence is marked not production-ready", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-ev-flaky-"));
+  const cryptoEnv = env();
+  cryptoEnv.cryptoRandom = true;
+  cryptoEnv.package = { name: "chance", version: "1.0.0", family: "chance", subpath: "." };
+  const { mdPath, jsonPath } = writeEvidence({
+    root,
+    env: cryptoEnv,
+    replacementBytes: 100,
+    originalMin: 1000,
+    fuzz: { ...fuzz, allowFlaky: true },
+    catalogIds: [],
+    coverageHoles: [],
+    bundle: null,
+  });
+  const md = readFileSync(mdPath, "utf8");
+  const json = JSON.parse(readFileSync(jsonPath, "utf8")) as { fuzz: { allowFlaky?: boolean }; residualRisk: string[] };
+  assert.equal(json.fuzz.allowFlaky, true);
+  assert.match(md, /not production-ready/);
+  assert.ok(json.residualRisk.some((x) => /allow-flaky/i.test(x) && /not production-ready/i.test(x)));
+});
+
 
 test("findBundleEntry reads wrangler.toml main", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-bdl-"));

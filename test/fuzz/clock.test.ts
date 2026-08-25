@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createFakeClock } from "../../src/fuzz/clock.ts";
+import { createFakeClock, wallMs } from "../../src/fuzz/clock.ts";
 
 test("setTimeout fires on advance, not before", async () => {
   const clock = createFakeClock(0);
@@ -97,4 +97,19 @@ test("performance.now is patched and restored", async () => {
   }
   const restored = performance.now();
   assert.ok(restored >= native || restored > 0);
+});
+
+test("wallMs is not patched by the fake clock", () => {
+  const clock = createFakeClock(0);
+  clock.install();
+  try {
+    const a = wallMs();
+    clock.set(50_000);
+    assert.equal(Date.now(), 50_000);
+    const b = wallMs();
+    assert.ok(b >= a);
+    assert.ok(b - a < 5_000);
+  } finally {
+    clock.uninstall();
+  }
 });

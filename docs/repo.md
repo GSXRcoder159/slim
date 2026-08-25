@@ -150,7 +150,7 @@ Allowed fields (and no others — unknown key = doctor/check warning, not a sile
 | Field | Default | Why it exists |
 | --- | --- | --- |
 | `outDir` | `src/slim` | Slices have to live somewhere commitable |
-| `budgetMs` | `30000` (`300000` if `CI=1`) | Fuzz wall clock |
+| `budgetMs` | `30000` (`300000` if `CI=1`) | Fuzz process wall clock (never fake clock); returns within budget+2000ms |
 | `include` | gitignore-aware whole repo | Monorepos that only want `apps/edge/**` |
 | `ignore` | `[]` | Generated clients that fake call sites |
 | `testCommand` | detect `npm test` / skip | Project tests after replace |

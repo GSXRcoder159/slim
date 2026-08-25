@@ -58,6 +58,7 @@ function okFuzz(): FuzzReport {
     tracesReplayed: 0,
     wallMs: 1,
     seed: 1,
+    allowFlaky: false,
   };
 }
 

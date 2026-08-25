@@ -28,15 +28,17 @@ export function normalizeError(e: unknown): {
   return { name: "Error", message: String(e) };
 }
 
-/** Clone args, call `fn`, capture return/throw and post-call arg state. */
+/** Clone args and receiver, call `fn`, capture return/throw and post-call arg state. */
 export function invoke(
   fn: Function,
   args: unknown[],
   thisArg?: unknown,
 ): CallOutcome {
   const cloned = args.map((a) => clone(a));
+  const clonedThis =
+    thisArg === undefined || thisArg === null ? thisArg : clone(thisArg);
   try {
-    const value = fn.apply(thisArg, cloned);
+    const value = fn.apply(clonedThis, cloned);
     return { ok: true, value, argsAfter: cloned };
   } catch (e) {
     return { ok: false, error: normalizeError(e), argsAfter: cloned };

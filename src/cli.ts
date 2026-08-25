@@ -17,7 +17,7 @@ Usage:
   slim doctor [--strict]
 
 Replace options:
-  --budget-ms <n>     fuzz wall clock (default 30000, 300000 if CI=1)
+  --budget-ms <n>     process wall clock (never the fake clock); run returns within n+2000ms
   --no-trace          skip tests; static-only evidence, never trace-closed
   --no-pr             write files, do not open a GitHub PR
   --allow-unknown     generate even with dynamic access (never claimed closed)
@@ -28,9 +28,9 @@ Replace options:
   --llm               force LLM even if catalog matches
   --keep-original     do not uninstall the package
   --no-install        rewrite package.json but skip lockfile refresh
-  --allow-flaky       fuzz unseeded RNG packages
-  --workers <n>
-  --seed <n>
+  --allow-flaky       fuzz unseeded RNG packages (not production-ready evidence)
+  --workers <n>       fuzz worker threads (default: CPUs-1; 1 = in-process)
+  --seed <n>          deterministic fuzz seed
   --max-attempts <n>  LLM repair loop (default 3)
 
 Doctor options:

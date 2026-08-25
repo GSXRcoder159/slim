@@ -26,6 +26,7 @@ export interface EvidenceJson {
     wallMs: number;
     seed: number;
     disagreements: number;
+    allowFlaky?: boolean;
   };
   coverageHoles: string[];
   residualRisk: string[];
@@ -123,7 +124,7 @@ ${edge}
 - traces replayed: ${json.fuzz.tracesReplayed}
 - disagreements: ${json.fuzz.disagreements}
 - wall: ${json.fuzz.wallMs} ms
-- seed: ${json.fuzz.seed}
+- seed: ${json.fuzz.seed}${json.fuzz.allowFlaky ? "\n- allow-flaky: yes (not production-ready)" : ""}
 
 ## 6. Coverage holes
 
@@ -159,7 +160,9 @@ function residualRisk(env: Envelope, fuzz: EvidenceJson["fuzz"]): string[] {
   if (env.clock) {
     r.push("Timer taxonomy is sampled, not exhaustive of every interleaving.");
   }
-  if (env.cryptoRandom) {
+  if (fuzz.allowFlaky) {
+    r.push("--allow-flaky: fuzz is not production-ready evidence.");
+  } else if (env.cryptoRandom) {
     r.push("RNG is isolated with injectable crypto in fuzz; production uses platform CSPRNG.");
   }
   r.push("Upstream may patch bugs outside this slice; slim upstream watches advisories for used symbols.");

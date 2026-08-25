@@ -5,6 +5,7 @@ import {
   equal,
   equalThrown,
   equalResults,
+  invoke,
   type CallOutcome,
 } from "../../src/fuzz/equal.ts";
 
@@ -158,4 +159,17 @@ test("equalResults compares returns, throws, and arg mutations", () => {
   const clean: CallOutcome = ok("x", [{ n: 1 }]);
   assert.equal(equalResults(mutated, clean).ok, false);
   assert.match(equalResults(mutated, clean).reason ?? "", /mutation/i);
+});
+
+test("invoke clones thisArg so orig cannot mutate slim's receiver", () => {
+  const recv = { n: 0 };
+  function bump(this: { n: number }) {
+    this.n += 1;
+    return this.n;
+  }
+  const a = invoke(bump, [], recv);
+  const b = invoke(bump, [], recv);
+  assert.equal(a.ok && a.value, 1);
+  assert.equal(b.ok && b.value, 1);
+  assert.equal(recv.n, 0);
 });

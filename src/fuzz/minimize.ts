@@ -1,4 +1,5 @@
 import { clone } from "./clone.ts";
+import { wallMs } from "./clock.ts";
 
 /**
  * Delta-debug a disagreeing argument list. `pred` is true while the pair still
@@ -9,8 +10,8 @@ export function minimize(
   pred: (a: unknown[]) => boolean,
   deadlineMs: number,
 ): unknown[] {
-  const start = Date.now();
-  const timedOut = (): boolean => Date.now() - start >= deadlineMs;
+  const start = wallMs();
+  const timedOut = (): boolean => wallMs() - start >= deadlineMs;
   let current = clone(args) as unknown[];
   if (!pred(current)) return current;
 

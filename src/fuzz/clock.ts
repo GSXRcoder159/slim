@@ -1,3 +1,21 @@
+import { setTimeout as unpatchedTimeout, clearTimeout as unpatchedClear } from "node:timers";
+
+/** Process-wall slack covering worker spawn/teardown. Documented fuzz bound is budgetMs + this. */
+export const BUDGET_SLACK_MS = 2000;
+
+/** Monotonic elapsed ms. Immune to the fake clock's Date.now patch. */
+export function wallMs(): number {
+  return Number(process.hrtime.bigint() / 1_000_000n);
+}
+
+export function nativeTimeout(fn: () => void, ms: number): ReturnType<typeof setTimeout> {
+  return unpatchedTimeout(fn, ms);
+}
+
+export function nativeClear(id: ReturnType<typeof setTimeout>): void {
+  unpatchedClear(id);
+}
+
 interface Timer {
   id: number;
   due: number;

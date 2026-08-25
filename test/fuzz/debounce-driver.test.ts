@@ -143,3 +143,22 @@ test("this-and-args preserves this and arguments", async () => {
   assert.deepEqual(out.spies[0]!.thisArg, { id: 7 });
   assert.deepEqual(out.spies[0]!.args, ["x", 2]);
 });
+
+test("omitted debounce options are not passed as undefined", async () => {
+  let argc = -1;
+  function capture(fn: Function, wait: number) {
+    argc = arguments.length;
+    return trailingDebounce(fn as (...args: unknown[]) => unknown, wait);
+  }
+  const clock = createFakeClock(0);
+  await runDebounceScript(capture, TAXONOMY["trailing-single"]!, clock);
+  assert.equal(argc, 2, "argc=2 scripts must omit the options argument");
+
+  argc = -1;
+  function capture3(fn: Function, wait: number, _options: unknown) {
+    argc = arguments.length;
+    return trailingDebounce(fn as (...args: unknown[]) => unknown, wait);
+  }
+  await runDebounceScript(capture3, TAXONOMY["leading-only"]!, clock);
+  assert.equal(argc, 3);
+});

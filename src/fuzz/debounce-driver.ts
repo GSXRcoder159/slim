@@ -136,7 +136,11 @@ export async function runDebounceScript(
       spies.push(ev);
       return args[0];
     };
-    const wrapper = debounceFn(spy, script.wait, script.options) as {
+    const wrapper = (
+      script.options === undefined
+        ? debounceFn(spy, script.wait)
+        : debounceFn(spy, script.wait, script.options)
+    ) as {
       (...args: unknown[]): unknown;
       cancel?: () => void;
       flush?: () => unknown;

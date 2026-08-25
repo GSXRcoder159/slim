@@ -7,6 +7,7 @@ const data = workerData as {
   slimModule: string;
   symbols?: string[];
   clock?: boolean;
+  projectRoot?: string;
 };
 
 const origModule = data.origModule;
@@ -17,10 +18,19 @@ const slimModule = data.slimModule;
 const workerClock = createFakeClock(0);
 if (data.clock) workerClock.install();
 
-const ready = Promise.all([loadOrig(origModule), loadSlim(slimModule)]);
+const ready = Promise.all([loadOrig(origModule, data.projectRoot), loadSlim(slimModule)]);
 
 parentPort?.on("message", async (msg: { type: string; id?: number; job?: FuzzJob }) => {
-  if (msg.type !== "run" || msg.id === undefined || !msg.job) return;
+  if (msg.type !== "run" || msg.id === undefined || !msg.job) {
+    if (msg.id !== undefined) {
+      parentPort?.postMessage({
+        type: "error",
+        id: msg.id,
+        error: "malformed worker message",
+      });
+    }
+    return;
+  }
   try {
     const [orig, slim] = await ready;
     const result = await runJob(orig, slim, fromCloneableJob(msg.job), data.clock ? workerClock : undefined);

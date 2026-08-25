@@ -1,11 +1,20 @@
 import { availableParallelism } from "node:os";
-import type { ArgShape, Envelope, HyrumFlags, SymbolEnvelope, TraceEvent } from "../envelope/types.ts";
-import { EXIT_REFUSED, SlimExit } from "../exit.ts";
+import type { Envelope, HyrumFlags, SymbolEnvelope, TraceEvent } from "../envelope/types.ts";
+import { EXIT_ENV, EXIT_FAIL, EXIT_REFUSED, SlimExit } from "../exit.ts";
 import { refusePackage } from "../scan/refuse.ts";
-import { invoke, equalResults, equal } from "./equal.ts";
-import { createGen, fromTraces, mutateArgs, fromShapes, junkArgs, enumerateLiteralUnions, hydrate } from "./gen.ts";
-import { minimize } from "./minimize.ts";
-import { createFakeClock, type FakeClock } from "./clock.ts";
+import { equal } from "./equal.ts";
+import {
+  createGen,
+  fromTraces,
+  mutateArgs,
+  fromShapes,
+  junkArgs,
+  enumerateLiteralUnions,
+  hydrate,
+  isExportTrace,
+  pickObservedArgc,
+} from "./gen.ts";
+import { BUDGET_SLACK_MS, createFakeClock, nativeClear, nativeTimeout, wallMs, type FakeClock } from "./clock.ts";
 import {
   runDebounceScript,
   taxonomyForObserved,
@@ -13,11 +22,19 @@ import {
   TAXONOMY,
   type DebounceScript,
 } from "./debounce-driver.ts";
-import { createPool, loadOrig, loadSlim, withSlimQuery, type FuzzJob, type FuzzResult } from "./workers.ts";
+import {
+  createPool,
+  defaultJobTimeoutMs,
+  loadOrig,
+  loadSlim,
+  runJob,
+  withSlimQuery,
+  type FuzzJob,
+  type FuzzResult,
+} from "./workers.ts";
 import { symbolMatches } from "../trace/attribute.ts";
 
 const MAX_DISAGREEMENTS = 20;
-const MINIMIZE_MS = 2000;
 
 export interface FuzzReport {
   cases: number;
@@ -32,6 +49,7 @@ export interface FuzzReport {
   tracesReplayed: number;
   wallMs: number;
   seed: number;
+  allowFlaky: boolean;
 }
 
 export function defaultWorkerCount(): number {
@@ -40,6 +58,10 @@ export function defaultWorkerCount(): number {
   } catch {
     return 1;
   }
+}
+
+export function isInjectableCrypto(pkg: string): boolean {
+  return pkg === "uuid" || pkg === "nanoid" || pkg.startsWith("uuid/");
 }
 
 export async function runFuzz(opts: {
@@ -54,8 +76,10 @@ export async function runFuzz(opts: {
   /** Default: max(1, availableParallelism()-1). Tests that need determinism pass 1. */
   workers?: number;
   allowFlaky?: boolean;
+  projectRoot?: string;
 }): Promise<FuzzReport> {
-  assertFuzzAllowed(opts.envelope, { allowFlaky: opts.allowFlaky === true });
+  const allowFlaky = opts.allowFlaky === true;
+  assertFuzzAllowed(opts.envelope, { allowFlaky });
   const workers = opts.workers ?? defaultWorkerCount();
   if (workers > 1) {
     if (!opts.origModule || !opts.slimModule) {
@@ -64,11 +88,12 @@ export async function runFuzz(opts: {
     return runFuzzPool({
       ...opts,
       workers,
+      allowFlaky,
       origModule: opts.origModule,
       slimModule: opts.slimModule,
     });
   }
-  return runFuzzInProcess(opts);
+  return runFuzzInProcess({ ...opts, allowFlaky });
 }
 
 function assertFuzzAllowed(envelope: Envelope, opts: { allowFlaky: boolean }): void {
@@ -95,8 +120,30 @@ function assertFuzzAllowed(envelope: Envelope, opts: { allowFlaky: boolean }): v
   }
 }
 
-function isInjectableCrypto(pkg: string): boolean {
-  return pkg === "uuid" || pkg === "nanoid" || pkg.startsWith("uuid/");
+function assertRequiredFunctions(
+  original: Record<string, Function>,
+  replacement: Record<string, Function>,
+  envelope: Envelope,
+): void {
+  for (const sym of envelope.symbols) {
+    if (typeof original[sym.exportName] !== "function") {
+      throw new SlimExit(EXIT_FAIL, `missing function ${sym.exportName}`);
+    }
+    if (typeof replacement[sym.exportName] !== "function") {
+      throw new SlimExit(EXIT_FAIL, `missing function ${sym.exportName}`);
+    }
+  }
+}
+
+function cryptoSeedFor(
+  envelope: Envelope,
+  allowFlaky: boolean,
+  seed: number,
+  caseIndex: number,
+): number | undefined {
+  if (allowFlaky) return undefined;
+  if (!envelope.cryptoRandom || !isInjectableCrypto(envelope.package.name)) return undefined;
+  return (seed + caseIndex) >>> 0;
 }
 
 async function runFuzzInProcess(opts: {
@@ -108,11 +155,14 @@ async function runFuzzInProcess(opts: {
   envelope: Envelope;
   budgetMs: number;
   seed: number;
+  allowFlaky: boolean;
+  projectRoot?: string;
 }): Promise<FuzzReport> {
-  const t0 = Date.now();
+  const t0 = wallMs();
   const deadline = t0 + Math.max(0, opts.budgetMs);
   const gen = createGen(opts.seed);
-  const report = emptyReport(opts.seed);
+  const report = emptyReport(opts.seed, opts.allowFlaky);
+  const over = (): boolean => wallMs() >= deadline;
 
   let persistClock: FakeClock | undefined;
   let original = opts.original;
@@ -123,7 +173,7 @@ async function runFuzzInProcess(opts: {
         persistClock = createFakeClock(0);
         persistClock.install();
       }
-      original = await loadOrig(opts.origModule);
+      original = await loadOrig(opts.origModule, opts.projectRoot);
     }
     if (!replacement && opts.slimModule) {
       replacement = await loadSlim(withSlimQuery(opts.slimModule, opts.slimHash));
@@ -131,69 +181,77 @@ async function runFuzzInProcess(opts: {
     if (!original || !replacement) {
       throw new Error("runFuzz requires original/replacement or origModule/slimModule");
     }
+    assertRequiredFunctions(original, replacement, opts.envelope);
 
     const timerSymbols = opts.envelope.symbols.filter((s) => isTimerSymbol(s.exportName));
     const valueSymbols = opts.envelope.symbols.filter((s) => !isTimerSymbol(s.exportName));
 
     for (const sym of timerSymbols) {
-      const origFn = original[sym.exportName];
-      const slimFn = replacement[sym.exportName];
-      if (typeof origFn !== "function" || typeof slimFn !== "function") continue;
+      const origFn = original[sym.exportName]!;
+      const slimFn = replacement[sym.exportName]!;
       const hyrum = sym.hyrum;
       const scripts = scriptsForSymbol(sym, opts.envelope);
       for (const script of scripts) {
-        await recordDebounce(report, origFn, slimFn, sym.exportName, script, hyrum, persistClock);
         if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
+        await recordDebounce(report, origFn, slimFn, sym.exportName, script, hyrum, persistClock);
       }
     }
 
     for (const sym of valueSymbols) {
-      if (Date.now() >= deadline && report.cases > 0) break;
       if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
-      const origFn = original[sym.exportName];
-      const slimFn = replacement[sym.exportName];
-      if (typeof origFn !== "function" || typeof slimFn !== "function") continue;
-
-      const traces = opts.envelope.traces.filter((tr) => traceHits(tr, sym));
+      const origFn = original[sym.exportName]!;
+      const slimFn = replacement[sym.exportName]!;
+      const traces = exportTracesFor(opts.envelope, sym);
       const hyrum = sym.hyrum;
 
       for (const tr of traces) {
+        if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
         const args = tr.args.map((a) => hydrate(a));
         const thisArg = tr.thisArg ? hydrate(tr.thisArg) : undefined;
-        recordCall(report, origFn, slimFn, sym.exportName, args, thisArg, hyrum, deadline);
+        await recordCall(report, origFn, slimFn, sym.exportName, args, thisArg, hyrum, opts, persistClock);
         report.tracesReplayed++;
-        if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
       }
 
-      const shapes = primaryShapes(sym);
-      const literals = enumerateLiteralUnions(shapes, 64);
-      for (const args of literals) {
-        if (Date.now() >= deadline) break;
-        recordCall(report, origFn, slimFn, sym.exportName, args, undefined, hyrum, deadline);
+      for (const site of sym.callSites) {
         if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
+        const arities = site.argc.observed.length ? site.argc.observed : [site.argShapes.length];
+        for (const argc of arities) {
+          const sliced = site.argShapes.slice(0, argc);
+          const literals = enumerateLiteralUnions(sliced, 64);
+          for (const args of literals) {
+            if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
+            await recordCall(report, origFn, slimFn, sym.exportName, args, undefined, hyrum, opts, persistClock);
+          }
+        }
       }
 
       const replayed = fromTraces(traces, gen);
-      while (Date.now() < deadline && report.disagreements.length < MAX_DISAGREEMENTS) {
+      while (!over() && report.disagreements.length < MAX_DISAGREEMENTS) {
         const r = gen.next();
         let args: unknown[];
         if (r < 0.7 && replayed.length) {
           const base = gen.pick(replayed);
           args = r < 0.35 ? (base.slice() as unknown[]) : mutateArgs(base, gen);
-        } else if (r < 0.9 && shapes.length) {
-          args = fromShapes(shapes, gen);
+        } else if (r < 0.9 && sym.callSites.length) {
+          const site = gen.pick(sym.callSites);
+          const argc = pickObservedArgc(site.argc.observed, gen, site.argShapes.length || 2);
+          args = fromShapes(site.argShapes, gen, argc);
         } else {
-          const argc = observedArgc(sym) || 2;
+          const argc = pickObservedArgc(
+            sym.callSites.flatMap((c) => c.argc.observed),
+            gen,
+            2,
+          );
           args = junkArgs(argc, gen);
         }
-        recordCall(report, origFn, slimFn, sym.exportName, args, undefined, hyrum, deadline);
+        await recordCall(report, origFn, slimFn, sym.exportName, args, undefined, hyrum, opts, persistClock);
       }
     }
   } finally {
     persistClock?.uninstall();
   }
 
-  report.wallMs = Date.now() - t0;
+  report.wallMs = wallMs() - t0;
   return report;
 }
 
@@ -205,12 +263,21 @@ async function runFuzzPool(opts: {
   budgetMs: number;
   seed: number;
   workers: number;
+  allowFlaky: boolean;
+  projectRoot?: string;
 }): Promise<FuzzReport> {
-  const t0 = Date.now();
+  const t0 = wallMs();
   const deadline = t0 + Math.max(0, opts.budgetMs);
   const gen = createGen(opts.seed);
-  const report = emptyReport(opts.seed);
+  const report = emptyReport(opts.seed, opts.allowFlaky);
+  const over = (): boolean => wallMs() >= deadline;
   const symbols = opts.envelope.symbols.map((s) => s.exportName);
+
+  const origFns = await loadOrig(opts.origModule, opts.projectRoot);
+  const slimFns = await loadSlim(withSlimQuery(opts.slimModule, opts.slimHash));
+  assertRequiredFunctions(origFns, slimFns, opts.envelope);
+
+  const timeoutMs = defaultJobTimeoutMs(opts.budgetMs);
   const pool = createPool({
     workers: opts.workers,
     origModule: opts.origModule,
@@ -218,6 +285,8 @@ async function runFuzzPool(opts: {
     symbols,
     clock: opts.envelope.clock,
     slimHash: opts.slimHash,
+    projectRoot: opts.projectRoot,
+    timeoutMs,
   });
 
   try {
@@ -226,14 +295,44 @@ async function runFuzzPool(opts: {
     const pending = new Set<Promise<void>>();
     const atCap = (): boolean => report.disagreements.length >= MAX_DISAGREEMENTS;
 
-    const spawn = async (job: FuzzJob, onResult: (r: FuzzResult) => void): Promise<void> => {
+    const racePending = async (): Promise<void> => {
+      if (pending.size === 0) return;
+      const rem = Math.max(1, deadline + BUDGET_SLACK_MS - wallMs());
+      let timer: ReturnType<typeof nativeTimeout> | undefined;
+      try {
+        await Promise.race([
+          ...pending,
+          new Promise<never>((_, reject) => {
+            timer = nativeTimeout(
+              () => reject(new SlimExit(EXIT_ENV, "fuzz worker timeout")),
+              rem,
+            );
+          }),
+        ]);
+      } finally {
+        if (timer) nativeClear(timer);
+      }
+    };
+
+    const spawn = async (
+      job: FuzzJob,
+      onResult: (r: FuzzResult) => void,
+      untilDeadline = false,
+    ): Promise<void> => {
       while (report.disagreements.length + pending.size >= MAX_DISAGREEMENTS && pending.size > 0) {
-        await Promise.race(pending);
+        await racePending();
       }
       if (atCap()) return;
-      const p = pool.runCase(job).then(onResult).finally(() => pending.delete(p));
+      if (untilDeadline && over() && report.cases > 0) return;
+      const jobMs = untilDeadline
+        ? Math.min(timeoutMs, Math.max(50, deadline - wallMs() + 50))
+        : timeoutMs;
+      const p = pool
+        .runCase(job, jobMs)
+        .then(onResult)
+        .finally(() => pending.delete(p));
       pending.add(p);
-      if (pending.size >= opts.workers) await Promise.race(pending);
+      if (pending.size >= opts.workers) await racePending();
     };
 
     for (const sym of timerSymbols) {
@@ -246,59 +345,98 @@ async function runFuzzPool(opts: {
         );
       }
     }
-    await Promise.all(pending);
+    await racePending();
 
     for (const sym of valueSymbols) {
-      if (Date.now() >= deadline && report.cases > 0) break;
       if (atCap()) break;
-      const traces = opts.envelope.traces.filter((tr) => traceHits(tr, sym));
+      const traces = exportTracesFor(opts.envelope, sym);
       const hyrum = sym.hyrum;
 
       for (const tr of traces) {
+        if (atCap()) break;
         const args = tr.args.map((a) => hydrate(a));
         const thisArg = tr.thisArg ? hydrate(tr.thisArg) : undefined;
-        await spawn({ symbol: sym.exportName, args, thisArg, kind: "call", hyrum }, (r) => {
-          recordPoolCall(report, r);
-          report.tracesReplayed++;
-        });
-        if (atCap()) break;
+        await spawn(
+          {
+            symbol: sym.exportName,
+            args,
+            thisArg,
+            kind: "call",
+            hyrum,
+            cryptoSeed: cryptoSeedFor(opts.envelope, opts.allowFlaky, opts.seed, report.cases),
+          },
+          (r) => {
+            recordPoolCall(report, r);
+            report.tracesReplayed++;
+          },
+        );
       }
 
-      const shapes = primaryShapes(sym);
-      const literals = enumerateLiteralUnions(shapes, 64);
-      for (const args of literals) {
-        if (Date.now() >= deadline) break;
+      for (const site of sym.callSites) {
         if (atCap()) break;
-        await spawn({ symbol: sym.exportName, args, kind: "call", hyrum }, (r) => recordPoolCall(report, r));
-        if (atCap()) break;
+        const arities = site.argc.observed.length ? site.argc.observed : [site.argShapes.length];
+        for (const argc of arities) {
+          const sliced = site.argShapes.slice(0, argc);
+          const literals = enumerateLiteralUnions(sliced, 64);
+          for (const args of literals) {
+            if (atCap()) break;
+            await spawn(
+              {
+                symbol: sym.exportName,
+                args,
+                kind: "call",
+                hyrum,
+                cryptoSeed: cryptoSeedFor(opts.envelope, opts.allowFlaky, opts.seed, report.cases),
+              },
+              (r) => recordPoolCall(report, r),
+            );
+          }
+        }
       }
 
       const replayed = fromTraces(traces, gen);
-      while (Date.now() < deadline && !atCap()) {
+      while (!over() && !atCap()) {
         const r = gen.next();
         let args: unknown[];
         if (r < 0.7 && replayed.length) {
           const base = gen.pick(replayed);
           args = r < 0.35 ? (base.slice() as unknown[]) : mutateArgs(base, gen);
-        } else if (r < 0.9 && shapes.length) {
-          args = fromShapes(shapes, gen);
+        } else if (r < 0.9 && sym.callSites.length) {
+          const site = gen.pick(sym.callSites);
+          const argc = pickObservedArgc(site.argc.observed, gen, site.argShapes.length || 2);
+          args = fromShapes(site.argShapes, gen, argc);
         } else {
-          const argc = observedArgc(sym) || 2;
+          const argc = pickObservedArgc(
+            sym.callSites.flatMap((c) => c.argc.observed),
+            gen,
+            2,
+          );
           args = junkArgs(argc, gen);
         }
-        await spawn({ symbol: sym.exportName, args, kind: "call", hyrum }, (res) => recordPoolCall(report, res));
+        await spawn(
+          {
+            symbol: sym.exportName,
+            args,
+            kind: "call",
+            hyrum,
+            cryptoSeed: cryptoSeedFor(opts.envelope, opts.allowFlaky, opts.seed, report.cases),
+          },
+          (res) => recordPoolCall(report, res),
+          true,
+        );
       }
     }
-    await Promise.all(pending);
+    await racePending();
+    if (pending.size) await Promise.all(pending);
   } finally {
     await pool.close();
   }
 
-  report.wallMs = Date.now() - t0;
+  report.wallMs = wallMs() - t0;
   return report;
 }
 
-function emptyReport(seed: number): FuzzReport {
+function emptyReport(seed: number, allowFlaky: boolean): FuzzReport {
   return {
     cases: 0,
     comparisons: 0,
@@ -307,10 +445,14 @@ function emptyReport(seed: number): FuzzReport {
     tracesReplayed: 0,
     wallMs: 0,
     seed,
+    allowFlaky,
   };
 }
 
 function recordPoolCall(report: FuzzReport, r: FuzzResult): void {
+  if (r.reason?.startsWith("missing function")) {
+    throw new SlimExit(EXIT_FAIL, r.reason);
+  }
   report.cases++;
   report.comparisons++;
   if (r.ok) return;
@@ -319,11 +461,15 @@ function recordPoolCall(report: FuzzReport, r: FuzzResult): void {
       symbol: r.symbol,
       args: r.args ?? [],
       reason: r.reason ?? "mismatch",
+      minimized: r.minimized,
     });
   }
 }
 
 function recordPoolDebounce(report: FuzzReport, r: FuzzResult, script: DebounceScript): void {
+  if (r.reason?.startsWith("missing function")) {
+    throw new SlimExit(EXIT_FAIL, r.reason);
+  }
   report.cases++;
   report.timerCases++;
   report.comparisons += 3;
@@ -337,7 +483,7 @@ function recordPoolDebounce(report: FuzzReport, r: FuzzResult, script: DebounceS
   }
 }
 
-function recordCall(
+async function recordCall(
   report: FuzzReport,
   origFn: Function,
   slimFn: Function,
@@ -345,36 +491,23 @@ function recordCall(
   args: unknown[],
   thisArg: unknown,
   hyrum: Partial<HyrumFlags> | undefined,
-  deadline: number,
-): void {
-  const o = invoke(origFn, args, thisArg);
-  const s = invoke(slimFn, args, thisArg);
-  const cmp = equalResults(o, s, hyrum);
-  report.cases++;
-  report.comparisons++;
-  if (cmp.ok) return;
-  let minimized: unknown[] | undefined;
-  const remaining = deadline - Date.now();
-  if (remaining > 0) {
-    minimized = minimize(
-      args,
-      (a) => {
-        const oo = invoke(origFn, a, thisArg);
-        const ss = invoke(slimFn, a, thisArg);
-        report.comparisons++;
-        return !equalResults(oo, ss, hyrum).ok;
-      },
-      Math.min(MINIMIZE_MS, remaining),
-    );
-  }
-  if (report.disagreements.length < MAX_DISAGREEMENTS) {
-    report.disagreements.push({
+  opts: { envelope: Envelope; allowFlaky: boolean; seed: number },
+  persistClock?: FakeClock,
+): Promise<void> {
+  const r = await runJob(
+    { [symbol]: origFn },
+    { [symbol]: slimFn },
+    {
       symbol,
       args,
-      reason: cmp.reason ?? "mismatch",
-      minimized,
-    });
-  }
+      thisArg,
+      kind: "call",
+      hyrum,
+      cryptoSeed: cryptoSeedFor(opts.envelope, opts.allowFlaky, opts.seed, report.cases),
+    },
+    persistClock,
+  );
+  recordPoolCall(report, r);
 }
 
 async function recordDebounce(
@@ -409,9 +542,7 @@ async function recordDebounce(
   report.disagreements.push({
     symbol,
     args: [script],
-    reason: !spiesOk
-      ? "debounce spy timeline mismatch"
-      : "debounce return/flush mismatch",
+    reason: !spiesOk ? "debounce spy timeline mismatch" : "debounce return/flush mismatch",
   });
 }
 
@@ -422,14 +553,8 @@ export function traceHits(tr: TraceEvent, sym: SymbolEnvelope): boolean {
   return tr.symbol === path || symbolMatches(path, tr.symbol);
 }
 
-function primaryShapes(sym: SymbolEnvelope): ArgShape[] {
-  return sym.callSites[0]?.argShapes ?? [];
-}
-
-function observedArgc(sym: SymbolEnvelope): number {
-  const obs = sym.callSites.flatMap((c) => c.argc.observed);
-  if (!obs.length) return 2;
-  return Math.max(...obs);
+function exportTracesFor(envelope: Envelope, sym: SymbolEnvelope): TraceEvent[] {
+  return envelope.traces.filter((tr) => traceHits(tr, sym) && isExportTrace(tr));
 }
 
 function scriptsForSymbol(sym: SymbolEnvelope, envelope: Envelope): DebounceScript[] {
@@ -451,3 +576,5 @@ function scriptsForSymbol(sym: SymbolEnvelope, envelope: Envelope): DebounceScri
   }
   return [];
 }
+
+export { isExportTrace };

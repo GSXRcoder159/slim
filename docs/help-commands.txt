@@ -28,12 +28,13 @@ slim replace — write a verified slice and (usually) open a PR
 Usage:
   slim replace <pkg>
 
-  -y, --yes              Don't ask. Write, test, PR if gh is available
+      --budget-ms <n>    Process wall clock (never the fake clock); returns within n+2000ms
+      --workers <n>      Fuzz worker threads (default: CPUs-1; 1 = in-process)
+      --seed <n>         Deterministic fuzz seed
+      --allow-flaky      Fuzz unseeded RNG packages (not production-ready evidence)
       --no-pr            Write files, don't open a PR
-      --no-commit        Write files, don't git commit
       --no-trace         Skip tests; static-only evidence (cannot claim trace-closed)
       --dry-run          Show the envelope and plan, write nothing
-      --fuzz-iterations <n>
       --out <dir>        Default: src/slim
 
 Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz failed or malformed traces.
