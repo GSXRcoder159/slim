@@ -1,37 +1,65 @@
 import { createHash } from "node:crypto";
 import type { Envelope } from "../envelope/types.ts";
+import type { PublicApiSpec } from "./public-api.ts";
 
-export function buildPrompt(env: Envelope, publicApi: string, counterexamples: string[]): {
+const SPEC_CAP = 12_000;
+
+export function buildPrompt(
+  env: Envelope,
+  publicApi: PublicApiSpec,
+  counterexamples: string[],
+): {
   system: string;
   user: string;
   promptHash: string;
 } {
-  const system = `You write a clean-room TypeScript module that implements ONLY the used exports in the envelope.
-Rules:
-- Original implementation. Not derived from lodash, Underscore, moment, or any original .js.
-- No eval, Function, WebAssembly, import(), require, node: builtins, fetch, Proxy, string-setTimeout.
-- Look up Date.now, setTimeout, clearTimeout at call time. Never cache timers at module init.
-- Named exports for each symbol. If the envelope used default or namespace import, also export default { ... }.
-- Harden __proto__/constructor/prototype on get/set/has.
-- get defaultValue only when resolved value === undefined (null is a hit). Nested get returns the same reference.
-- debounce: TypeError('Expected a function'); cancel+flush only (no pending); omitted options is not {}; leading&&trailing with one call does not trailing.
-- Evidence, not proof: implement the envelope, not the whole library.
-Return ONLY the TypeScript module.`;
+  const wantsDefault = env.imports.some(
+    (i) =>
+      i.kind === "default" ||
+      i.kind === "namespace" ||
+      i.kind === "cjs-require" ||
+      i.kind === "subpath-default",
+  );
+  const harden =
+    env.symbols.some((s) => s.hyrum.prototype || /^(get|set|has)$/.test(s.exportName));
+  const system = [
+    "You write a clean-room TypeScript module that implements ONLY the used exports in the envelope.",
+    "Rules:",
+    "- Original implementation. Not derived from the original package or any original .js.",
+    "- No eval, Function, WebAssembly, import(), require, node: builtins, fetch, Proxy, string-setTimeout.",
+    "- Look up Date.now, setTimeout, clearTimeout at call time. Never cache timers at module init.",
+    "- Named exports for each used symbol.",
+    wantsDefault ? "- Also `export default { ... }` covering those named exports (default/namespace/CJS import)." : "",
+    harden ? "- Harden __proto__/constructor/prototype on get/set/has and when hyrum.prototype is set." : "",
+    "- Evidence, not proof: implement the envelope, not the whole library.",
+    "Return ONLY the TypeScript module.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
   const user = [
     "Envelope JSON:",
     JSON.stringify(
       {
         package: env.package,
+        env: env.env,
+        imports: env.imports.map((i) => ({
+          kind: i.kind,
+          names: i.names,
+          specifier: i.specifier,
+        })),
         symbols: env.symbols.map((s) => ({
           exportName: s.exportName,
+          hyrum: s.hyrum,
+          resultMembers: s.resultMembers,
           callSites: s.callSites.map((c) => ({
             argc: c.argc,
             argShapes: c.argShapes,
             thisBinding: c.thisBinding,
             resultMembers: c.resultMembers,
+            memberPath: c.memberPath,
+            spread: c.spread,
           })),
-          resultMembers: s.resultMembers,
-          hyrum: s.hyrum,
         })),
         clock: env.clock,
         cryptoRandom: env.cryptoRandom,
@@ -41,11 +69,16 @@ Return ONLY the TypeScript module.`;
     ),
     "",
     "Public API (.d.ts / README excerpt):",
-    publicApi.slice(0, 12_000),
+    `Spec source: ${publicApi.source}`,
+    publicApi.from ? `Spec from: ${publicApi.from}` : "",
+    publicApi.limitation ? `LIMITATION: ${publicApi.limitation}` : "",
+    publicApi.text.slice(0, SPEC_CAP),
     "",
     counterexamples.length ? "Previous disagreements to fix:" : "",
     ...counterexamples,
-  ].join("\n");
+  ]
+    .filter((line) => line !== "")
+    .join("\n");
   const promptHash = createHash("sha256").update(system + "\n" + user).digest("hex");
   return { system, user, promptHash };
 }

@@ -38,10 +38,14 @@ Usage:
       --out <dir>        Default: src/slim
       --keep-original    Do not uninstall the package
       --no-install       Rewrite package.json but skip lockfile refresh
+      --llm              Force LLM even if catalog matches
+      --template-only    Catalog only, no LLM
+      --max-attempts <n> LLM repair loop (default 3)
 
-Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz failed or malformed traces.
-      3 Slim refuses this envelope. 4 missing gh/git, or Jest/no-runner/hook/timeout
-      when traces are required. `--force` does not skip tracing.
+Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate/repair exhausted.
+      3 Slim refuses this envelope, or no catalog and no LLM key. 4 missing gh/git,
+      LLM HTTP/timeout, missing package manager, or traces required.
+      `--force` does not skip tracing.
 
 Example:  slim replace lodash
 ------------------------------------------------------------------------

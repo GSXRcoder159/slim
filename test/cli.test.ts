@@ -106,6 +106,17 @@ test("help-commands scan section matches shipped flags", () => {
   assert.doesNotMatch(section, /--diff|--all|--min-size|--fail|--limit/);
 });
 
+test("help-commands replace lists LLM flags", () => {
+  const text = readFileSync(join(ROOT, "docs/help-commands.txt"), "utf8");
+  const start = text.indexOf("slim replace —");
+  const end = text.indexOf("--------", start + 10);
+  const section = text.slice(start, end === -1 ? undefined : end);
+  assert.ok(section.split("\n").length <= 40, `replace help is ${section.split("\n").length} lines`);
+  assert.match(section, /--llm/);
+  assert.match(section, /--template-only/);
+  assert.match(section, /--max-attempts/);
+});
+
 test("parseCli doctor --strict", () => {
   const a = parseCli(["doctor", "--strict"]);
   assert.equal(a.command, "doctor");

@@ -196,6 +196,66 @@ test("allow-flaky evidence is marked not production-ready", () => {
   assert.ok(json.residualRisk.some((x) => /allow-flaky/i.test(x) && /not production-ready/i.test(x)));
 });
 
+test("LLM evidence records provenance and redacts secrets", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-ev-llm-"));
+  const { mdPath, jsonPath } = writeEvidence({
+    root,
+    env: env("ms"),
+    replacementBytes: 100,
+    originalMin: 1000,
+    fuzz,
+    catalogIds: [],
+    coverageHoles: [],
+    bundle: null,
+    revert: sampleRevert("ms"),
+    generation: {
+      kind: "llm",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      promptHash: "abc123",
+      attempts: 2,
+      specSource: "envelope-only",
+      limitation: "no local .d.ts or README",
+      counterexamples: ["ms: 1 !== 1000 args=[\"1s\"]"],
+    },
+  });
+  const json = JSON.parse(readFileSync(jsonPath, "utf8")) as EvidenceJson;
+  const md = readFileSync(mdPath, "utf8");
+  assert.equal(json.generation?.kind, "llm");
+  assert.equal(json.generation?.provider, "anthropic");
+  assert.equal(json.generation?.model, "claude-sonnet-4-5");
+  assert.equal(json.generation?.promptHash, "abc123");
+  assert.equal(json.generation?.attempts, 2);
+  assert.equal(json.generation?.specSource, "envelope-only");
+  assert.equal(json.generation?.counterexamples.length, 1);
+  assert.match(md, /Generation: LLM \(anthropic \/ claude-sonnet-4-5\)/);
+  assert.match(md, /Prompt hash: `abc123`/);
+  assert.match(md, /Attempts: 2/);
+  assert.doesNotMatch(md, /sk-ant-|sk-secret|ANTHROPIC_API_KEY/);
+  assert.doesNotMatch(jsonPath, /lodash\.js/);
+  assert.doesNotMatch(JSON.stringify(json), /function get\(object, path/);
+});
+
+test("catalog evidence has kind catalog and empty counterexamples", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-ev-cat-"));
+  const { jsonPath } = writeEvidence({
+    root,
+    env: env(),
+    replacementBytes: 100,
+    originalMin: 1000,
+    fuzz,
+    catalogIds: ["lodash.get"],
+    coverageHoles: [],
+    bundle: null,
+    revert: sampleRevert(),
+  });
+  const json = JSON.parse(readFileSync(jsonPath, "utf8")) as EvidenceJson;
+  assert.equal(json.generation?.kind, "catalog");
+  assert.deepEqual(json.generation?.catalogIds, ["lodash.get"]);
+  assert.deepEqual(json.generation?.counterexamples, []);
+  assert.equal(json.generation?.specSource, "catalog");
+});
+
 
 test("findBundleEntry reads wrangler.toml main", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-bdl-"));

@@ -72,7 +72,9 @@ SLIM_LLM_MODEL=…              # optional
 SLIM_LLM_BASE_URL=…           # optional
 ```
 
-The generator receives envelope JSON plus public `.d.ts` / README **only**. Original `.js` is a guard-rail error.
+The generator receives envelope JSON plus public `.d.ts` / README **only**. Original `.js`, source maps, and package tests are a guard-rail error. If no `.d.ts` or README exists, the prompt and evidence record that as an explicit limitation (envelope call sites only; no invented overloads).
+
+LLM slices pass the same AST, export-contract, size, fuzz, standing-test, and evidence gates as catalog slices. Provider HTTP failures (timeout, 429, 5xx) exit 4. Unsafe or exhausted repairs exit 1. Nothing is written to the project until fuzz passes. Evidence records provider, model, prompt hash, attempts, and summarized counterexamples — never API keys.
 
 ## Vitest
 

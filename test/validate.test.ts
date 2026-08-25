@@ -1,5 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as ts from "typescript";
 import { validateGenerated } from "../src/generate/validate.ts";
 import { OriginalSourceGuard } from "../src/generate/guard.ts";
@@ -199,4 +202,32 @@ test("OriginalSourceGuard refuses lodash/moment implementation js under node_mod
   );
   OriginalSourceGuard.assertNotOriginalImpl("/app/node_modules/lodash/index.d.ts");
   OriginalSourceGuard.assertNotOriginalImpl("/app/node_modules/moment/README.md");
+});
+
+test("OriginalSourceGuard refuses any package implementation, maps, and tests under node_modules", () => {
+  const refuse = [
+    "/app/node_modules/@acme/kit/dist/index.js",
+    "/app/node_modules/@acme/kit/dist/index.mjs",
+    "/app/node_modules/@acme/kit/dist/index.cjs",
+    "/app/node_modules/@acme/kit/index.js.map",
+    "/app/node_modules/@acme/kit/dist/index.cjs.map",
+    "/app/node_modules/ms/test/test.js",
+    "/app/node_modules/ms/__tests__/index.js",
+    "/app/node_modules/ms/foo.test.js",
+  ];
+  for (const p of refuse) {
+    assert.throws(() => OriginalSourceGuard.assertNotOriginalImpl(p), /OriginalSourceGuard/, p);
+  }
+  OriginalSourceGuard.assertNotOriginalImpl("/app/node_modules/@acme/kit/index.d.ts");
+  OriginalSourceGuard.assertNotOriginalImpl("/app/node_modules/ms/README.md");
+  OriginalSourceGuard.assertNotOriginalImpl("/app/node_modules/ms/package.json");
+  OriginalSourceGuard.assertNotOriginalImpl("/repo/src/generate/catalog/lodash.get.ts");
+});
+
+test("readPublicSpec allows only .d.ts or README", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-spec-"));
+  const dts = join(dir, "index.d.ts");
+  writeFileSync(dts, "export function get(): unknown;\n");
+  assert.equal(OriginalSourceGuard.readPublicSpec(dts), "export function get(): unknown;\n");
+  assert.throws(() => OriginalSourceGuard.readPublicSpec("/app/node_modules/lodash/lodash.js"), /OriginalSourceGuard/);
 });

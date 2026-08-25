@@ -102,6 +102,9 @@ The product.
     --no-install        Rewrite package.json but skip lockfile refresh
     --out <dir>         Override slices dir (default src/slim)
     --force             Skip size / refuse heuristics; does not skip fuzz or merge-gate
+    --llm               Force LLM even if catalog matches
+    --template-only     Catalog only; refuse if the catalog cannot cover the envelope
+    --max-attempts <n>  LLM repair loop (default 3)
 ```
 
 Steps, in order, stop on first failure. After the first project write, failure **rolls back** the target tree (slice, rewrites, package.json, lockfile, evidence, standing tests, manifest).
@@ -110,7 +113,7 @@ Steps, in order, stop on first failure. After the first project write, failure *
 2. Refuse gates (native, network, fs, framework, envelope-too-wide) → exit 3.
 3. Build envelope from call sites.
 4. Tracing (unless `--no-trace`): run detected node:test or Vitest with `slim/hooks` / `slim/vitest`. Trace artifacts go to a temp dir and are deleted; they are not written into the project until a successful replace records `.slim/<pkg>/traces.meta.json`. Jest, no runner, missing hook, or timeout → exit 4. Failed tests, malformed JSONL, or oversize traces → exit 1. `--force` does not skip tracing. `--no-trace` is static-only and cannot claim `trace-closed`. `--dry-run` still traces in a temp dir unless `--no-trace`.
-5. Generate slice. Validate. `--dry-run` prints the plan and exits 0 with no project writes.
+5. Generate slice (catalog, or clean-room LLM when the catalog cannot cover the envelope and a key is set). Catalog disagreements are Slim bugs and are never LLM-patched. LLM input is envelope JSON plus `.d.ts`/README only; missing specs are a named limitation. AST allowlist, export/default/namespace/result-member contracts, then fuzz. Missing exports repair until `--max-attempts`. Unsafe AST does not repair. Provider HTTP 429/5xx/timeout → exit 4. Prose/empty/invalid JSON, unsafe code, or exhausted repair → exit 1. `--dry-run` prints the plan and exits 0 with no project writes.
 6. Fuzz slice against the installed original (oracle) using a temp module outside the project. Mismatch → exit 1, project unchanged.
 7. Write slice (and a `.cjs` companion when CJS `require()` sites exist). Rewrite imports/requires to the slice. Remove only the replaced package and family siblings that have import sites in this envelope.
 8. Refresh the lockfile with `npm install` / `pnpm install` / `yarn install` / `bun install`. Failure → exit 1 (or 4 if the package manager is missing) and rollback. `--no-install` skips this. `--keep-original` skips package.json and lockfile changes.

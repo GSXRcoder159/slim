@@ -5,6 +5,21 @@ import { hashEnvelope } from "../envelope/hash.ts";
 import { gzipGuess } from "../size/estimate.ts";
 import { maybeBundleBytes, type BundleDelta } from "../size/bundle.ts";
 import { formatRevert, type RevertPlan } from "../rewrite/revert.ts";
+import type { SpecSource } from "../generate/public-api.ts";
+
+const EXAMPLE_CAP = 500;
+
+export interface GenerationEvidence {
+  kind: "catalog" | "llm";
+  catalogIds: string[];
+  provider?: "anthropic" | "openai";
+  model?: string;
+  promptHash?: string;
+  attempts: number;
+  specSource: SpecSource | "catalog";
+  limitation?: string;
+  counterexamples: string[];
+}
 
 export interface EvidenceJson {
   slogan: "EVIDENCE, NOT PROOF";
@@ -32,6 +47,7 @@ export interface EvidenceJson {
   coverageHoles: string[];
   residualRisk: string[];
   revert: RevertPlan;
+  generation?: GenerationEvidence;
 }
 
 export function writeEvidence(opts: {
@@ -44,6 +60,7 @@ export function writeEvidence(opts: {
   coverageHoles: string[];
   bundle?: BundleDelta | null;
   revert: RevertPlan;
+  generation?: Partial<GenerationEvidence>;
 }): { mdPath: string; jsonPath: string } {
   const dir = join(opts.root, ".slim", opts.env.package.name);
   mkdirSync(dir, { recursive: true });
@@ -51,6 +68,7 @@ export function writeEvidence(opts: {
   const callSites = opts.env.symbols.reduce((n, s) => n + s.callSites.length, 0);
   const residual = residualRisk(opts.env, opts.fuzz);
   const bundle = opts.bundle === undefined ? maybeBundleBytes(opts.root) : opts.bundle;
+  const generation = completeGeneration(opts.catalogIds, opts.generation);
   const json: EvidenceJson = {
     slogan: "EVIDENCE, NOT PROOF",
     package: opts.env.package,
@@ -68,6 +86,7 @@ export function writeEvidence(opts: {
     coverageHoles: opts.coverageHoles,
     residualRisk: residual,
     revert: opts.revert,
+    generation,
   };
   const md = renderEvidenceMd(json, opts.env, opts.catalogIds);
   const mdPath = join(dir, "evidence.md");
@@ -77,7 +96,28 @@ export function writeEvidence(opts: {
   return { mdPath, jsonPath };
 }
 
-export function renderEvidenceMd(json: EvidenceJson, env: Envelope, catalogIds: string[]): string {
+function completeGeneration(
+  catalogIds: string[],
+  partial?: Partial<GenerationEvidence>,
+): GenerationEvidence {
+  const kind = partial?.kind ?? (catalogIds.length ? "catalog" : "llm");
+  const counterexamples = (partial?.counterexamples ?? []).map((s) =>
+    s.length > EXAMPLE_CAP ? `${s.slice(0, EXAMPLE_CAP)}…` : s,
+  );
+  return {
+    kind,
+    catalogIds: partial?.catalogIds ?? catalogIds,
+    attempts: partial?.attempts ?? 1,
+    specSource: partial?.specSource ?? (kind === "catalog" ? "catalog" : "envelope-only"),
+    counterexamples,
+    ...(partial?.provider ? { provider: partial.provider } : {}),
+    ...(partial?.model ? { model: partial.model } : {}),
+    ...(partial?.promptHash ? { promptHash: partial.promptHash } : {}),
+    ...(partial?.limitation ? { limitation: partial.limitation } : {}),
+  };
+}
+
+export function renderEvidenceMd(json: EvidenceJson, env: Envelope, catalogIds: string[] = []): string {
   const orig = json.byteDelta.originalMin;
   const delta =
     orig != null
@@ -107,8 +147,8 @@ Differential fuzzing over the inferred envelope is strong evidence, not proof.
 - Symbols: ${json.symbols.map((s) => "`" + s + "`").join(", ") || "(none)"}
 - Call sites: ${json.callSites}
 - Unknowns: ${json.unknowns}
-- Catalog: ${catalogIds.join(", ") || "LLM"}
-- Envelope hash: \`${json.envelopeHash}\`
+- Catalog: ${catalogIds.join(", ") || json.generation?.catalogIds.join(", ") || "LLM"}
+- Envelope hash: \`${json.envelopeHash}\`${generationMd(json)}
 
 ## 3. Byte delta
 
@@ -144,6 +184,24 @@ ${formatRevert(json.revert)}
 
 ${json.residualRisk.map((x) => `- ${x}`).join("\n")}
 `;
+}
+
+function generationMd(json: EvidenceJson): string {
+  const g = json.generation;
+  if (!g || g.kind !== "llm") return "";
+  const lines = [
+    "",
+    `- Generation: LLM (${g.provider ?? "unknown"} / ${g.model ?? "unknown"})`,
+    `- Prompt hash: \`${g.promptHash ?? "none"}\``,
+    `- Attempts: ${g.attempts}`,
+    `- Spec source: ${g.specSource}`,
+  ];
+  if (g.limitation) lines.push(`- Spec limitation: ${g.limitation}`);
+  if (g.counterexamples.length) {
+    lines.push("- Repair counterexamples:");
+    for (const ex of g.counterexamples) lines.push(`  - ${ex}`);
+  }
+  return lines.join("\n");
 }
 
 function residualRisk(env: Envelope, fuzz: EvidenceJson["fuzz"]): string[] {

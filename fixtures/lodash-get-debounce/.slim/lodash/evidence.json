@@ -51,5 +51,12 @@
     ],
     "lockfile": "npm",
     "installCommand": "npm install"
+  },
+  "generation": {
+    "kind": "catalog",
+    "catalogIds": ["lodash.get", "lodash.debounce"],
+    "attempts": 1,
+    "specSource": "catalog",
+    "counterexamples": []
   }
 }

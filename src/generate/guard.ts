@@ -3,34 +3,24 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SlimExit, EXIT_FAIL } from "../exit.ts";
 
-const IMPL_BASENAMES = new Set([
-  "lodash.js",
-  "lodash.min.js",
-  "core.js",
-  "moment.js",
-]);
+const IMPL_EXT = /\.(js|mjs|cjs)(\.map)?$/i;
+const MAP_EXT = /\.map$/i;
+const TEST_DIR = /\/(__tests__|tests?)\//;
+const TEST_FILE = /\.(test|spec)\.[^/]+$/i;
 
 /**
  * Generator must never ingest original implementation files.
- * .d.ts and README are API specs; .js of lodash/moment is not.
+ * .d.ts and README are API specs; .js under node_modules is not.
  */
 export class OriginalSourceGuard {
   static assertNotOriginalImpl(filePath: string): void {
     const norm = filePath.replace(/\\/g, "/");
-    if (norm.includes("/node_modules/lodash/") && /\.(js|mjs|cjs)$/.test(norm)) {
-      throw new SlimExit(
-        EXIT_FAIL,
-        `OriginalSourceGuard: refused to read lodash implementation ${filePath}`,
-      );
-    }
-    if (norm.includes("/node_modules/moment/") && /\.(js|mjs|cjs)$/.test(norm)) {
-      throw new SlimExit(
-        EXIT_FAIL,
-        `OriginalSourceGuard: refused to read moment implementation ${filePath}`,
-      );
-    }
+    if (!norm.includes("/node_modules/")) return;
     const base = norm.split("/").pop() ?? "";
-    if (IMPL_BASENAMES.has(base) && norm.includes("/node_modules/")) {
+    if (base === "package.json") return;
+    if (/README(\.md)?$/i.test(base)) return;
+    if (norm.endsWith(".d.ts")) return;
+    if (IMPL_EXT.test(norm) || MAP_EXT.test(norm) || TEST_DIR.test(norm) || TEST_FILE.test(base)) {
       throw new SlimExit(
         EXIT_FAIL,
         `OriginalSourceGuard: refused to read ${filePath}`,

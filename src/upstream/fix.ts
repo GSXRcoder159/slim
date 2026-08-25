@@ -51,7 +51,7 @@ export interface UpstreamDeps {
   }) => Promise<FuzzReport>;
   generateWithLlm?: (
     envelope: Envelope,
-    publicApi: string,
+    publicApi: import("../generate/public-api.ts").PublicApiSpec,
     counterexamples: string[],
     cfg: LlmConfig,
   ) => Promise<{ source: string; promptHash: string }>;
@@ -112,6 +112,9 @@ export async function applyUpstreamFix(
 
   let source: string | null = null;
   let usedCatalog = false;
+  let pub = undefined as ReturnType<typeof loadPublicApi> | undefined;
+  let gen = undefined as { source: string; promptHash: string } | undefined;
+  let abstracts: string[] = [];
 
   if (catalog.missing.length === 0 && catalog.matched.length) {
     source = assemble(env, opts.root);
@@ -120,9 +123,9 @@ export async function applyUpstreamFix(
     }
     usedCatalog = true;
   } else if (llmCfg) {
-    const pub = loadPublicApi(opts.root, opts.pkg);
-    const abstracts = advisoryAbstracts(opts.findings);
-    const gen = await genLlm(env, pub, abstracts, llmCfg);
+    pub = loadPublicApi(opts.root, opts.pkg, env.package.subpath);
+    abstracts = advisoryAbstracts(opts.findings);
+    gen = await genLlm(env, pub, abstracts, llmCfg);
     source = gen.source;
     const ts = loadTs(opts.root);
     assertValidGenerated(ts, source, env);
@@ -221,6 +224,25 @@ export async function applyUpstreamFix(
             },
         catalogIds: usedCatalog ? catalog.matched.map((m) => m.id) : [],
         coverageHoles: fuzzSkipReason ? [fuzzSkipReason] : [],
+        generation: usedCatalog
+          ? {
+              kind: "catalog",
+              catalogIds: catalog.matched.map((m) => m.id),
+              attempts: 1,
+              specSource: "catalog",
+              counterexamples: [],
+            }
+          : {
+              kind: "llm",
+              catalogIds: [],
+              provider: llmCfg?.kind,
+              model: llmCfg?.model,
+              promptHash: gen?.promptHash,
+              attempts: 1,
+              specSource: pub?.source ?? "envelope-only",
+              limitation: pub?.limitation,
+              counterexamples: [],
+            },
         revert: {
           package: env.package.name,
           version: env.package.version,

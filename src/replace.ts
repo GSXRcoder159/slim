@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_FAIL, EXIT_OK, EXIT_REFUSED, EXIT_USAGE, SlimExit } from "./exit.ts";
 import { loadConfig } from "./config.ts";
-import { loadProject, walkSourceFiles, filterSourceFiles } from "./project.ts";
+import { loadProject, walkSourceFiles, filterSourceFiles, loadTargetTypescript } from "./project.ts";
 import { analyzePackage } from "./analyze/index.ts";
 import { closeEnvelope } from "./envelope/close.ts";
 import { hashEnvelope } from "./envelope/hash.ts";
@@ -20,8 +20,7 @@ import { assembleCatalogModule } from "./generate/assemble.ts";
 import { withGeneratedHeader } from "./generate/header.ts";
 import { llmConfigFromEnv, generateWithLlm } from "./generate/llm.ts";
 import { assertValidGenerated, assertSmaller } from "./generate/validate.ts";
-import { loadPublicApi } from "./generate/public-api.ts";
-import { loadTargetTypescript } from "./project.ts";
+import { loadPublicApi, type PublicApiSpec } from "./generate/public-api.ts";
 import { runFuzz, type FuzzReport } from "./fuzz/run.ts";
 import { repairLoop } from "./generate/repair.ts";
 import { rewriteProjectImports } from "./rewrite/splice.ts";
@@ -103,6 +102,10 @@ export async function runReplace(args: CliArgs): Promise<number> {
   let source: string;
   let catalogIds: string[] = [];
   let usedCatalog = false;
+  let publicApi: PublicApiSpec | undefined;
+  let promptHash: string | undefined;
+  let genAttempts = 1;
+  let genExamples: string[] = [];
 
   if (!args.llm && catalog.missing.length === 0 && catalog.matched.length) {
     const assembled = assembleCatalogModule(env, project.root);
@@ -121,9 +124,10 @@ export async function runReplace(args: CliArgs): Promise<number> {
     throw new SlimExit(EXIT_REFUSED, "LLM requested but no API key");
   } else {
     process.stderr.write("generating with LLM (clean-room)…\n");
-    const pub = loadPublicApi(project.root, env.package.name);
-    const gen = await generateWithLlm(env, pub, [], llm);
+    publicApi = loadPublicApi(project.root, env.package.name, env.package.subpath);
+    const gen = await generateWithLlm(env, publicApi, [], llm);
     source = withGeneratedHeader(gen.source, env, { promptHash: gen.promptHash });
+    promptHash = gen.promptHash;
   }
 
   const ts = loadTargetTypescript(project.root);
@@ -175,10 +179,10 @@ export async function runReplace(args: CliArgs): Promise<number> {
   let report: FuzzReport;
   try {
     if (!usedCatalog && llm) {
-      const pub = loadPublicApi(project.root, env.package.name);
+      publicApi ??= loadPublicApi(project.root, env.package.name, env.package.subpath);
       const repaired = await repairLoop({
         envelope: env,
-        publicApi: pub,
+        publicApi,
         initial: source,
         maxAttempts: args.maxAttempts,
         llm,
@@ -188,6 +192,9 @@ export async function runReplace(args: CliArgs): Promise<number> {
       });
       source = repaired.source;
       report = repaired.report as FuzzReport;
+      genAttempts = repaired.attempts;
+      genExamples = repaired.examples;
+      promptHash = repaired.promptHash ?? promptHash;
     } else {
       report = await fuzzSource(source);
     }
@@ -301,6 +308,25 @@ export async function runReplace(args: CliArgs): Promise<number> {
       catalogIds,
       coverageHoles: holes,
       revert,
+      generation: usedCatalog
+        ? {
+            kind: "catalog",
+            catalogIds,
+            attempts: 1,
+            specSource: "catalog",
+            counterexamples: [],
+          }
+        : {
+            kind: "llm",
+            catalogIds: [],
+            provider: llm?.kind,
+            model: llm?.model,
+            promptHash,
+            attempts: genAttempts,
+            specSource: publicApi?.source ?? "envelope-only",
+            limitation: publicApi?.limitation,
+            counterexamples: genExamples,
+          },
     });
 
     const runner = detectRunner(project.root);
