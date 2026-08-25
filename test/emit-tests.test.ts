@@ -51,6 +51,16 @@ function tmpProject(): string {
   return dir;
 }
 
+function spawnTest(file: string, cwd: string) {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  return spawnSync(process.execPath, ["--experimental-strip-types", "--test", file], {
+    encoding: "utf8",
+    cwd,
+    env,
+  });
+}
+
 test("standing tests deep-equal revived frozen results and do not import the original", () => {
   const dir = tmpProject();
   writeFileSync(
@@ -84,18 +94,15 @@ test("standing tests deep-equal revived frozen results and do not import the ori
     moduleSpecifier: "./lodash.ts",
   });
   const body = readFileSync(file, "utf8");
-  assert.match(body, /deepEqual/);
-  assert.match(body, /revive\(p\.result\)/);
+  assert.match(body, /checkFrozenPair/);
+  assert.match(body, /standingEqual/);
   assert.doesNotMatch(body, /from ["']lodash["']/);
   assert.doesNotMatch(body, /require\(["']lodash["']\)/);
 
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { scripts?: Record<string, string> };
   assert.ok(pkg.scripts?.["slim:evidence"]);
 
-  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--test", file], {
-    encoding: "utf8",
-    cwd: dir,
-  });
+  const r = spawnTest(file, dir);
   assert.equal(r.status, 0, r.stderr + r.stdout);
 });
 
@@ -119,10 +126,7 @@ test("debounce standing tests use an inline fake clock, not wall-clock setTimeou
   assert.match(body, /advance\(/);
   assert.doesNotMatch(body, /from ["']lodash["']/);
 
-  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--test", file], {
-    encoding: "utf8",
-    cwd: dir,
-  });
+  const r = spawnTest(file, dir);
   assert.equal(r.status, 0, r.stderr + r.stdout);
 });
 
@@ -217,10 +221,7 @@ export function get(object: Record<string, unknown>, path: string) {
   assert.match(body, /"symbol": "get"/);
   assert.doesNotMatch(body, /"name": "debounced"/);
   assert.doesNotMatch(body, /"symbol": "debounce\(\)"/);
-  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--test", file], {
-    encoding: "utf8",
-    cwd: dir,
-  });
+  const r = spawnTest(file, dir);
   assert.equal(r.status, 0, r.stderr + r.stdout);
 });
 
@@ -246,7 +247,7 @@ test("vitest flavor standing tests import vitest", () => {
   });
   const body = readFileSync(file, "utf8");
   assert.match(body, /from ["']vitest["']/);
-  assert.match(body, /toEqual/);
+  assert.match(body, /checkFrozenPair/);
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { scripts?: Record<string, string> };
   assert.match(pkg.scripts!["slim:evidence"]!, /vitest/);
 });
@@ -283,10 +284,86 @@ test("standing revive uses null-prototype objects and defineProperty", () => {
   assert.match(body, /Object\.create\(null\)/);
   assert.match(body, /defineProperty/);
   const before = Object.prototype.hasOwnProperty("polluted");
-  const r = spawnSync(process.execPath, ["--experimental-strip-types", "--test", file], {
-    encoding: "utf8",
-    cwd: dir,
-  });
+  const r = spawnTest(file, dir);
   assert.equal(r.status, 0, r.stderr + r.stdout);
   assert.equal(Object.prototype.hasOwnProperty("polluted"), before);
+});
+
+test("standing tests fail a cloning replacement when result is a ref", () => {
+  const dir = tmpProject();
+  writeFileSync(
+    join(dir, "src", "lodash.ts"),
+    `export function get(object: { nested: { n: number } }) {\n  return { ...object.nested };\n}\n`,
+  );
+  const e = env({ symbols: ["get"] });
+  e.symbols[0]!.hyrum = { ...emptyHyrum(), sameReference: true };
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "lodash",
+    env: e,
+    traces: [
+      {
+        symbol: "get",
+        args: [
+          {
+            t: "obj",
+            keys: ["nested"],
+            v: {
+              nested: {
+                t: "obj",
+                keys: ["n"],
+                v: { n: { t: "num", v: 1 } },
+              },
+            },
+          },
+        ],
+        result: { t: "ref", id: 1 },
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./lodash.ts",
+  });
+  const r = spawnTest(file, dir);
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout + r.stderr, /identity mismatch|standing mismatch/i);
+});
+
+test("standing tests pass identity-preserving get for ref results", () => {
+  const dir = tmpProject();
+  writeFileSync(
+    join(dir, "src", "lodash.ts"),
+    `export function get(object: { nested: { n: number } }) {\n  return object.nested;\n}\n`,
+  );
+  const e = env({ symbols: ["get"] });
+  e.symbols[0]!.hyrum = { ...emptyHyrum(), sameReference: true };
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "lodash",
+    env: e,
+    traces: [
+      {
+        symbol: "get",
+        args: [
+          {
+            t: "obj",
+            keys: ["nested"],
+            v: {
+              nested: {
+                t: "obj",
+                keys: ["n"],
+                v: { n: { t: "num", v: 1 } },
+              },
+            },
+          },
+        ],
+        result: { t: "ref", id: 1 },
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./lodash.ts",
+  });
+  const r = spawnTest(file, dir);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
 });

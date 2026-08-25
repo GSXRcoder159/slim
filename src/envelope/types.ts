@@ -92,7 +92,7 @@ export interface HyrumFlags {
   dateIdentity: boolean;
   sameReference: boolean;
   /** When true, -0 and +0 are not equal. */
-  signedZero?: boolean;
+  signedZero: boolean;
 }
 
 export interface SymbolEnvelope {
@@ -149,7 +149,14 @@ export type SlimValue =
   | { t: "date"; v: number }
   | { t: "err"; name: string; message: string; code?: string | number }
   | { t: "arr"; v: SlimValue[]; holes: number[] }
-  | { t: "obj"; keys: string[]; v: Record<string, SlimValue> }
+  | {
+      t: "obj";
+      keys: string[];
+      v: Record<string, SlimValue>;
+      proto?: "null" | "object" | "other";
+      toStr?: boolean;
+      syms?: { k: string; g?: boolean; v: SlimValue }[];
+    }
   | { t: "map"; v: [SlimValue, SlimValue][] }
   | { t: "set"; v: SlimValue[] }
   | { t: "fn"; name?: string; length?: number }
@@ -197,6 +204,7 @@ export function emptyHyrum(): HyrumFlags {
     mutation: false,
     dateIdentity: false,
     sameReference: false,
+    signedZero: false,
   };
 }
 

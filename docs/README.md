@@ -2,7 +2,7 @@
 
 | Doc | What |
 | --- | --- |
-| [dx.md](./dx.md) | CLI surface, exit codes, stdout/stderr, Friday walkthrough, Actions, evidence, watch, v1 vs later |
+| [dx.md](./dx.md) | CLI surface, exit codes, stdout/stderr, Friday walkthrough, Hyrum substitution contract, Actions, evidence, watch, v1 vs later |
 | [help.txt](./help.txt) | Snapshot of shipped `slim --help` (`src/cli.ts` HELP) |
 | [packages.md](./packages.md) | First-wave matrix, hardness, refuse errors |
 | [repo.md](./repo.md) | Layout, slim.json fields, OSS hygiene, file inventory |

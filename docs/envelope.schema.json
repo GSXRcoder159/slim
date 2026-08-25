@@ -144,7 +144,7 @@
         "packages": { "type": "array", "items": { "$ref": "#/$defs/packageRef" } },
         "callSites": { "type": "array", "items": { "$ref": "#/$defs/callSite" } },
         "resultMembers": { "type": "array", "items": { "type": "string" } },
-        "hyrum": { "type": "object" },
+        "hyrum": { "$ref": "#/$defs/hyrumFlags" },
         "coverage": {
           "type": "object",
           "additionalProperties": false,
@@ -211,6 +211,61 @@
         "reasons": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "slimValue": {
+      "type": "object",
+      "description": "Tagged runtime value in traces.jsonl. Object tags may carry proto/toStr/syms.",
+      "properties": {
+        "t": { "type": "string" },
+        "v": {},
+        "keys": { "type": "array", "items": { "type": "string" } },
+        "holes": { "type": "array", "items": { "type": "integer" } },
+        "proto": { "type": "string", "enum": ["null", "object", "other"] },
+        "toStr": { "type": "boolean" },
+        "syms": {
+          "type": "array",
+          "description": "Enumerable symbol keys (g = Symbol.for).",
+          "items": {
+            "type": "object",
+            "required": ["k", "v"],
+            "properties": {
+              "k": { "type": "string" },
+              "g": { "type": "boolean" },
+              "v": { "$ref": "#/$defs/slimValue" }
+            }
+          }
+        }
+      }
+    },
+    "hyrumFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "errorMessage",
+        "toString",
+        "json",
+        "nan",
+        "sparseArray",
+        "keyOrder",
+        "prototype",
+        "mutation",
+        "dateIdentity",
+        "sameReference",
+        "signedZero"
+      ],
+      "properties": {
+        "errorMessage": { "type": "boolean" },
+        "toString": { "type": "boolean" },
+        "json": { "type": "boolean" },
+        "nan": { "type": "boolean" },
+        "sparseArray": { "type": "boolean" },
+        "keyOrder": { "type": "boolean", "description": "Object key insertion order, and Map/Set entry order." },
+        "prototype": { "type": "boolean" },
+        "mutation": { "type": "boolean" },
+        "dateIdentity": { "type": "boolean" },
+        "sameReference": { "type": "boolean" },
+        "signedZero": { "type": "boolean" }
+      }
+    },
     "traceEvent": {
       "type": "object",
       "description": "One JSONL record from traces.jsonl (not stored in envelope.json).",
@@ -222,9 +277,9 @@
         "unmatched": { "type": "boolean" },
         "resultMember": { "type": "string" },
         "argc": { "type": "integer" },
-        "args": { "type": "array" },
-        "thisArg": {},
-        "result": {},
+        "args": { "type": "array", "items": { "$ref": "#/$defs/slimValue" } },
+        "thisArg": { "$ref": "#/$defs/slimValue" },
+        "result": { "$ref": "#/$defs/slimValue" },
         "threw": { "type": "object" },
         "mutatedArgIndexes": { "type": "array", "items": { "type": "integer" } },
         "truncated": { "type": "boolean" },

@@ -193,14 +193,51 @@ function walk(value: unknown, st: WalkState): SlimValue {
       : walk((value as Record<string, unknown>)[k], st);
     defineOwn(fields, k, child);
   }
-  return { t: "obj", keys, v: fields };
+  const rec = value as { toString?: unknown };
+  const toStr =
+    typeof rec.toString === "function" && rec.toString !== Object.prototype.toString;
+  const proto = protoTag(value);
+  const syms = ownSymbolKeys(value, st);
+  return {
+    t: "obj",
+    keys,
+    v: fields,
+    ...(proto !== "object" ? { proto } : {}),
+    ...(toStr ? { toStr: true } : {}),
+    ...(syms.length ? { syms } : {}),
+  };
+}
+
+function protoTag(value: object): "null" | "object" | "other" {
+  const p = Object.getPrototypeOf(value);
+  if (p === null) return "null";
+  if (p === Object.prototype) return "object";
+  return "other";
+}
+
+function ownSymbolKeys(
+  value: object,
+  st: WalkState,
+): { k: string; g?: boolean; v: SlimValue }[] {
+  const out: { k: string; g?: boolean; v: SlimValue }[] = [];
+  for (const k of Reflect.ownKeys(value)) {
+    if (typeof k !== "symbol") continue;
+    const d = Object.getOwnPropertyDescriptor(value, k);
+    if (d?.enumerable !== true) continue;
+    const globalKey = Symbol.keyFor(k);
+    const name = globalKey ?? k.description ?? "";
+    const raw = d.value !== undefined || "value" in (d as PropertyDescriptor) ? d.value : undefined;
+    const child = typeof name === "string" && REDACT_RE.test(name) ? redacted() : walk(raw, st);
+    out.push(globalKey !== undefined ? { k: name, g: true, v: child } : { k: name, v: child });
+  }
+  return out;
 }
 
 function ownStringKeys(value: object): string[] {
   return Reflect.ownKeys(value).filter((k): k is string => typeof k === "string");
 }
 
-function defineOwn(o: object, key: string, value: unknown): void {
+function defineOwn(o: object, key: PropertyKey, value: unknown): void {
   Object.defineProperty(o, key, {
     value,
     enumerable: true,
@@ -275,7 +312,7 @@ function decode(v: SlimValue | undefined, seen: unknown[]): unknown {
       return f;
     }
     case "arr": {
-      const a: unknown[] = [];
+      const a: unknown[] = new Array(v.v.length);
       seen.push(a);
       for (let i = 0; i < v.v.length; i++) {
         if (v.holes.includes(i)) continue;
@@ -287,6 +324,10 @@ function decode(v: SlimValue | undefined, seen: unknown[]): unknown {
       const o = Object.create(null) as Record<string, unknown>;
       seen.push(o);
       for (const k of v.keys) defineOwn(o, k, decode(v.v[k], seen));
+      for (const s of v.syms ?? []) {
+        const sym = s.g ? Symbol.for(s.k) : Symbol(s.k);
+        defineOwn(o, sym, decode(s.v, seen));
+      }
       return o;
     }
     case "map": {
@@ -363,7 +404,10 @@ function slimEq(a: SlimValue | undefined, b: SlimValue | undefined): boolean {
       return (
         b.t === "obj" &&
         a.keys.length === b.keys.length &&
-        a.keys.every((k, i) => k === b.keys[i] && slimEq(a.v[k], b.v[k]))
+        a.keys.every((k, i) => k === b.keys[i] && slimEq(a.v[k], b.v[k])) &&
+        a.proto === b.proto &&
+        a.toStr === b.toStr &&
+        slimEqSyms(a.syms, b.syms)
       );
     case "map":
       return (
@@ -374,12 +418,16 @@ function slimEq(a: SlimValue | undefined, b: SlimValue | undefined): boolean {
             slimEq(pair[0], b.v[i]?.[0]) && slimEq(pair[1], b.v[i]?.[1]),
         )
       );
-    case "set":
-      return (
-        b.t === "set" &&
-        a.v.length === b.v.length &&
-        a.v.every((x, i) => slimEq(x, b.v[i]))
-      );
+    case "set": {
+      if (b.t !== "set" || a.v.length !== b.v.length) return false;
+      const unused = b.v.slice();
+      for (const x of a.v) {
+        const idx = unused.findIndex((y) => slimEq(x, y));
+        if (idx < 0) return false;
+        unused.splice(idx, 1);
+      }
+      return true;
+    }
     case "bytes":
       return b.t === "bytes" && a.kind === b.kind && a.len === b.len && a.b64 === b.b64;
     case "ref":
@@ -389,4 +437,14 @@ function slimEq(a: SlimValue | undefined, b: SlimValue | undefined): boolean {
     default:
       return false;
   }
+}
+
+function slimEqSyms(
+  a: { k: string; g?: boolean; v: SlimValue }[] | undefined,
+  b: { k: string; g?: boolean; v: SlimValue }[] | undefined,
+): boolean {
+  const aa = a ?? [];
+  const bb = b ?? [];
+  if (aa.length !== bb.length) return false;
+  return aa.every((s, i) => s.k === bb[i]?.k && s.g === bb[i]?.g && slimEq(s.v, bb[i]?.v));
 }

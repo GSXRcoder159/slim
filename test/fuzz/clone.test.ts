@@ -58,6 +58,34 @@ test("cycles clone via WeakMap and remain cyclic", () => {
   assert.equal(equal(a, c), true);
 });
 
+test("own __proto__ constructor prototype keys do not mutate Object.prototype", () => {
+  const src = Object.create(null) as Record<string, unknown>;
+  Object.defineProperty(src, "__proto__", {
+    value: { polluted: true },
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(src, "constructor", {
+    value: 1,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  Object.defineProperty(src, "prototype", {
+    value: 2,
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  const before = Object.prototype.hasOwnProperty("polluted");
+  const c = clone(src);
+  assert.equal(Object.prototype.hasOwnProperty("polluted"), before);
+  assert.equal(Object.getOwnPropertyDescriptor(c, "__proto__")?.value?.polluted, true);
+  assert.equal((c as Record<string, unknown>).constructor, 1);
+  assert.equal((c as Record<string, unknown>).prototype, 2);
+});
+
 test("Error, Buffer, and Uint8Array", () => {
   const e = new TypeError("Expected a function");
   (e as Error & { code?: string }).code = "ERR_INVALID_ARG_TYPE";

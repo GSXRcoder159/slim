@@ -82,6 +82,14 @@ Exit 0 if Slim would try (closed, or `--allow-unknown` made ready). Exit 3 if th
 
 `--force` does not claim closed. `--allow-unknown` may set `readyToGenerate` while `confidence` stays `open`.
 
+### Hyrum substitution contract
+
+Envelope `symbols[].hyrum` is a substitution contract, not descriptive metadata. Fuzz `equal` / `equalResults` and emitted standing tests use the same rules.
+
+Gated (compared only when the flag is true — do not overclaim): `sameReference` (return aliases into args/`this` must be preserved; a structured clone of an observed nested return fails), `dateIdentity` (an input Date returned by identity must not be replaced by `new Date(t)`), `prototype` (`Object.getPrototypeOf`, including `Object.create(null)` vs `{}`), `keyOrder` (object key insertion order **and** Map/Set entry order), `signedZero` (`-0` vs `+0`), `toString` (`String(a) === String(b)`), `json` (`JSON.stringify`).
+
+Always on (substitution safety; flags still recorded from traces): `nan` (NaN equals NaN, not `0`), `sparseArray` (holes vs dense `undefined`), `mutation` (post-call args **and** receiver), `errorMessage` (thrown `name` + `message` + `code`).
+
 ### `slim replace <pkg>`
 
 The product.

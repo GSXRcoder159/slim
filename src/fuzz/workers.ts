@@ -19,7 +19,7 @@ import {
   type SpyEvent,
 } from "./debounce-driver.ts";
 import type { HyrumFlags, SlimValue } from "../envelope/types.ts";
-import { serialize, snapshot } from "../trace/serialize.ts";
+import { deserializeEvent, serializeEvent, snapshot } from "../trace/serialize.ts";
 import { hydrate } from "./gen.ts";
 
 const MINIMIZE_MS = 2000;
@@ -405,18 +405,23 @@ function pickFns(rec: object): Record<string, Function> {
 }
 
 export function toCloneableJob(job: FuzzJob): FuzzJob {
+  const ev = serializeEvent({ args: job.args, thisArg: job.thisArg });
   return {
     ...job,
-    args: snapshot(job.args),
-    thisArg: job.thisArg === undefined ? undefined : serialize(job.thisArg),
+    args: ev.args,
+    thisArg: ev.thisArg,
   };
 }
 
 export function fromCloneableJob(job: FuzzJob): FuzzJob {
+  const ev = deserializeEvent({
+    args: job.args as SlimValue[],
+    thisArg: job.thisArg === undefined ? undefined : (job.thisArg as SlimValue),
+  });
   return {
     ...job,
-    args: job.args.map((a) => hydrate(a as SlimValue)),
-    thisArg: job.thisArg === undefined ? undefined : hydrate(job.thisArg as SlimValue),
+    args: ev.args,
+    thisArg: ev.thisArg,
   };
 }
 

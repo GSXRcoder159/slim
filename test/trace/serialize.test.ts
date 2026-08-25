@@ -246,6 +246,44 @@ test("serializeEvent shares identity across args and result", () => {
   assert.equal(back.result, restored.a.b);
 });
 
+test("trailing holes preserve array length", () => {
+  const a = new Array(4);
+  a[0] = 1;
+  const back = deserialize(serialize(a)) as unknown[];
+  assert.equal(back.length, 4);
+  assert.equal(0 in back, true);
+  assert.equal(3 in back, false);
+});
+
+test("enumerable symbol keys round-trip", () => {
+  const local = Symbol("id");
+  const glob = Symbol.for("slim-hyrum");
+  const src = { x: 1, [local]: 2, [glob]: 3 };
+  const s = serialize(src);
+  assert.equal(s.t, "obj");
+  if (s.t !== "obj") throw new Error("expected obj");
+  assert.equal(s.syms?.length, 2);
+  const back = deserialize(s) as Record<PropertyKey, unknown>;
+  assert.equal(back.x, 1);
+  assert.equal(back[Symbol.for("slim-hyrum")], 3);
+  const localKey = Reflect.ownKeys(back).find((k) => typeof k === "symbol" && k !== glob);
+  assert.equal(typeof localKey, "symbol");
+  assert.equal(back[localKey as symbol], 2);
+});
+
+test("null prototype is tagged and custom toString is tagged", () => {
+  const nulled = Object.assign(Object.create(null), { a: 1 });
+  const ns = serialize(nulled);
+  assert.equal(ns.t, "obj");
+  if (ns.t !== "obj") throw new Error("expected obj");
+  assert.equal(ns.proto, "null");
+  const custom = { a: 1, toString() { return "x"; } };
+  const cs = serialize(custom);
+  assert.equal(cs.t, "obj");
+  if (cs.t !== "obj") throw new Error("expected obj");
+  assert.equal(cs.toStr, true);
+});
+
 test("budget exhaustion is trunc, not undef", () => {
   const deep: Record<string, unknown> = { n: 0 };
   let cur = deep;

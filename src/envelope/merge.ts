@@ -8,13 +8,14 @@ export function hyrumFromTraces(traces: TraceEvent[]): Partial<HyrumFlags> {
     if (t.threw?.message) h.errorMessage = true;
     if (t.mutatedArgIndexes?.length) h.mutation = true;
     for (const v of t.args) walkSlim(v, h);
-    if (t.result) walkSlim(t.result, h);
     if (t.thisArg) walkSlim(t.thisArg, h);
+    if (t.result) walkSlim(t.result, h, 0, true);
+    observeIdentity(t, h);
   }
   return h;
 }
 
-function walkSlim(v: SlimValue, h: Partial<HyrumFlags>, depth = 0): void {
+function walkSlim(v: SlimValue, h: Partial<HyrumFlags>, depth = 0, fromResult = false): void {
   if (depth > 24) return;
   if (v.t === "trunc") return;
   if (v.t === "num") {
@@ -23,23 +24,109 @@ function walkSlim(v: SlimValue, h: Partial<HyrumFlags>, depth = 0): void {
   }
   if (v.t === "arr") {
     if (v.holes.length) h.sparseArray = true;
-    for (const el of v.v) walkSlim(el, h, depth + 1);
+    if (fromResult) h.json = true;
+    for (const el of v.v) walkSlim(el, h, depth + 1, fromResult);
   }
   if (v.t === "obj") {
     if (v.keys.length >= 2) h.keyOrder = true;
+    if (v.proto === "null" || v.proto === "other") h.prototype = true;
+    if (v.toStr || v.keys.includes("toString")) h.toString = true;
+    if (fromResult) h.json = true;
     for (const k of v.keys) {
       const child = v.v[k];
-      if (child) walkSlim(child, h, depth + 1);
+      if (child) walkSlim(child, h, depth + 1, fromResult);
     }
+    for (const s of v.syms ?? []) walkSlim(s.v, h, depth + 1, fromResult);
   }
   if (v.t === "map") {
     for (const [k, val] of v.v) {
-      walkSlim(k, h, depth + 1);
-      walkSlim(val, h, depth + 1);
+      walkSlim(k, h, depth + 1, fromResult);
+      walkSlim(val, h, depth + 1, fromResult);
     }
   }
   if (v.t === "set") {
-    for (const el of v.v) walkSlim(el, h, depth + 1);
+    for (const el of v.v) walkSlim(el, h, depth + 1, fromResult);
+  }
+}
+
+function isRegistered(v: SlimValue): boolean {
+  return (
+    v.t === "obj" ||
+    v.t === "arr" ||
+    v.t === "map" ||
+    v.t === "set" ||
+    v.t === "date" ||
+    v.t === "err" ||
+    v.t === "fn" ||
+    v.t === "bytes" ||
+    v.t === "promise" ||
+    v.t === "regexp"
+  );
+}
+
+function assignIds(v: SlimValue, nodes: SlimValue[]): void {
+  if (v.t === "ref" || v.t === "trunc") return;
+  if (isRegistered(v)) nodes.push(v);
+  if (v.t === "arr") {
+    for (const el of v.v) assignIds(el, nodes);
+  }
+  if (v.t === "obj") {
+    for (const k of v.keys) {
+      const child = v.v[k];
+      if (child) assignIds(child, nodes);
+    }
+    for (const s of v.syms ?? []) assignIds(s.v, nodes);
+  }
+  if (v.t === "map") {
+    for (const [k, val] of v.v) {
+      assignIds(k, nodes);
+      assignIds(val, nodes);
+    }
+  }
+  if (v.t === "set") {
+    for (const el of v.v) assignIds(el, nodes);
+  }
+}
+
+function collectRefs(v: SlimValue, refs: number[], depth = 0): void {
+  if (depth > 24) return;
+  if (v.t === "ref") {
+    refs.push(v.id);
+    return;
+  }
+  if (v.t === "arr") {
+    for (const el of v.v) collectRefs(el, refs, depth + 1);
+  }
+  if (v.t === "obj") {
+    for (const k of v.keys) {
+      const child = v.v[k];
+      if (child) collectRefs(child, refs, depth + 1);
+    }
+    for (const s of v.syms ?? []) collectRefs(s.v, refs, depth + 1);
+  }
+  if (v.t === "map") {
+    for (const [k, val] of v.v) {
+      collectRefs(k, refs, depth + 1);
+      collectRefs(val, refs, depth + 1);
+    }
+  }
+  if (v.t === "set") {
+    for (const el of v.v) collectRefs(el, refs, depth + 1);
+  }
+}
+
+function observeIdentity(t: TraceEvent, h: Partial<HyrumFlags>): void {
+  if (!t.result) return;
+  const nodes: SlimValue[] = [];
+  for (const a of t.args) assignIds(a, nodes);
+  if (t.thisArg) assignIds(t.thisArg, nodes);
+  const argN = nodes.length;
+  const refs: number[] = [];
+  collectRefs(t.result, refs);
+  for (const id of refs) {
+    if (id < 0 || id >= argN) continue;
+    h.sameReference = true;
+    if (nodes[id]?.t === "date") h.dateIdentity = true;
   }
 }
 

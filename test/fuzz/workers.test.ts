@@ -283,3 +283,10 @@ test("cloneable roundtrip preserves function arity", () => {
   assert.equal(typeof revived, "function");
   assert.equal(revived.length, 2);
 });
+
+test("cloneable roundtrip preserves args[0] === thisArg alias", () => {
+  const recv = { n: 1 };
+  const wired = toCloneableJob({ symbol: "id", args: [recv], thisArg: recv, kind: "call" });
+  const back = fromCloneableJob(wired);
+  assert.equal(back.args[0], back.thisArg);
+});

@@ -9,12 +9,43 @@ export interface EqualOptions {
 }
 
 export type CallOutcome =
-  | { ok: true; value: unknown; argsAfter: unknown[] }
+  | { ok: true; value: unknown; argsAfter: unknown[]; thisAfter?: unknown }
   | {
       ok: false;
       error: { name: string; message: string; code?: unknown };
       argsAfter: unknown[];
+      thisAfter?: unknown;
     };
+
+interface EqCtx {
+  signedZero: boolean;
+  keyOrder: boolean;
+  prototype: boolean;
+  nan: boolean;
+  sparseArray: boolean;
+  toString: boolean;
+  json: boolean;
+  dateIdentity: boolean;
+  sameReference: boolean;
+  mutation: boolean;
+  errorMessage: boolean;
+}
+
+function ctxOf(hyrum?: Partial<HyrumFlags>, options?: EqualOptions): EqCtx {
+  return {
+    signedZero: options?.signedZero === true || hyrum?.signedZero === true,
+    keyOrder: options?.keyOrder === true || hyrum?.keyOrder === true,
+    prototype: hyrum?.prototype === true,
+    nan: hyrum?.nan === true,
+    sparseArray: hyrum?.sparseArray === true,
+    toString: hyrum?.toString === true,
+    json: hyrum?.json === true,
+    dateIdentity: hyrum?.dateIdentity === true,
+    sameReference: hyrum?.sameReference === true,
+    mutation: hyrum?.mutation === true,
+    errorMessage: hyrum?.errorMessage === true,
+  };
+}
 
 export function normalizeError(e: unknown): {
   name: string;
@@ -28,7 +59,7 @@ export function normalizeError(e: unknown): {
   return { name: "Error", message: String(e) };
 }
 
-/** Clone args and receiver, call `fn`, capture return/throw and post-call arg state. */
+/** Clone args and receiver, call `fn`, capture return/throw and post-call arg/this state. */
 export function invoke(
   fn: Function,
   args: unknown[],
@@ -39,17 +70,21 @@ export function invoke(
     thisArg === undefined || thisArg === null ? thisArg : clone(thisArg);
   try {
     const value = fn.apply(clonedThis, cloned);
-    return { ok: true, value, argsAfter: cloned };
+    return { ok: true, value, argsAfter: cloned, thisAfter: clonedThis };
   } catch (e) {
-    return { ok: false, error: normalizeError(e), argsAfter: cloned };
+    return { ok: false, error: normalizeError(e), argsAfter: cloned, thisAfter: clonedThis };
   }
 }
 
 export function equalThrown(
   a: { name: string; message: string; code?: unknown },
   b: { name: string; message: string; code?: unknown },
+  hyrum?: Partial<HyrumFlags>,
 ): boolean {
-  return a.name === b.name && a.message === b.message && Object.is(a.code, b.code);
+  if (a.name !== b.name) return false;
+  /* errorMessage is always-on substitution: name+message+code. Flag records observation. */
+  void hyrum?.errorMessage;
+  return a.message === b.message && Object.is(a.code, b.code);
 }
 
 export function equal(
@@ -58,9 +93,9 @@ export function equal(
   hyrum?: Partial<HyrumFlags>,
   options?: EqualOptions,
 ): boolean {
-  const signedZero = options?.signedZero === true || hyrum?.signedZero === true;
-  const keyOrder = options?.keyOrder === true || hyrum?.keyOrder === true;
-  return eq(a, b, signedZero, keyOrder, new WeakMap());
+  const ctx = ctxOf(hyrum, options);
+  if (!eq(a, b, ctx, new WeakMap())) return false;
+  return extras(a, b, ctx);
 }
 
 export function equalResults(
@@ -69,6 +104,10 @@ export function equalResults(
   hyrum?: Partial<HyrumFlags>,
   options?: EqualOptions,
 ): { ok: boolean; reason?: string } {
+  const ctx = ctxOf(hyrum, options);
+  const identity = ctx.sameReference || ctx.dateIdentity;
+  const seen = identity ? new WeakMap<object, object>() : undefined;
+
   if (orig.ok && !slim.ok) {
     return {
       ok: false,
@@ -82,16 +121,19 @@ export function equalResults(
     };
   }
   if (!orig.ok && !slim.ok) {
-    if (!equalThrown(orig.error, slim.error)) {
+    if (!equalThrown(orig.error, slim.error, hyrum)) {
       return {
         ok: false,
         reason: `error mismatch: ${orig.error.name}:${orig.error.message} vs ${slim.error.name}:${slim.error.message}`,
       };
     }
-  } else if (orig.ok && slim.ok) {
-    if (!equal(orig.value, slim.value, hyrum, options)) {
-      return { ok: false, reason: "return value mismatch" };
-    }
+  }
+
+  /* mutation is always-on: argsAfter and thisAfter must match. Flag records observation. */
+  void ctx.mutation;
+  const pairSeen = seen ?? new WeakMap<object, object>();
+  if (!eq(orig.thisAfter, slim.thisAfter, ctx, pairSeen)) {
+    return { ok: false, reason: "receiver mutation mismatch" };
   }
   if (orig.argsAfter.length !== slim.argsAfter.length) {
     return {
@@ -100,21 +142,62 @@ export function equalResults(
     };
   }
   for (let i = 0; i < orig.argsAfter.length; i++) {
-    if (!equal(orig.argsAfter[i], slim.argsAfter[i], hyrum, options)) {
+    if (!eq(orig.argsAfter[i], slim.argsAfter[i], ctx, pairSeen)) {
       return { ok: false, reason: `argument mutation mismatch at index ${i}` };
+    }
+  }
+
+  if (orig.ok && slim.ok) {
+    const retSeen = identity ? pairSeen : new WeakMap<object, object>();
+    if (!eq(orig.value, slim.value, ctx, retSeen)) {
+      return { ok: false, reason: "return value mismatch" };
+    }
+    if (!extras(orig.value, slim.value, ctx)) {
+      return { ok: false, reason: "return value mismatch" };
     }
   }
   return { ok: true };
 }
 
+function extras(a: unknown, b: unknown, ctx: EqCtx): boolean {
+  if (ctx.toString && !equalToString(a, b)) return false;
+  if (ctx.json && !equalJson(a, b)) return false;
+  return true;
+}
+
+function equalToString(a: unknown, b: unknown): boolean {
+  try {
+    return String(a) === String(b);
+  } catch {
+    return false;
+  }
+}
+
+function equalJson(a: unknown, b: unknown): boolean {
+  let sa: string | undefined;
+  let sb: string | undefined;
+  try {
+    sa = JSON.stringify(a);
+  } catch {
+    sa = undefined;
+  }
+  try {
+    sb = JSON.stringify(b);
+  } catch {
+    sb = undefined;
+  }
+  if (sa === undefined && sb === undefined) return true;
+  if (sa === undefined || sb === undefined) return false;
+  return sa === sb;
+}
+
 function eq(
   a: unknown,
   b: unknown,
-  signedZero: boolean,
-  keyOrder: boolean,
+  ctx: EqCtx,
   seen: WeakMap<object, object>,
 ): boolean {
-  if (sameValueZero(a, b, signedZero)) return true;
+  if (sameValueZero(a, b, ctx)) return true;
   if (typeof a !== typeof b) return false;
   if (a === null || b === null) return a === b;
   if (typeof a === "function" && typeof b === "function") {
@@ -128,6 +211,10 @@ function eq(
   const prev = seen.get(ao);
   if (prev) return prev === bo;
   seen.set(ao, bo);
+
+  if (ctx.prototype && Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) {
+    return false;
+  }
 
   if (a instanceof Date && b instanceof Date) {
     const at = a.getTime();
@@ -147,7 +234,7 @@ function eq(
 
   if (a instanceof ArrayBuffer && b instanceof ArrayBuffer) {
     if (a.byteLength !== b.byteLength) return false;
-    return eq(new Uint8Array(a), new Uint8Array(b), signedZero, keyOrder, seen);
+    return eq(new Uint8Array(a), new Uint8Array(b), ctx, seen);
   }
 
   if (ArrayBuffer.isView(a) && ArrayBuffer.isView(b)) {
@@ -168,39 +255,24 @@ function eq(
   }
 
   if (a instanceof Map && b instanceof Map) {
-    if (a.size !== b.size) return false;
-    const ae = [...a.entries()];
-    const be = [...b.entries()];
-    for (let i = 0; i < ae.length; i++) {
-      const av = ae[i]!;
-      const bv = be[i]!;
-      if (!eq(av[0], bv[0], signedZero, keyOrder, seen)) return false;
-      if (!eq(av[1], bv[1], signedZero, keyOrder, seen)) return false;
-    }
-    return true;
+    return eqMap(a, b, ctx, seen);
   }
   if (a instanceof Map || b instanceof Map) return false;
 
   if (a instanceof Set && b instanceof Set) {
-    if (a.size !== b.size) return false;
-    const unused = [...b];
-    for (const av of a) {
-      const idx = unused.findIndex((bv) => eq(av, bv, signedZero, keyOrder, seen));
-      if (idx < 0) return false;
-      unused.splice(idx, 1);
-    }
-    return true;
+    return eqSet(a, b, ctx, seen);
   }
   if (a instanceof Set || b instanceof Set) return false;
 
   if (Array.isArray(a) || Array.isArray(b)) {
     if (!Array.isArray(a) || !Array.isArray(b)) return false;
     if (a.length !== b.length) return false;
+    void ctx.sparseArray;
     for (let i = 0; i < a.length; i++) {
       const ha = i in a;
       const hb = i in b;
       if (ha !== hb) return false;
-      if (ha && !eq(a[i], b[i], signedZero, keyOrder, seen)) return false;
+      if (ha && !eq(a[i], b[i], ctx, seen)) return false;
     }
     return true;
   }
@@ -208,13 +280,13 @@ function eq(
   const aKeys = Reflect.ownKeys(a).filter((k) => enumerableOwn(a, k));
   const bKeys = Reflect.ownKeys(b).filter((k) => enumerableOwn(b, k));
   if (aKeys.length !== bKeys.length) return false;
-  if (keyOrder) {
+  if (ctx.keyOrder) {
     for (let i = 0; i < aKeys.length; i++) {
       if (aKeys[i] !== bKeys[i]) return false;
     }
     for (let i = 0; i < aKeys.length; i++) {
       const k = aKeys[i]!;
-      if (!eq((a as Record<PropertyKey, unknown>)[k], (b as Record<PropertyKey, unknown>)[k], signedZero, keyOrder, seen)) {
+      if (!eq((a as Record<PropertyKey, unknown>)[k], (b as Record<PropertyKey, unknown>)[k], ctx, seen)) {
         return false;
       }
     }
@@ -223,9 +295,62 @@ function eq(
   const bSet = new Set(bKeys);
   for (const k of aKeys) {
     if (!bSet.has(k)) return false;
-    if (!eq((a as Record<PropertyKey, unknown>)[k], (b as Record<PropertyKey, unknown>)[k], signedZero, keyOrder, seen)) {
+    if (!eq((a as Record<PropertyKey, unknown>)[k], (b as Record<PropertyKey, unknown>)[k], ctx, seen)) {
       return false;
     }
+  }
+  return true;
+}
+
+function eqMap(
+  a: Map<unknown, unknown>,
+  b: Map<unknown, unknown>,
+  ctx: EqCtx,
+  seen: WeakMap<object, object>,
+): boolean {
+  if (a.size !== b.size) return false;
+  const ae = [...a.entries()];
+  const be = [...b.entries()];
+  if (ctx.keyOrder) {
+    for (let i = 0; i < ae.length; i++) {
+      const av = ae[i]!;
+      const bv = be[i]!;
+      if (!eq(av[0], bv[0], ctx, seen)) return false;
+      if (!eq(av[1], bv[1], ctx, seen)) return false;
+    }
+    return true;
+  }
+  const unused = be.slice();
+  for (const [ak, av] of ae) {
+    const idx = unused.findIndex(
+      ([bk, bv]) => eq(ak, bk, ctx, new WeakMap()) && eq(av, bv, ctx, new WeakMap()),
+    );
+    if (idx < 0) return false;
+    unused.splice(idx, 1);
+  }
+  return true;
+}
+
+function eqSet(
+  a: Set<unknown>,
+  b: Set<unknown>,
+  ctx: EqCtx,
+  seen: WeakMap<object, object>,
+): boolean {
+  if (a.size !== b.size) return false;
+  if (ctx.keyOrder) {
+    const aa = [...a];
+    const bb = [...b];
+    for (let i = 0; i < aa.length; i++) {
+      if (!eq(aa[i], bb[i], ctx, seen)) return false;
+    }
+    return true;
+  }
+  const unused = [...b];
+  for (const av of a) {
+    const idx = unused.findIndex((bv) => eq(av, bv, ctx, new WeakMap()));
+    if (idx < 0) return false;
+    unused.splice(idx, 1);
   }
   return true;
 }
@@ -235,10 +360,11 @@ function enumerableOwn(obj: object, key: PropertyKey): boolean {
   return d?.enumerable === true;
 }
 
-function sameValueZero(a: unknown, b: unknown, signedZero: boolean): boolean {
+function sameValueZero(a: unknown, b: unknown, ctx: EqCtx): boolean {
   if (typeof a === "number" && typeof b === "number") {
+    void ctx.nan;
     if (Number.isNaN(a) && Number.isNaN(b)) return true;
-    if (signedZero) return Object.is(a, b);
+    if (ctx.signedZero) return Object.is(a, b);
     return a === b;
   }
   return a === b;

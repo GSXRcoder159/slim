@@ -10,10 +10,10 @@ import {
   fromShapes,
   junkArgs,
   enumerateLiteralUnions,
-  hydrate,
   isExportTrace,
   pickObservedArgc,
 } from "./gen.ts";
+import { deserializeEvent } from "../trace/serialize.ts";
 import { BUDGET_SLACK_MS, createFakeClock, nativeClear, nativeTimeout, wallMs, type FakeClock } from "./clock.ts";
 import {
   runDebounceScript,
@@ -206,9 +206,8 @@ async function runFuzzInProcess(opts: {
 
       for (const tr of traces) {
         if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
-        const args = tr.args.map((a) => hydrate(a));
-        const thisArg = tr.thisArg ? hydrate(tr.thisArg) : undefined;
-        await recordCall(report, origFn, slimFn, sym.exportName, args, thisArg, hyrum, opts, persistClock);
+        const live = deserializeEvent({ args: tr.args, thisArg: tr.thisArg, result: tr.result });
+        await recordCall(report, origFn, slimFn, sym.exportName, live.args, live.thisArg, hyrum, opts, persistClock);
         report.tracesReplayed++;
       }
 
@@ -354,13 +353,12 @@ async function runFuzzPool(opts: {
 
       for (const tr of traces) {
         if (atCap()) break;
-        const args = tr.args.map((a) => hydrate(a));
-        const thisArg = tr.thisArg ? hydrate(tr.thisArg) : undefined;
+        const live = deserializeEvent({ args: tr.args, thisArg: tr.thisArg, result: tr.result });
         await spawn(
           {
             symbol: sym.exportName,
-            args,
-            thisArg,
+            args: live.args,
+            thisArg: live.thisArg,
             kind: "call",
             hyrum,
             cryptoSeed: cryptoSeedFor(opts.envelope, opts.allowFlaky, opts.seed, report.cases),

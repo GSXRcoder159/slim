@@ -99,6 +99,43 @@ test("hyrumFromTraces sets keyOrder from objects with 2+ keys", () => {
   assert.equal(hyrumFromTraces(traces).keyOrder, true);
 });
 
+test("hyrumFromTraces sets sameReference and dateIdentity from result refs", () => {
+  const obj: TraceEvent = {
+    symbol: "get",
+    args: [
+      {
+        t: "obj",
+        keys: ["d"],
+        v: { d: { t: "date", v: 1 } },
+      },
+    ],
+    result: { t: "ref", id: 1 },
+  };
+  const h = hyrumFromTraces([obj]);
+  assert.equal(h.sameReference, true);
+  assert.equal(h.dateIdentity, true);
+});
+
+test("hyrumFromTraces sets prototype, toString, and json from result objects", () => {
+  const traces: TraceEvent[] = [
+    {
+      symbol: "wrap",
+      args: [],
+      result: {
+        t: "obj",
+        keys: ["x"],
+        v: { x: { t: "num", v: 1 } },
+        proto: "null",
+        toStr: true,
+      },
+    },
+  ];
+  const h = hyrumFromTraces(traces);
+  assert.equal(h.prototype, true);
+  assert.equal(h.toString, true);
+  assert.equal(h.json, true);
+});
+
 test("mergeTraces ORs nan onto matching symbol without dropping proto heuristic", () => {
   const traces: TraceEvent[] = [
     { symbol: "get", args: [{ t: "num", v: "NaN" }], result: { t: "undef" } },

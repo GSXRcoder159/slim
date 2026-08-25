@@ -98,7 +98,11 @@ test("docs/scan.schema.json matches ScanReport required fields", () => {
 test("docs/envelope.schema.json requires envelope + closure ID lists", () => {
   const schema = JSON.parse(readFileSync(join(ROOT, "docs/envelope.schema.json"), "utf8")) as {
     required: string[];
-    $defs: { closure: { required: string[] } };
+    $defs: {
+      closure: { required: string[] };
+      hyrumFlags: { required: string[] };
+      slimValue: { properties: { proto?: unknown; toStr?: unknown; syms?: unknown } };
+    };
   };
   assert.deepEqual(
     schema.required.sort(),
@@ -127,6 +131,25 @@ test("docs/envelope.schema.json requires envelope + closure ID lists", () => {
       "untracedCallSiteIds",
     ].sort(),
   );
+  assert.deepEqual(
+    schema.$defs.hyrumFlags.required.slice().sort(),
+    [
+      "dateIdentity",
+      "errorMessage",
+      "json",
+      "keyOrder",
+      "mutation",
+      "nan",
+      "prototype",
+      "sameReference",
+      "signedZero",
+      "sparseArray",
+      "toString",
+    ],
+  );
+  assert.ok(schema.$defs.slimValue.properties.proto);
+  assert.ok(schema.$defs.slimValue.properties.toStr);
+  assert.ok(schema.$defs.slimValue.properties.syms);
 });
 
 test("friday walkthrough documents --no-install", () => {

@@ -1,6 +1,8 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { ArgShape, Envelope, SlimValue, TraceEvent } from "../envelope/types.ts";
+import { emptyHyrum } from "../envelope/types.ts";
+import { STANDING_RUNTIME } from "./standing-equal.ts";
 
 export function emitStandingTests(opts: {
   root: string;
@@ -42,96 +44,41 @@ function standingFile(
 ): string {
   const imports =
     runner === "vitest"
-      ? `import { test, expect } from "vitest";
+      ? `import { test } from "vitest";
 import * as slim from ${JSON.stringify(mod)};
 `
       : `import { test } from "node:test";
-import assert from "node:assert/strict";
 import * as slim from ${JSON.stringify(mod)};
 `;
-  const eq =
-    runner === "vitest"
-      ? `function eq(actual: unknown, expected: unknown): void {
-  expect(actual).toEqual(expected);
-}
-function eqThrows(fn: () => unknown, name: string, message: string): void {
-  expect(fn).toThrow();
-  try { fn(); } catch (err) {
-    const e = err as Error;
-    expect(e.name).toEqual(name);
-    expect(e.message).toEqual(message);
-  }
-}
-`
-      : `function eq(actual: unknown, expected: unknown): void {
-  assert.deepEqual(actual, expected);
-}
-function eqThrows(fn: () => unknown, name: string, message: string): void {
-  assert.throws(fn, (err: Error) => {
-    assert.equal(err.name, name);
-    assert.equal(err.message, message);
-    return true;
-  });
-}
-`;
+  const hyrumBySymbol = Object.fromEntries(
+    env.symbols.map((s) => [s.exportName, s.hyrum ?? emptyHyrum()]),
+  );
   return `${imports}
 // Frozen I/O pairs. This file must not import the original package.
-const pairs = ${JSON.stringify(traces.map(compactTrace), null, 2)};
+const pairs = ${JSON.stringify(traces.map((t) => compactTrace(t, hyrumBySymbol[t.symbol] ?? emptyHyrum())), null, 2)};
 
-${eq}
+${STANDING_RUNTIME}
 test("slim ${env.package.name} frozen pairs", () => {
   for (const p of pairs) {
     const fn = (slim as Record<string, unknown>)[p.symbol];
     if (typeof fn !== "function") continue;
-    const args = p.args.map(revive);
-    if (p.threw) {
-      eqThrows(() => (fn as Function).apply(undefined, args), p.threw.name, p.threw.message);
-    } else {
-      const got = (fn as Function).apply(undefined, args);
-      eq(got, revive(p.result));
-    }
+    checkFrozenPair(fn as Function, p);
   }
 });
 ${debounceBlock(env)}
 ${FAKE_CLOCK}
-function revive(v: any): unknown {
-  if (v === null || v === undefined) return v;
-  if (typeof v !== "object") return v;
-  if (v.t === "undef") return undefined;
-  if (v.t === "null") return null;
-  if (v.t === "bool" || v.t === "str" || v.t === "bigint") return v.v;
-  if (v.t === "num") {
-    if (v.v === "NaN") return NaN;
-    if (v.v === "-0") return -0;
-    if (v.v === "Infinity") return Infinity;
-    if (v.v === "-Infinity") return -Infinity;
-    return v.v;
-  }
-  if (v.t === "arr") return v.v.map(revive);
-  if (v.t === "trunc") return undefined;
-  if (v.t === "obj") {
-    const o = Object.create(null);
-    for (const k of v.keys ?? Object.keys(v.v ?? {})) {
-      Object.defineProperty(o, k, {
-        value: revive(v.v[k]),
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-    }
-    return o;
-  }
-  if (v.t === "date") return new Date(v.v);
-  if (v.t === "regexp") return new RegExp(v.source, v.flags);
-  if (v.t === "map") return new Map((v.v as [unknown, unknown][]).map(([k, val]) => [revive(k), revive(val)]));
-  if (v.t === "set") return new Set((v.v as unknown[]).map(revive));
-  return v.v;
-}
-`;
+`.replace(/\n+$/, "\n");
 }
 
-function compactTrace(t: TraceEvent) {
-  return { symbol: t.symbol, args: t.args, threw: t.threw ?? null, result: t.result ?? null };
+function compactTrace(t: TraceEvent, hyrum: ReturnType<typeof emptyHyrum>) {
+  return {
+    symbol: t.symbol,
+    args: t.args,
+    thisArg: t.thisArg ?? null,
+    threw: t.threw ?? null,
+    result: t.result ?? null,
+    hyrum,
+  };
 }
 
 /** Drop successful traces whose args/result contain functions; revive cannot reconstruct them. */
@@ -147,7 +94,10 @@ function slimValueHasFn(v: SlimValue | undefined, depth = 0): boolean {
   if (!v || depth > 24) return false;
   if (v.t === "fn") return true;
   if (v.t === "arr") return v.v.some((el) => slimValueHasFn(el, depth + 1));
-  if (v.t === "obj") return Object.values(v.v).some((el) => slimValueHasFn(el, depth + 1));
+  if (v.t === "obj") {
+    if (Object.values(v.v).some((el) => slimValueHasFn(el, depth + 1))) return true;
+    return (v.syms ?? []).some((s) => slimValueHasFn(s.v, depth + 1));
+  }
   if (v.t === "map") {
     return v.v.some(([k, val]) => slimValueHasFn(k, depth + 1) || slimValueHasFn(val, depth + 1));
   }
