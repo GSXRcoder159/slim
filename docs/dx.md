@@ -29,10 +29,10 @@ Confirmations: none. `--no-pr` skips GitHub. CI is non-interactive.
 | Code | When |
 | --- | --- |
 | 0 | Success. `watch`: slice not exposed. `check`: all standing tests + envelope match. `scan`: always 0 unless usage/internal (findings are data). |
-| 1 | Operational failure: tests failed, malformed/oversize traces, envelope drifted, slice **exposed** or **uncertain** on an advisory, replace fuzz mismatch, dirty tree blocked a commit. |
+| 1 | Operational failure: tests failed, malformed/oversize traces, envelope drifted, slice **exposed** or **uncertain** on an advisory, replace fuzz mismatch, branch collision, git commit/push/PR failed. |
 | 2 | Usage. Help was printed to stderr. |
 | 3 | Refused / envelope too wide / native / network / fs. Human-readable error already on stderr. |
-| 4 | Environment: Node too old, network required but failed (OSV/npm), `gh` required for `--pr` and missing, no `package.json`, Jest/no-runner/missing hook/timeout when traces are required. |
+| 4 | Environment: Node too old, network required but failed (OSV/npm), `gh` and `GITHUB_TOKEN` both missing when a PR is requested, no origin/unparseable GitHub remote, no `package.json`, Jest/no-runner/missing hook/timeout when traces are required. |
 
 The shipped CLI uses **0–4 only**. Code 5 is reserved for an internal bug path and is not emitted yet.
 
@@ -95,7 +95,7 @@ Always on (substitution safety; flags still recorded from traces): `nan` (NaN eq
 The product.
 
 ```
-    --no-pr             Write files; do not open a PR
+      `--no-pr`            Write files; no branch, commit, push, or PR
     --no-trace          Static-only evidence (cannot claim trace-closed)
     --dry-run           Print the plan; write nothing (including traces)
     --keep-original     Do not uninstall the package
@@ -118,7 +118,7 @@ Steps, in order, stop on first failure. After the first project write, failure *
 7. Write slice (and a `.cjs` companion when CJS `require()` sites exist). Rewrite imports/requires to the slice. Remove only the replaced package and family siblings that have import sites in this envelope.
 8. Refresh the lockfile with `npm install` / `pnpm install` / `yarn install` / `bun install`. Failure → exit 1 (or 4 if the package manager is missing) and rollback. `--no-install` skips this. `--keep-original` skips package.json and lockfile changes.
 9. Write evidence (including revert steps), standing tests, manifest, envelope. Run merge-gate (`testCommand` or `scripts.test`). Failure → rollback.
-10. Unless `--no-pr`: `gh pr create`. No `gh` → exit 4 after local writes exist.
+10. Unless `--no-pr`: after merge-gate, create `slim/<pkg>` from `HEAD` without switching the user's branch or writing `.git/index`. Commit only Slim files, `git push` without `--force`, then `gh pr create --repo --base --head` or GitHub REST with `GITHUB_TOKEN`/`GH_TOKEN`. PRs target origin (not a fork parent). Local or remote branch collision, commit failure, push failure, and `gh`/REST failure are nonzero; the user's branch and index stay recoverable. No `gh` and no token → exit 4 after local writes, with no git refs created. `--no-pr` performs no branch, commit, push, or network.
 
 Default without `--no-pr`: attempt a PR after a successful merge-gate. There is no TTY confirm and no `--yes` / `--no-commit` flag.
 
@@ -168,15 +168,15 @@ slim replace — write a verified slice and (usually) open a PR
 Usage:
   slim replace <pkg> [options]
 
-      --no-pr            Write files, don't open a PR
+      --no-pr            Write files; no branch, commit, push, or PR
       --no-trace         Static-only evidence (cannot claim trace-closed)
       --dry-run          Show the envelope and plan, write nothing including traces
       --keep-original    Do not uninstall the package
       --no-install       Rewrite package.json but skip lockfile refresh
       --out <dir>        Default: src/slim
 
-Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate failed.
-      3 Slim refuses this envelope. 4 missing gh/git when PR required, or missing package manager.
+Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate/git commit/push/PR failed.
+      3 Slim refuses this envelope. 4 missing gh and GITHUB_TOKEN when PR required, missing origin, or missing package manager.
 
 Example:
   slim replace lodash

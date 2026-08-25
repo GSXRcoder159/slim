@@ -88,6 +88,18 @@ test("rollback removes empty dirs created for nested writes", () => {
   assert.equal(readFileSync(join(root, "keep", "x.txt"), "utf8"), "x");
 });
 
+test("mutatedPaths lists project-relative files before commit", () => {
+  const root = tmp();
+  const f = join(root, "src", "slim", "lodash.ts");
+  const txn = new MutationTxn(root);
+  txn.writeFile(f, "export {}\n");
+  txn.prepareWrite(join(root, ".slim", "lodash", "evidence.md"));
+  writeFileSync(join(root, ".slim", "lodash", "evidence.md"), "md");
+  assert.deepEqual(txn.mutatedPaths().sort(), [".slim/lodash/evidence.md", "src/slim/lodash.ts"]);
+  txn.commit();
+  assert.deepEqual(txn.mutatedPaths(), []);
+});
+
 test("prepareWrite creates parent directories", () => {
   const root = tmp();
   const f = join(root, "a", "b", "c.txt");

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_FAIL, EXIT_OK, SlimExit } from "./exit.ts";
 import { JSON_SCHEMA_VERSION, statusFromExit, writeJson } from "./json.ts";
@@ -115,6 +115,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
       title: `slim: upstream slice fix for ${firstId}`,
       body,
       branch: "slim/upstream",
+      files: upstreamPrFiles(project.root, man, fixResults),
     });
   }
   const exit = exposed ? EXIT_FAIL : EXIT_OK;
@@ -130,6 +131,28 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
   if (exposed) throw new SlimExit(EXIT_FAIL, "slice exposed or advisory unmapped", { skipJson: args.json });
   if (!args.json) process.stdout.write("slice not exposed.\n");
   return EXIT_OK;
+}
+
+function upstreamPrFiles(
+  root: string,
+  man: Manifest,
+  results: ApplyUpstreamFixResult[],
+): string[] {
+  const files = new Set<string>([".slim/UPSTREAM.md", ".slim/manifest.json"]);
+  if (existsSync(join(root, "slim.json"))) files.add("slim.json");
+  for (const [name, rec] of Object.entries(man.replacements)) {
+    files.add(join(".slim", name, "evidence.md"));
+    files.add(join(".slim", name, "evidence.json"));
+    files.add(join(".slim", name, "envelope.json"));
+    files.add(rec.module);
+    files.add(rec.module.replace(/\.(ts|js|mjs|cjs)$/, ".hardened.test.ts"));
+  }
+  for (const r of results) {
+    if (r.hardenedTest) files.add(relative(root, r.hardenedTest).replace(/\\/g, "/"));
+  }
+  return [...files]
+    .map((f) => f.replace(/\\/g, "/"))
+    .filter((f) => existsSync(join(root, f)));
 }
 
 function prBody(root: string, findings: UpstreamFinding[], results: ApplyUpstreamFixResult[]): string {

@@ -58,3 +58,11 @@ test("doctor always prints the CJS hooks recommendation", async () => {
   assert.equal(code, EXIT_OK);
   assert.ok(stdout.includes(CJS_HOOKS_LINE), stdout);
 });
+
+test("doctor does not claim local-only PRs when gh is missing", async () => {
+  const { stdout } = await captureDoctor(["doctor"]);
+  assert.equal(/local-only/i.test(stdout), false);
+  if (!stdout.includes("gh              yes")) {
+    assert.match(stdout, /PR needs gh or GITHUB_TOKEN/);
+  }
+});

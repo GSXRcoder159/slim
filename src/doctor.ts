@@ -124,7 +124,7 @@ export async function runDoctor(args: CliArgs): Promise<number> {
   } else {
     process.stdout.write(`node            ${report.node} ${report.nodeOk ? "ok" : "TOO OLD"}\n`);
     process.stdout.write(`registerHooks   ${report.registerHooks ? "yes" : "NO"}\n`);
-    process.stdout.write(`gh              ${report.gh ? "yes" : "missing (PRs will be local-only)"}\n`);
+    process.stdout.write(`gh              ${report.gh ? "yes" : "missing (PR needs gh or GITHUB_TOKEN)"}\n`);
     process.stdout.write(`typescript      ${report.typescript ? "yes" : "NO"}\n`);
     process.stdout.write(`git             ${report.git ? "yes" : "NO"}\n`);
     process.stdout.write(`lockfile        ${report.lockfile ?? "none"}\n`);

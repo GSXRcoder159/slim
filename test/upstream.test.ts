@@ -244,6 +244,7 @@ test("--pr title is slim: upstream slice fix for <id>", async () => {
       title = opts.title;
       body = opts.body;
       branch = opts.branch;
+      assert.ok(opts.files.includes(".slim/UPSTREAM.md"));
       return { url: "https://example.test/pr/1", local: false };
     },
   });

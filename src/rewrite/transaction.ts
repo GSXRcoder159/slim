@@ -7,7 +7,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
 /** Snapshot mutated paths; restore or unlink on rollback. First snapshot wins. */
 export class MutationTxn {
@@ -49,6 +49,12 @@ export class MutationTxn {
   writeFile(absPath: string, data: string | Buffer): void {
     this.prepareWrite(absPath);
     writeFileSync(absPath, data);
+  }
+
+  /** Project-relative POSIX paths snapshotted in this transaction. Empty after commit/rollback. */
+  mutatedPaths(): string[] {
+    const root = resolve(this.root);
+    return [...this.originals.keys()].map((p) => relative(root, p).replace(/\\/g, "/"));
   }
 
   commit(): void {

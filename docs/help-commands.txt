@@ -32,7 +32,7 @@ Usage:
       --workers <n>      Fuzz worker threads (default: CPUs-1; 1 = in-process)
       --seed <n>         Deterministic fuzz seed
       --allow-flaky      Fuzz unseeded RNG packages (not production-ready evidence)
-      --no-pr            Write files, don't open a PR
+      --no-pr            Write files; no branch, commit, push, or PR
       --no-trace         Skip tests; static-only evidence (cannot claim trace-closed)
       --dry-run          Show the envelope and plan, write nothing (including traces)
       --out <dir>        Default: src/slim
@@ -42,9 +42,10 @@ Usage:
       --template-only    Catalog only, no LLM
       --max-attempts <n> LLM repair loop (default 3)
 
-Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate/repair exhausted.
-      3 Slim refuses this envelope, or no catalog and no LLM key. 4 missing gh/git,
-      LLM HTTP/timeout, missing package manager, or traces required.
+Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate/repair exhausted/git commit/push/PR.
+      3 Slim refuses this envelope, or no catalog and no LLM key. 4 missing gh and
+      GITHUB_TOKEN when a PR is requested, missing origin, LLM HTTP/timeout,
+      missing package manager, or traces required.
       `--force` does not skip tracing.
 
 Example:  slim replace lodash

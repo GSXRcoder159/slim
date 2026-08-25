@@ -241,6 +241,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
   const moduleRel = relative(project.root, slimPath).replace(/\\/g, "/");
   const cjsRel = cjsPath ? relative(project.root, cjsPath).replace(/\\/g, "/") : null;
 
+  let slimFiles: string[] = [];
   try {
     txn.writeFile(slimPath, source);
     if (cjsPath) {
@@ -365,6 +366,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
     if (shouldRunMergeGate(args)) {
       runMergeGate(project.root, config.testCommand);
     }
+    slimFiles = txn.mutatedPaths();
     txn.commit();
   } catch (err) {
     const ranInstall = txn.lockfileRefreshed;
@@ -385,6 +387,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
       title: `slim: replace ${env.package.name} with a verified slice`,
       body: prBodyFromEvidence(project.root, env.package.name),
       branch: `slim/${fileBase(env.package.name)}`,
+      files: slimFiles,
     });
     if (pr?.url) process.stdout.write(pr.url + "\n");
   }

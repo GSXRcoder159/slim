@@ -173,11 +173,19 @@ test("PR requested without gh or token is EXIT_ENV after local writes", async ()
     () =>
       githubPr.maybeCreatePullRequest(
         true,
-        { root: "/tmp", title: "t", body: "b", branch: "slim/x" },
+        { root: "/tmp", title: "t", body: "b", branch: "slim/x", files: ["src/slim/x.ts"] },
         {
           hasGh: () => false,
           env: {},
-          execFile: () => "",
+          execFile: (file, args = []) => {
+            if (file === "git" && args[0] === "show-ref") {
+              throw Object.assign(new Error("not a valid ref"), { status: 1 });
+            }
+            if (file === "git" && args[0] === "remote") return "git@github.com:acme/app.git\n";
+            if (file === "git" && args[0] === "rev-parse") return "abc\n";
+            if (file === "git" && args[0] === "ls-remote") return "";
+            return "";
+          },
           fetchImpl: async () => new Response("no"),
         },
       ),
@@ -193,7 +201,7 @@ test("--no-pr never attempts PR and does not throw EXIT_ENV", async () => {
   assert.equal(typeof githubPr.maybeCreatePullRequest, "function");
   const result = await githubPr.maybeCreatePullRequest(
     false,
-    { root: "/tmp", title: "t", body: "b", branch: "slim/x" },
+    { root: "/tmp", title: "t", body: "b", branch: "slim/x", files: ["src/slim/x.ts"] },
     {
       hasGh: () => false,
       env: {},
@@ -211,6 +219,11 @@ test("--no-pr never attempts PR and does not throw EXIT_ENV", async () => {
 test("runReplace awaits PR after writes and does not swallow EXIT_ENV", () => {
   const src = readFileSync(join(REPO_ROOT, "src/replace.ts"), "utf8");
   assert.match(src, /await maybeCreatePullRequest\(!args\.noPr/);
+  assert.match(src, /txn\.mutatedPaths\(\)/);
+  assert.match(src, /files:\s*slimFiles/);
+  const beforePr = src.slice(0, src.lastIndexOf("if (!args.noPr)"));
+  assert.match(beforePr, /runMergeGate/);
+  assert.match(beforePr, /txn\.commit\(\)/);
   const prSection = src.slice(src.lastIndexOf("if (!args.noPr)"));
   const beforeReturn = prSection.split("return EXIT_OK")[0] ?? "";
   assert.equal(/try\s*\{/.test(beforeReturn), false);
