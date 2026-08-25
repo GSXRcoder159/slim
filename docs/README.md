@@ -10,6 +10,11 @@
 | [slim.schema.json](./slim.schema.json) | Config schema (seven fields) |
 | [scan.schema.json](./scan.schema.json) | `slim scan --json` report schema |
 | [envelope.schema.json](./envelope.schema.json) | Envelope JSON (`inspect --json` / `.slim/<pkg>/envelope.json`) |
+| [inspect.schema.json](./inspect.schema.json) | `slim inspect --json` wrapper |
+| [check.schema.json](./check.schema.json) | `slim check --json` report |
+| [doctor.schema.json](./doctor.schema.json) | `slim doctor --json` report |
+| [upstream.schema.json](./upstream.schema.json) | `slim upstream --json` report |
+| [error.schema.json](./error.schema.json) | `--json` usage/SlimExit document when a command has no payload |
 | [transcripts/friday-lodash.txt](./transcripts/friday-lodash.txt) | Magical moment, stdout/stderr |
 | [samples/lodash.slice.js](./samples/lodash.slice.js) | Historical JS sketch; the Friday slice is TypeScript in `fixtures/lodash-get-debounce/` (~250 lines) |
 | [examples/](./examples/) | User-repo GitHub workflows |

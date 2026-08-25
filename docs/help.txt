@@ -8,10 +8,10 @@ Usage:
   slim scan [dir] [--json]
   slim inspect <pkg> [--json] [--allow-unknown]
   slim replace <pkg> [options]
-  slim check
-  slim upstream [--pr]
+  slim check [pkg] [--json]
+  slim upstream [--pr] [--json]
   slim watch                  (alias of upstream)
-  slim doctor [--strict]
+  slim doctor [--strict] [--json]
 
 Replace options:
   --budget-ms <n>     process wall clock (never the fake clock); run returns within n+2000ms

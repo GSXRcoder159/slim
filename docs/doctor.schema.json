@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/doctor.schema.json",
+  "title": "Slim doctor --json report",
+  "description": "One JSON document on stdout. schemaVersion 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "ok",
+    "exit",
+    "status",
+    "node",
+    "nodeOk",
+    "registerHooks",
+    "gh",
+    "typescript",
+    "git",
+    "dirtyTree",
+    "lockfile",
+    "issues"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "ok": { "type": "boolean" },
+    "exit": { "type": "integer", "enum": [0, 1, 2, 3, 4] },
+    "status": { "type": "string", "enum": ["ok", "fail", "usage", "refused", "env"] },
+    "node": { "type": "string" },
+    "nodeOk": { "type": "boolean" },
+    "registerHooks": { "type": "boolean" },
+    "gh": { "type": "boolean" },
+    "typescript": { "type": "boolean" },
+    "git": { "type": "boolean" },
+    "dirtyTree": { "type": "boolean" },
+    "lockfile": { "type": ["string", "null"] },
+    "issues": { "type": "array", "items": { "type": "string" } }
+  }
+}

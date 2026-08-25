@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_FAIL, EXIT_OK, SlimExit } from "./exit.ts";
+import { JSON_SCHEMA_VERSION, statusFromExit, writeJson } from "./json.ts";
 import { loadProject } from "./project.ts";
 import { loadConfig } from "./config.ts";
 import { queryOsv, type OsvVuln } from "./upstream/osv.ts";
@@ -28,10 +29,25 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
   const openPr = deps.createPullRequest ?? createPullRequest;
   const manPath = join(project.root, ".slim", "manifest.json");
   if (!existsSync(manPath)) {
-    process.stdout.write("no .slim/manifest.json — nothing to watch\n");
+    if (args.json) {
+      writeJson({
+        schemaVersion: JSON_SCHEMA_VERSION,
+        ok: true,
+        exit: EXIT_OK,
+        status: "ok",
+        findings: [],
+      });
+    } else {
+      process.stdout.write("no .slim/manifest.json — nothing to watch\n");
+    }
     return EXIT_OK;
   }
-  const man = JSON.parse(readFileSync(manPath, "utf8")) as Manifest;
+  let man: Manifest;
+  try {
+    man = JSON.parse(readFileSync(manPath, "utf8")) as Manifest;
+  } catch {
+    throw new SlimExit(EXIT_FAIL, "malformed .slim/manifest.json");
+  }
   const names = Object.keys(man.replacements);
   let exposed = false;
   const findings: UpstreamFinding[] = [];
@@ -61,17 +77,16 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
       });
       if (exp === "exposed" || exp === "unmapped") {
         exposed = true;
-        process.stdout.write(
-          `${name}: ${v.id} ${exp} — ${v.summary ?? ""}\n  fail-closed: advisory ${exp === "unmapped" ? "could not be mapped to used exports" : "hits this slice"}\n`,
-        );
+        const line = `${name}: ${v.id} ${exp} — ${v.summary ?? ""}\n  fail-closed: advisory ${exp === "unmapped" ? "could not be mapped to used exports" : "hits this slice"}\n`;
+        if (args.json) process.stderr.write(line);
+        else process.stdout.write(line);
       }
     }
     if (latest !== pinned && seen.size === 0) {
-      process.stdout.write(`${name}: ${pinned} → ${latest} (routine release, fail-open)\n`);
+      const line = `${name}: ${pinned} → ${latest} (routine release, fail-open)\n`;
+      if (args.json) process.stderr.write(line);
+      else process.stdout.write(line);
     }
-  }
-  if (args.json) {
-    process.stdout.write(JSON.stringify({ findings }, null, 2) + "\n");
   }
   const fixResults: ApplyUpstreamFixResult[] = [];
   if (exposed) {
@@ -102,7 +117,17 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
       branch: "slim/upstream",
     });
   }
-  if (exposed) throw new SlimExit(EXIT_FAIL, "slice exposed or advisory unmapped");
+  const exit = exposed ? EXIT_FAIL : EXIT_OK;
+  if (args.json) {
+    writeJson({
+      schemaVersion: JSON_SCHEMA_VERSION,
+      ok: !exposed,
+      exit,
+      status: statusFromExit(exit),
+      findings,
+    });
+  }
+  if (exposed) throw new SlimExit(EXIT_FAIL, "slice exposed or advisory unmapped", { skipJson: args.json });
   if (!args.json) process.stdout.write("slice not exposed.\n");
   return EXIT_OK;
 }

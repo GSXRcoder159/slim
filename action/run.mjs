@@ -30,6 +30,11 @@ const src = join(root, "src/github", `${rel}.ts`);
 let argv;
 if (existsSync(dist)) {
   argv = [dist, ...extra];
+} else if (process.env.SLIM_REQUIRE_DIST) {
+  process.stderr.write(
+    `slim action ${cmd}: SLIM_REQUIRE_DIST=1 but missing dist/github/${rel}.js under ${root}\n`,
+  );
+  process.exit(4);
 } else if (existsSync(src)) {
   argv = ["--experimental-strip-types", src, ...extra];
 } else {

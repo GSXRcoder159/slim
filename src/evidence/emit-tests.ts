@@ -83,6 +83,8 @@ function compactTrace(t: TraceEvent, hyrum: ReturnType<typeof emptyHyrum>) {
     threw: t.threw ?? null,
     result: t.result ?? null,
     hyrum,
+    ...(t.argsAfter && !t.argsAfter.some((a) => slimValueHasFn(a)) ? { argsAfter: t.argsAfter } : {}),
+    ...(t.thisAfter && !slimValueHasFn(t.thisAfter) ? { thisAfter: t.thisAfter } : {}),
   };
 }
 
@@ -154,7 +156,7 @@ function debounceBlock(env: Envelope): string {
   const timer = env.symbols.find((s) => s.exportName === "debounce" || s.exportName === "throttle");
   if (!timer) return "";
   const name = timer.exportName;
-  const scripts = ["trailing-single", "cancel-mid"];
+  const scripts = ["trailing-single", "cancel-mid", "flush-mid", "flush-empty"];
   if (observedOptions(timer.callSites)) {
     scripts.push("leading-only");
   }
@@ -188,6 +190,41 @@ test("debounce cancel-mid", () => {
     d.cancel();
     clock.advance(32);
     eq(n, 0);
+  } finally {
+    clock.restore();
+  }
+});
+`,
+    "flush-mid": `
+test("debounce flush-mid", () => {
+  const clock = createStandingClock();
+  try {
+    const ${name} = (slim as { ${name}: Function }).${name};
+    let n = 0;
+    let last: unknown;
+    const d = ${name}((x: unknown) => { n++; last = x; }, 32);
+    d("flush-me");
+    clock.advance(10);
+    d.flush();
+    eq(n, 1);
+    eq(last, "flush-me");
+    clock.advance(32);
+    eq(n, 1);
+  } finally {
+    clock.restore();
+  }
+});
+`,
+    "flush-empty": `
+test("debounce flush-empty", () => {
+  const clock = createStandingClock();
+  try {
+    const ${name} = (slim as { ${name}: Function }).${name};
+    let n = 0;
+    const d = ${name}(() => { n++; }, 32);
+    const flushed = d.flush();
+    eq(n, 0);
+    eq(flushed, undefined);
   } finally {
     clock.restore();
   }

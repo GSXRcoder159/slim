@@ -17,7 +17,7 @@ jobs:
         with:
           node-version: "22.18"
       - run: npm ci
-      - run: npx tsc -p tsconfig.json
+      - run: npm run build
       - run: node dist/main.js upstream --pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -52,11 +52,13 @@ Example:  slim replace lodash
 slim check — re-run standing tests; envelope still matches call sites
 
 Usage:
-  slim check [pkg]
+  slim check [pkg] [--json]
 
-      --update-envelope  Rewrite call-site list if it grew, then fail
+      --json             One schema-valid document on stdout (docs/check.schema.json)
 
-No network. Empty src/slim exits 0.
+No network. Fails on semantic envelope drift, missing standing tests,
+malformed envelopes, or a failing standing/hardening suite. Prefers
+scripts.slim:evidence. Empty replacements exit 0.
 Example:  slim check
 ------------------------------------------------------------------------
 slim watch — see if upstream advisories/releases touch your slice
@@ -66,6 +68,7 @@ Usage:
   slim upstream [pkg]          (alias)
 
       --pr               Open a PR if a slice is exposed or uncertain
+      --json             One schema-valid document on stdout (docs/upstream.schema.json)
       --write-workflow   Write .github/workflows/slim-watch.yml and exit
       --fail-on <mode>   slice-exposed (default) | any-advisory | never
 
@@ -75,7 +78,10 @@ Example:  slim watch --write-workflow
 slim doctor — check Node, git, gh, slices, and the watch workflow
 
 Usage:
-  slim doctor
+  slim doctor [--strict] [--json]
+
+      --strict           dirty working tree exits 4 (default: list it)
+      --json             One schema-valid document on stdout (docs/doctor.schema.json)
 
 Warnings (no gh, no watch workflow) do not fail. Node too old exits 4.
 Example:  slim doctor

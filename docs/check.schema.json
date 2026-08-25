@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/check.schema.json",
+  "title": "Slim check --json report",
+  "description": "One JSON document on stdout for success and non-success. schemaVersion 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "exit", "status", "packages"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "ok": { "type": "boolean" },
+    "exit": { "type": "integer", "enum": [0, 1, 2, 3, 4] },
+    "status": { "type": "string", "enum": ["ok", "fail", "usage", "refused", "env"] },
+    "packages": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/package" }
+    }
+  },
+  "$defs": {
+    "drift": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "detail"],
+      "properties": {
+        "kind": { "type": "string" },
+        "detail": { "type": "string" }
+      }
+    },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pkg", "ok", "drift", "unknowns", "standing", "residualRisk"],
+      "properties": {
+        "pkg": { "type": "string" },
+        "ok": { "type": "boolean" },
+        "drift": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/drift" }
+        },
+        "unknowns": { "type": "array", "items": { "type": "string" } },
+        "standing": { "type": "string", "enum": ["pass", "fail", "missing"] },
+        "residualRisk": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

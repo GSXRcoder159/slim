@@ -2,7 +2,7 @@
 
 Wedge: a serverless/edge engineer on a Friday. CVE in a library they use two functions of. They run `slim replace lodash`, read a slice readable in one sitting (~250 lines for get+debounce) plus an evidence report, merge before standup.
 
-Money and billing are out of scope. There is no SaaS. Slim is a CLI plus two GitHub Actions that call that CLI.
+Money and billing are out of scope. There is no SaaS. Slim is a CLI plus three GitHub Actions that call that CLI.
 
 Parser: `node:util.parseArgs`. No commander, yargs, cac, meow. Subcommands are a `switch` on `positionals[0]`. Alias `upstream` → `watch`.
 
@@ -127,23 +127,25 @@ Default without `--no-pr`: attempt a PR after a successful merge-gate. There is 
 CI. No network. No generation.
 
 ```
-    --update-envelope   Rewrite envelope call-site list if it grew, then fail
-                        (default: fail on drift, do not rewrite)
+    --json              One schema-valid document on stdout (docs/check.schema.json)
 ```
 
-For each slice (or one pkg):
+For each recorded slice (or one pkg):
 
-1. Re-scan call sites. If a site uses an export not in the envelope → fail (exit 1).
-2. Run `src/slim/<pkg>.test.js` via `node --test`.
-3. Hash the slice file; compare to meta. If the human edited the slice, that’s fine — hash updates only with `--update-envelope`? **No.** Edits are allowed; check does not fail on hash mismatch. Hash is for watch/repro. Check fails on test fail and envelope drift only.
+1. Re-analyze call sites. Fail on added symbols, new call shapes (arity, literals, options), new result members, new import forms, new env tags, or new unknowns — even when the symbol name is unchanged.
+2. Fail on missing/malformed envelopes, envelope hash mismatch vs evidence/manifest, version mismatch, or missing slice exports.
+3. Run `scripts.slim:evidence` if set, else `src/slim/<pkg>.test.ts` via `node --test`. Missing standing tests fail. If `<slice>.hardened.test.ts` exists, run it too.
 4. Optional `testCommand`.
 
-Empty `src/slim` → exit 0 with `no slices` (so adding the Action to a repo that has not slimmed yet is free).
+Empty replacements / no manifest → exit 0 (so adding the Action to a repo that has not slimmed yet is free). `--update-envelope` is not a flag; drift always fails.
+
+JSON `{ schemaVersion, ok, exit, status, packages[] }` includes per-package `drift`, `standing`, and `residualRisk` from evidence. Human mode prints the same status and residual risk.
 
 ### `slim watch [pkg]`  (alias `slim upstream`)
 
 ```
     --pr                Open a PR if a slice is exposed or uncertain
+    --json              One schema-valid document on stdout (docs/upstream.schema.json)
     --write-workflow    Write .github/workflows/slim-watch.yml and exit
     --fail-on <mode>    slice-exposed (default) | any-advisory | never
 ```
@@ -152,7 +154,7 @@ See §9. Network: OSV, GitHub GraphQL/REST if `GITHUB_TOKEN`/`gh`, npm registry.
 
 ### `slim doctor`
 
-`--strict` makes a dirty working tree exit 4. Default: list the dirty-tree issue and still exit 0 if Node and `registerHooks` are ok. Always prints a CJS hooks recommendation for Node >= 22.22.3. Exit 4 if Node < 22.18. Warnings (gh missing, no watch workflow, dirty tree without `--strict`) do not fail doctor. `--json` dumps the report including `dirtyTree` and `issues`.
+`--strict` makes a dirty working tree exit 4. Default: list the dirty-tree issue and still exit 0 if Node and `registerHooks` are ok. Always prints a CJS hooks recommendation for Node >= 22.22.3. Exit 4 if Node < 22.18. Warnings (gh missing, no watch workflow, dirty tree without `--strict`) do not fail doctor. `--json` dumps `{ schemaVersion, ok, exit, status, …report }` including `dirtyTree` and `issues` (docs/doctor.schema.json).
 
 ### Command help (tired human)
 
@@ -281,7 +283,7 @@ No “50% faster p95.” If a later flag `--measure` exists, it can run `wrangle
 
 ## 5. GitHub Actions
 
-Two composite actions in this repo. They wrap the CLI. Users still `actions/checkout` first.
+Three composite actions in this repo (`check`, `bloat`, `upstream`). They wrap the CLI via `action/run.mjs`, which prefers `dist/github/*.js`. This repository’s workflows run `npm run build` first and set `SLIM_REQUIRE_DIST=1` so CI cannot pass on strip-types source when the distributable is missing. Published `uses: slim-js/slim/action/check@v1` still falls back to source when dist is absent (GitHub checkouts do not include gitignored `dist/`). Users still `actions/checkout` first.
 
 ### `slim-check` (on every PR)
 
@@ -301,29 +303,7 @@ jobs:
       - uses: slim-js/slim/action/check@v1
 ```
 
-`action/check/action.yml` (ours):
-
-```yaml
-name: slim-check
-description: Re-run Slim standing tests; envelope still matches call sites
-inputs:
-  version:
-    description: npm dist-tag or exact slim version
-    default: "1"
-  working-directory:
-    default: "."
-runs:
-  using: composite
-  steps:
-    - uses: actions/setup-node@v4
-      with:
-        node-version: "22.18"
-    - run: npx --yes slim@${{ inputs.version }} check
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-```
-
-Fails the PR on envelope drift or standing-test fail. Empty `src/slim` → pass.
+`action/check/action.yml` requires Node >= 22.18 and runs `action/run.mjs check`. Fails the PR on envelope drift, missing standing tests, or a failing standing/hardening suite. No recorded replacements → pass.
 
 ### `slim-bloat` (optional, PRs that add fat deps)
 

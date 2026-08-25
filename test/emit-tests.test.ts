@@ -123,6 +123,8 @@ test("debounce standing tests use an inline fake clock, not wall-clock setTimeou
   assert.doesNotMatch(body, /await .+setTimeout/);
   assert.match(body, /cancel-mid/);
   assert.match(body, /trailing-single/);
+  assert.match(body, /flush-mid/);
+  assert.match(body, /flush-empty/);
   assert.match(body, /advance\(/);
   assert.doesNotMatch(body, /from ["']lodash["']/);
 
@@ -487,6 +489,45 @@ test("standing tests pass identity-preserving get for ref results", () => {
     runner: "node:test",
     moduleSpecifier: "./lodash.ts",
   });
+  const r = spawnTest(file, dir);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+});
+
+test("standing tests compare post-call arg mutation when argsAfter is frozen", () => {
+  const dir = tmpProject();
+  writeFileSync(
+    join(dir, "src", "lodash.ts"),
+    `export function pull(arr: unknown[], value: unknown) {
+  const i = arr.indexOf(value);
+  if (i >= 0) arr.splice(i, 1);
+  return arr;
+}
+`,
+  );
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "lodash",
+    env: env({ symbols: ["pull"] }),
+    traces: [
+      {
+        symbol: "pull",
+        args: [
+          { t: "arr", v: [{ t: "num", v: 1 }, { t: "num", v: 2 }], holes: [] },
+          { t: "num", v: 1 },
+        ],
+        result: { t: "ref", id: 0 },
+        argsAfter: [
+          { t: "arr", v: [{ t: "num", v: 2 }], holes: [] },
+          { t: "num", v: 1 },
+        ],
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./lodash.ts",
+  });
+  const body = readFileSync(file, "utf8");
+  assert.match(body, /argsAfter/);
   const r = spawnTest(file, dir);
   assert.equal(r.status, 0, r.stderr + r.stdout);
 });

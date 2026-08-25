@@ -7,9 +7,13 @@ export const EXIT_ENV = 4;
 
 export class SlimExit extends Error {
   readonly code: number;
-  constructor(code: number, message: string) {
+  readonly json?: unknown;
+  readonly skipJson: boolean;
+  constructor(code: number, message: string, opts?: { json?: unknown; skipJson?: boolean }) {
     super(message);
     this.name = "SlimExit";
     this.code = code;
+    this.json = opts?.json;
+    this.skipJson = opts?.skipJson === true;
   }
 }

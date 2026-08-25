@@ -97,6 +97,14 @@ test("action runner is committed JS and prefers dist", () => {
     assert.equal(srcOnly.status, 0, srcOnly.stderr);
     assert.equal(srcOnly.stdout.trim(), "SRC");
 
+    const requireDist = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
+      encoding: "utf8",
+      env: { ...process.env, SLIM_REQUIRE_DIST: "1" },
+    });
+    assert.equal(requireDist.status, 4);
+    assert.match(requireDist.stderr, /SLIM_REQUIRE_DIST/);
+    assert.notEqual(requireDist.stdout.trim(), "SRC");
+
     rmSync(join(tmp, "src"), { recursive: true, force: true });
     const neither = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
       encoding: "utf8",

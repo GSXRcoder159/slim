@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { registerHooks } from "node:module";
 import { EXIT_OK, EXIT_ENV } from "./exit.ts";
 import type { CliArgs } from "./cli.ts";
+import { JSON_SCHEMA_VERSION, statusFromExit, writeJson } from "./json.ts";
 import { loadProject } from "./project.ts";
 import { MIN_NODE_LABEL, nodeMeetsMinimum } from "./node-min.ts";
 
@@ -111,8 +112,15 @@ export function doctorExitCode(report: DoctorReport, strict: boolean): number {
 
 export async function runDoctor(args: CliArgs): Promise<number> {
   const report = collectDoctor();
+  const exit = doctorExitCode(report, args.strict);
   if (args.json) {
-    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    writeJson({
+      schemaVersion: JSON_SCHEMA_VERSION,
+      ok: exit === EXIT_OK,
+      exit,
+      status: statusFromExit(exit),
+      ...report,
+    });
   } else {
     process.stdout.write(`node            ${report.node} ${report.nodeOk ? "ok" : "TOO OLD"}\n`);
     process.stdout.write(`registerHooks   ${report.registerHooks ? "yes" : "NO"}\n`);
@@ -128,5 +136,5 @@ export async function runDoctor(args: CliArgs): Promise<number> {
       process.stdout.write("\nready.\n");
     }
   }
-  return doctorExitCode(report, args.strict);
+  return exit;
 }

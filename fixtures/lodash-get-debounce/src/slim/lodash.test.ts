@@ -1050,6 +1050,39 @@ test("debounce cancel-mid", () => {
   }
 });
 
+test("debounce flush-mid", () => {
+  const clock = createStandingClock();
+  try {
+    const debounce = (slim as { debounce: Function }).debounce;
+    let n = 0;
+    let last: unknown;
+    const d = debounce((x: unknown) => { n++; last = x; }, 32);
+    d("flush-me");
+    clock.advance(10);
+    d.flush();
+    eq(n, 1);
+    eq(last, "flush-me");
+    clock.advance(32);
+    eq(n, 1);
+  } finally {
+    clock.restore();
+  }
+});
+
+test("debounce flush-empty", () => {
+  const clock = createStandingClock();
+  try {
+    const debounce = (slim as { debounce: Function }).debounce;
+    let n = 0;
+    const d = debounce(() => { n++; }, 32);
+    const flushed = d.flush();
+    eq(n, 0);
+    eq(flushed, undefined);
+  } finally {
+    clock.restore();
+  }
+});
+
 
 function createStandingClock(): {
   advance(ms: number): void;

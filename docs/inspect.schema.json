@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/inspect.schema.json",
+  "title": "Slim inspect --json report",
+  "description": "One JSON document on stdout for try and refuse. Usage errors use docs/error.schema.json. schemaVersion 1 envelope lives in envelope.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["envelope", "hash", "decision", "reason"],
+  "properties": {
+    "envelope": { "$ref": "envelope.schema.json" },
+    "hash": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "decision": { "type": "string", "enum": ["try", "refuse"] },
+    "reason": { "type": "string" }
+  }
+}

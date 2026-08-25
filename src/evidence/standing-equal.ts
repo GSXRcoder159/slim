@@ -333,5 +333,19 @@ function checkFrozenPair(fn, p) {
   if (!standingEqual(got, live.result, hyrum)) {
     throw new Error("standing mismatch for " + p.symbol);
   }
+  if (p.argsAfter) {
+    const afterSeen = [];
+    const expectedArgs = (p.argsAfter ?? []).map((a) => decode(a, afterSeen));
+    if (!standingEqual(live.args, expectedArgs, hyrum)) {
+      throw new Error("standing args mutation mismatch for " + p.symbol);
+    }
+  }
+  if (p.thisAfter != null) {
+    const afterSeen = [];
+    const expectedThis = decode(p.thisAfter, afterSeen);
+    if (!standingEqual(live.thisArg, expectedThis, hyrum)) {
+      throw new Error("standing receiver mutation mismatch for " + p.symbol);
+    }
+  }
 }
 `;

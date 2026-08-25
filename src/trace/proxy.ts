@@ -3,6 +3,7 @@ import type { TraceEvent } from "../envelope/types.ts";
 import {
   createWalker,
   mutatedArgIndexes,
+  serialize,
   snapshot,
 } from "./serialize.ts";
 import { captureUserSite } from "./stack.ts";
@@ -187,6 +188,7 @@ function recordConstruct(
       tRelMs,
       sessionId,
     };
+    if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
     if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
     if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
     if (site) event.site = site;
@@ -205,6 +207,7 @@ function recordConstruct(
       tRelMs,
       sessionId,
     };
+    if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
     if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
     if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
     if (site) event.site = site;
@@ -244,9 +247,13 @@ function recordCall(
       tRelMs,
       sessionId,
     };
+    if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
+    if (thisSv !== undefined) {
+      event.thisArg = thisSv;
+      event.thisAfter = serialize(thisArg);
+    }
     if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
     if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
-    if (thisSv !== undefined) event.thisArg = thisSv;
     if (site) event.site = site;
     opts.onEvent(event);
     return recorded;
@@ -263,9 +270,13 @@ function recordCall(
       tRelMs,
       sessionId,
     };
+    if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
+    if (thisSv !== undefined) {
+      event.thisArg = thisSv;
+      event.thisAfter = serialize(thisArg);
+    }
     if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
     if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
-    if (thisSv !== undefined) event.thisArg = thisSv;
     if (site) event.site = site;
     opts.onEvent(event);
     throw err;

@@ -1,7 +1,7 @@
 /**
  * SPDX-License-Identifier: MIT
  * Original implementation, not derived from lodash, Underscore, or OpenJS.
- * Envelope 214d05c55226e84d106963f00bcd08894fc0b900079e9d919f63cfb1c3980608
+ * Envelope 217c102e5c34a74ba017061f1a5574a2ada6cd6a6497e6797e6eb97eafa706c4
  * Catalog lodash.get, lodash.debounce
  * Evidence: .slim/lodash/evidence.md
  *

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { EXIT_FAIL, SlimExit } from "./exit.ts";
 
 export interface SlimConfig {
   outDir: string;
@@ -27,7 +28,12 @@ export function loadConfig(projectRoot: string): SlimConfig {
     .map((f) => join(projectRoot, f))
     .find((p) => existsSync(p));
   if (!path) return { ...DEFAULT_CONFIG, replacements: {} };
-  const raw = JSON.parse(readFileSync(path, "utf8")) as Partial<SlimConfig>;
+  let raw: Partial<SlimConfig>;
+  try {
+    raw = JSON.parse(readFileSync(path, "utf8")) as Partial<SlimConfig>;
+  } catch {
+    throw new SlimExit(EXIT_FAIL, `malformed ${basename(path)}`);
+  }
   return {
     outDir: raw.outDir ?? DEFAULT_CONFIG.outDir,
     budgetMs: raw.budgetMs ?? DEFAULT_CONFIG.budgetMs,

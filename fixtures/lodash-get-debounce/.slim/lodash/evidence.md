@@ -13,7 +13,7 @@ Differential fuzzing over the inferred envelope is strong evidence, not proof.
 - Call sites: 6
 - Unknowns: 0
 - Catalog: lodash.get, lodash.debounce
-- Envelope hash: `214d05c55226e84d106963f00bcd08894fc0b900079e9d919f63cfb1c3980608`
+- Envelope hash: `217c102e5c34a74ba017061f1a5574a2ada6cd6a6497e6797e6eb97eafa706c4`
 
 ## 3. Byte delta
 

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/error.schema.json",
+  "title": "Slim --json error document",
+  "description": "One JSON document on stdout when a command cannot emit its own result (usage, SlimExit before payload, unknown command). schemaVersion 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "exit", "status", "error"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "ok": { "type": "boolean", "const": false },
+    "exit": { "type": "integer", "enum": [1, 2, 3, 4] },
+    "status": { "type": "string", "enum": ["ok", "fail", "usage", "refused", "env"] },
+    "error": { "type": "string" }
+  }
+}

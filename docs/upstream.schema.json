@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/upstream.schema.json",
+  "title": "Slim upstream --json report",
+  "description": "One JSON document on stdout for success and non-success. schemaVersion 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "ok", "exit", "status", "findings"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "ok": { "type": "boolean" },
+    "exit": { "type": "integer", "enum": [0, 1, 2, 3, 4] },
+    "status": { "type": "string", "enum": ["ok", "fail", "usage", "refused", "env"] },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["package", "pinned", "latest", "id", "exposure"],
+        "properties": {
+          "package": { "type": "string" },
+          "pinned": { "type": "string" },
+          "latest": { "type": "string" },
+          "id": { "type": "string" },
+          "summary": { "type": ["string", "null"] },
+          "details": { "type": ["string", "null"] },
+          "exposure": { "type": "string" }
+        }
+      }
+    }
+  }
+}

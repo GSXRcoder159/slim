@@ -132,6 +132,8 @@ export interface TraceEvent {
   result?: SlimValue;
   threw?: { name: string; message: string; code?: string };
   mutatedArgIndexes?: number[];
+  argsAfter?: SlimValue[];
+  thisAfter?: SlimValue;
   truncated?: boolean;
   /** User call site captured at wrap time (file/line/column only; never a stack dump). */
   site?: { file: string; line: number; column: number };

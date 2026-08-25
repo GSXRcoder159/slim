@@ -152,6 +152,31 @@ test("docs/envelope.schema.json requires envelope + closure ID lists", () => {
   assert.ok(schema.$defs.slimValue.properties.syms);
 });
 
+test("command result schemas exist with required fields", () => {
+  const check = JSON.parse(readFileSync(join(ROOT, "docs/check.schema.json"), "utf8")) as {
+    required: string[];
+  };
+  assert.deepEqual(check.required.sort(), ["exit", "ok", "packages", "schemaVersion", "status"].sort());
+  const err = JSON.parse(readFileSync(join(ROOT, "docs/error.schema.json"), "utf8")) as {
+    required: string[];
+  };
+  assert.deepEqual(err.required.sort(), ["error", "exit", "ok", "schemaVersion", "status"].sort());
+  const inspect = JSON.parse(readFileSync(join(ROOT, "docs/inspect.schema.json"), "utf8")) as {
+    required: string[];
+  };
+  assert.deepEqual(inspect.required.sort(), ["decision", "envelope", "hash", "reason"].sort());
+  const doctor = JSON.parse(readFileSync(join(ROOT, "docs/doctor.schema.json"), "utf8")) as {
+    required: string[];
+  };
+  for (const key of ["ok", "exit", "status", "node", "issues"]) {
+    assert.ok(doctor.required.includes(key), key);
+  }
+  const upstream = JSON.parse(readFileSync(join(ROOT, "docs/upstream.schema.json"), "utf8")) as {
+    required: string[];
+  };
+  assert.deepEqual(upstream.required.sort(), ["exit", "findings", "ok", "schemaVersion", "status"].sort());
+});
+
 test("friday walkthrough documents --no-install", () => {
   const md = readFileSync(join(ROOT, "docs/friday.md"), "utf8");
   assert.match(md, /--no-install/);

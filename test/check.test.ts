@@ -169,16 +169,102 @@ test("runCheck runs config.testCommand after standing tests; nonzero is EXIT_FAI
   );
 });
 
+test("missing standing tests fail check", async () => {
+  const root = fixture({});
+  await assert.rejects(
+    () => runCheck(parseCli(["check"]), { cwd: root }),
+    (err: unknown) =>
+      err instanceof SlimExit &&
+      err.code === EXIT_FAIL &&
+      /slim check failed/.test(err.message),
+  );
+});
+
+test("failing hardened test fails check", async () => {
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: {
+      "ok.js": "process.exit(0);\n",
+      "src/slim/lodash.ts": "export function get() { return 1; }\n",
+      "src/slim/lodash.hardened.test.ts": `import { test } from "node:test";
+test("fail", () => { throw new Error("hardened fail"); });
+`,
+    },
+  });
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const spawn: CheckSpawn = (command, args = []) => {
+    calls.push({ command, args: [...args] });
+    if (args.some((a) => String(a).includes("hardened"))) return { status: 1 };
+    return { status: 0 };
+  };
+  await assert.rejects(
+    () => runCheck(parseCli(["check"]), { cwd: root, spawn }),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+  );
+  assert.ok(calls.some((c) => c.args.some((a) => String(a).includes("hardened"))));
+});
+
+test("malformed envelope fails check", async () => {
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: { "ok.js": "process.exit(0);\n" },
+  });
+  writeFileSync(join(root, ".slim", "lodash", "envelope.json"), "{");
+  await assert.rejects(
+    () => runCheck(parseCli(["check"]), { cwd: root }),
+    (err: unknown) =>
+      err instanceof SlimExit &&
+      err.code === EXIT_FAIL &&
+      /malformed envelope/.test(err.message),
+  );
+});
+
+test("slim check [pkg] rejects unknown package", async () => {
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: { "ok.js": "process.exit(0);\n" },
+  });
+  await assert.rejects(
+    () => runCheck(parseCli(["check", "left-pad"]), { cwd: root }),
+    (err: unknown) =>
+      err instanceof SlimExit &&
+      err.code === EXIT_FAIL &&
+      /left-pad/.test(err.message),
+  );
+});
+
+test("hash mismatch vs evidence.json fails check", async () => {
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: {
+      "ok.js": "process.exit(0);\n",
+      "src/slim/lodash.ts": "export function get() { return 1; }\n",
+      ".slim/lodash/evidence.json": JSON.stringify({ envelopeHash: "not-the-real-hash", residualRisk: [] }),
+    },
+  });
+  await assert.rejects(
+    () => runCheck(parseCli(["check"]), { cwd: root }),
+    (err: unknown) =>
+      err instanceof SlimExit &&
+      err.code === EXIT_FAIL &&
+      /slim check failed/.test(err.message),
+  );
+});
+
 test("slim-check.yml has no continue-on-error and uses ./action/check", () => {
   const yml = readFileSync(join(REPO_ROOT, ".github/workflows/slim-check.yml"), "utf8");
   assert.equal(/continue-on-error/.test(yml), false);
   assert.match(yml, /uses:\s*\.\/action\/check/);
+  assert.match(yml, /npm run build/);
+  assert.match(yml, /SLIM_REQUIRE_DIST/);
 });
 
 test("slim-bloat.yml runs the bloat action, not scan --json", () => {
   const yml = readFileSync(join(REPO_ROOT, ".github/workflows/slim-bloat.yml"), "utf8");
   assert.equal(/scan\s+--json/.test(yml), false);
   assert.match(yml, /uses:\s*\.\/action\/bloat/);
+  assert.match(yml, /npm run build/);
+  assert.match(yml, /SLIM_REQUIRE_DIST/);
 });
 
 test("slim-upstream.yml keeps weekly cron and runs upstream --pr", () => {
@@ -187,6 +273,7 @@ test("slim-upstream.yml keeps weekly cron and runs upstream --pr", () => {
   assert.match(yml, /upstream --pr/);
   assert.match(yml, /contents:\s*write/);
   assert.match(yml, /pull-requests:\s*write/);
+  assert.match(yml, /npm run build/);
 });
 
 test("ci.yml checks golden fixture without inspect overwrite", () => {

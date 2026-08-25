@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util";
 import { EXIT_FAIL, EXIT_OK, EXIT_USAGE, SlimExit } from "./exit.ts";
+import { errorDocument, writeJson } from "./json.ts";
 
 const HELP = `slim — delete your dependencies
 
@@ -11,10 +12,10 @@ Usage:
   slim scan [dir] [--json]
   slim inspect <pkg> [--json] [--allow-unknown]
   slim replace <pkg> [options]
-  slim check
-  slim upstream [--pr]
+  slim check [pkg] [--json]
+  slim upstream [--pr] [--json]
   slim watch                  (alias of upstream)
-  slim doctor [--strict]
+  slim doctor [--strict] [--json]
 
 Replace options:
   --budget-ms <n>     process wall clock (never the fake clock); run returns within n+2000ms
@@ -153,8 +154,8 @@ export function helpText(): string {
 }
 
 export async function runCli(argv: string[]): Promise<number> {
+  const args = parseCli(argv);
   try {
-    const args = parseCli(argv);
     if (args.help || args.command === "help") {
       process.stdout.write(HELP);
       return EXIT_OK;
@@ -168,32 +169,38 @@ export async function runCli(argv: string[]): Promise<number> {
       "doctor",
     ];
     if (!known.includes(args.command)) {
-      process.stderr.write(`unknown command: ${args.command}\n\n${HELP}`);
+      const msg = `unknown command: ${args.command}`;
+      process.stderr.write(`${msg}\n\n${HELP}`);
+      if (args.json) writeJson(errorDocument(EXIT_USAGE, msg));
       return EXIT_USAGE;
     }
     switch (args.command) {
       case "doctor":
-        return (await import("./doctor.ts")).runDoctor(args);
+        return await (await import("./doctor.ts")).runDoctor(args);
       case "scan":
-        return (await import("./scan.ts")).runScan(args);
+        return await (await import("./scan.ts")).runScan(args);
       case "inspect":
-        return (await import("./inspect.ts")).runInspect(args);
+        return await (await import("./inspect.ts")).runInspect(args);
       case "replace":
-        return (await import("./replace.ts")).runReplace(args);
+        return await (await import("./replace.ts")).runReplace(args);
       case "check":
-        return (await import("./check.ts")).runCheck(args);
+        return await (await import("./check.ts")).runCheck(args);
       case "upstream":
-        return (await import("./upstream.ts")).runUpstream(args);
+        return await (await import("./upstream.ts")).runUpstream(args);
       default:
         return EXIT_USAGE;
     }
   } catch (err) {
     if (err instanceof SlimExit) {
       process.stderr.write(err.message + "\n");
+      if (args.json && !err.skipJson) {
+        writeJson(err.json ?? errorDocument(err.code, err.message));
+      }
       return err.code;
     }
     const msg = err instanceof Error ? err.stack ?? err.message : String(err);
     process.stderr.write(msg + "\n");
+    if (args.json) writeJson(errorDocument(EXIT_FAIL, err instanceof Error ? err.message : String(err)));
     return EXIT_FAIL;
   }
 }
