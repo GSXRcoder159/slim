@@ -114,6 +114,43 @@ export function walkUses(
       }
     }
 
+    if (ts.isNewExpression(node) && node.expression) {
+      const info = resolveCallee(ts, node.expression, localSet, wanted);
+      if (info) {
+        if (info.dynamic) {
+          unknowns.push({
+            id: uid("dynnew", sf, node, extra.root),
+            loc: locOf(sf, node, extra.root),
+            kind: "dynamic-member",
+            detail: `computed member on ${info.exportName}`,
+            widensTo: "all-exports",
+            traceObservedMembers: null,
+          });
+        } else {
+          const args = [...(node.arguments ?? [])];
+          const built = callArgs(ts, args, null, checker);
+          const site: CallSite = {
+            id: uid("new", sf, node, extra.root),
+            loc: locOf(sf, node, extra.root),
+            exportName: info.exportName,
+            memberPath: info.memberPath,
+            thisBinding: { kind: "unbound" },
+            argc: {
+              min: built.spread ? 0 : built.argc,
+              max: built.spread ? null : built.argc,
+              observed: [built.argc],
+            },
+            argShapes: built.argShapes,
+            spread: built.spread,
+            resultMembers: [],
+          };
+          callSites.push(site);
+          const resultLocal = localFromImportCall(ts, node);
+          if (resultLocal) resultScopes[resultScopes.length - 1]!.set(resultLocal, site);
+        }
+      }
+    }
+
     if (ts.isCallExpression(node)) {
       const peeled = peelCallApplyBind(ts, node.expression, localSet, wanted);
       const info = resolveCallee(ts, peeled.callee, localSet, wanted);
@@ -128,7 +165,7 @@ export function walkUses(
             traceObservedMembers: null,
           });
         } else {
-          const built = callArgs(ts, node, peeled.thisKind?.kind ?? null, checker);
+          const built = callArgs(ts, [...node.arguments], peeled.thisKind?.kind ?? null, checker);
           const thisBinding = peeled.thisKind ?? thisOf(ts, peeled.callee);
           const site: CallSite = {
             id: uid("call", sf, node, extra.root),
@@ -259,11 +296,11 @@ export function walkUses(
 
 function callArgs(
   ts: typeof import("typescript"),
-  node: ts.CallExpression,
+  raw: readonly ts.Expression[],
   invoke: string | null,
   checker?: ts.TypeChecker,
 ): { argc: number; argShapes: ArgShape[]; spread: boolean; rawArgs: ts.Expression[] } {
-  let args: ts.Expression[] = [...node.arguments];
+  let args: ts.Expression[] = [...raw];
   let spread = args.some((a) => ts.isSpreadElement(a));
   if (invoke === "call" || invoke === "bind") {
     args = args.slice(1);

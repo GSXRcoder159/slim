@@ -5,6 +5,7 @@
  * Lodash ids are listed even if `lodash.ts` is produced by a sibling module.
  */
 
+import { CATALOG_ORACLES } from "./oracles.ts";
 import { createMoment, moment } from "./moment.ts";
 import { v4 } from "./uuid.ts";
 import { ms } from "./ms.ts";
@@ -33,6 +34,7 @@ import {
   filter,
   flatten,
   get,
+  groupBy,
   has,
   head,
   identity,
@@ -79,6 +81,7 @@ const LODASH_SYMBOLS = [
   "cloneDeep",
   "map",
   "filter",
+  "groupBy",
   "uniq",
   "compact",
   "flatten",
@@ -101,6 +104,7 @@ const LODASH_SYMBOLS = [
 const PKG_ALIAS: Record<string, string> = {
   "lodash-es": "lodash",
   underscore: "lodash",
+  classnames: "clsx",
   "mime-db": "mime-types",
   mime: "mime-types",
   "url-parse": "whatwg-url",
@@ -152,8 +156,6 @@ add("bluebird", "default", Bluebird);
 add("mime-types", "lookup", lookup);
 add("mime-types", "extension", extension);
 
-const lodashImpls = new Map<string, Function>();
-
 const LODASH_IMPL: Record<string, Function> = {
   get,
   set,
@@ -170,6 +172,7 @@ const LODASH_IMPL: Record<string, Function> = {
   cloneDeep,
   map,
   filter,
+  groupBy,
   uniq,
   compact,
   flatten,
@@ -191,38 +194,16 @@ const LODASH_IMPL: Record<string, Function> = {
 
 for (const [symbol, impl] of Object.entries(LODASH_IMPL)) {
   add("lodash", symbol, impl);
-  lodashImpls.set(symbol, impl);
 }
 
-/**
- * Lodash catalog modules call this so `getCatalog("lodash", "get")` returns
- * the real function once `lodash.ts` / `lodash.get.ts` exist.
- */
-export function registerCatalog(entry: CatalogEntry): void {
-  ENTRIES.push(entry);
-  if (canonicalPkg(entry.pkg) === "lodash") {
-    lodashImpls.set(entry.symbol, entry.impl);
-    if (entry.symbol === "head") lodashImpls.set("first", entry.impl);
-  }
-}
-
-function lodashImpl(symbol: string): Function {
-  const key = symbol === "first" ? "head" : symbol;
-  const fn = lodashImpls.get(symbol) ?? lodashImpls.get(key);
-  if (typeof fn === "function") return fn;
-  const named = function catalogLodashSymbol(..._args: unknown[]): never {
-    throw new Error(
-      `Slim catalog lists lodash.${key}; implementation lives in src/generate/catalog/lodash.ts (or lodash.${key}.ts)`,
-    );
-  };
-  Object.defineProperty(named, "name", { value: key });
-  return named;
-}
-
-function canonicalPkg(pkg: string): string {
+export function canonicalCatalogPkg(pkg: string): string {
   if (PKG_ALIAS[pkg]) return PKG_ALIAS[pkg];
   if (pkg.startsWith("lodash.")) return "lodash";
   return pkg;
+}
+
+function canonicalPkg(pkg: string): string {
+  return canonicalCatalogPkg(pkg);
 }
 
 function lodashForcedSymbol(pkg: string): string | undefined {
@@ -256,12 +237,13 @@ export function getCatalog(pkg: string, symbol: string): CatalogEntry | undefine
     if (!LODASH_SYMBOLS.includes(canon as (typeof LODASH_SYMBOLS)[number]) && wanted !== "first") {
       return undefined;
     }
-    const impl = lodashImpl(wanted);
+    const impl = LODASH_IMPL[wanted] ?? LODASH_IMPL[canon];
+    if (typeof impl !== "function") return undefined;
     return {
       id: `lodash.${canon}`,
       pkg: "lodash",
       symbol: wanted,
-      impl: impl as Function,
+      impl,
       supports: { family: "lodash" },
     };
   }
@@ -289,4 +271,4 @@ export function matchCatalog(
   return { matched, missing };
 }
 
-export { LODASH_SYMBOLS };
+export { CATALOG_ORACLES, LODASH_SYMBOLS };

@@ -15,8 +15,13 @@ export function emitStandingTests(opts: {
 }): string {
   mkdirSync(join(opts.root, opts.outDir), { recursive: true });
   const file = join(opts.root, opts.outDir, `${opts.pkg.replace(/\//g, "-")}.test.ts`);
+  const wanted = standingSymbols(opts.env);
   const pairs = opts.traces.filter(
-    (t) => t.symbol && !/[.(]/.test(t.symbol) && standingPairReplayable(t),
+    (t) =>
+      t.symbol &&
+      wanted.has(t.symbol) &&
+      !/[.(]/.test(t.symbol) &&
+      standingPairReplayable(t, opts.env),
   );
   const body = standingFile(opts.runner, opts.moduleSpecifier, pairs, opts.env);
   writeFileSync(file, body);
@@ -81,12 +86,52 @@ function compactTrace(t: TraceEvent, hyrum: ReturnType<typeof emptyHyrum>) {
   };
 }
 
+function standingSymbols(env: Envelope): Set<string> {
+  const out = new Set<string>();
+  for (const s of env.symbols) {
+    if (!s.exportName || s.exportName === "*" || s.exportName === "(scan)") continue;
+    out.add(s.exportName);
+    if (s.exportName === "head") out.add("first");
+    if (s.exportName === "first") out.add("head");
+  }
+  return out;
+}
+
 /** Drop successful traces whose args/result contain functions; revive cannot reconstruct them. */
-function standingPairReplayable(t: TraceEvent): boolean {
+function standingPairReplayable(t: TraceEvent, env: Envelope): boolean {
   if (t.threw) return true;
   if (t.args.some(slimValueHasFn)) return false;
   if (t.result && slimValueHasFn(t.result)) return false;
+  if (t.result && slimValueNotReviveable(t.result)) return false;
+  if (env.cryptoRandom && !hasInjectableRandomArg(t)) return false;
   return true;
+}
+
+/** URL / Promise / host objects serialize as empty proto:other objects that revive cannot rebuild. */
+function slimValueNotReviveable(v: SlimValue, depth = 0): boolean {
+  if (depth > 24) return false;
+  if (v.t === "promise") return true;
+  if (v.t === "obj" && v.proto === "other" && (v.keys ?? []).length === 0) return true;
+  if (v.t === "arr") return v.v.some((el) => slimValueNotReviveable(el, depth + 1));
+  if (v.t === "obj") {
+    if (Object.values(v.v).some((el) => slimValueNotReviveable(el, depth + 1))) return true;
+    return (v.syms ?? []).some((s) => slimValueNotReviveable(s.v, depth + 1));
+  }
+  if (v.t === "map") {
+    return v.v.some(([k, val]) => slimValueNotReviveable(k, depth + 1) || slimValueNotReviveable(val, depth + 1));
+  }
+  if (v.t === "set") return v.v.some((item) => slimValueNotReviveable(item, depth + 1));
+  return false;
+}
+
+/** uuid v4({ random }) is replayable; bare nanoid()/v4() is not without a seeded CSPRNG. */
+function hasInjectableRandomArg(t: TraceEvent): boolean {
+  for (const a of t.args) {
+    if (a.t !== "obj") continue;
+    const random = a.v?.random;
+    if (random && random.t === "bytes" && (random.b64 || (random.len ?? 0) >= 16)) return true;
+  }
+  return false;
 }
 
 function slimValueHasFn(v: SlimValue | undefined, depth = 0): boolean {

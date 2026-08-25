@@ -72,7 +72,58 @@ export function invoke(
     const value = fn.apply(clonedThis, cloned);
     return { ok: true, value, argsAfter: cloned, thisAfter: clonedThis };
   } catch (e) {
-    return { ok: false, error: normalizeError(e), argsAfter: cloned, thisAfter: clonedThis };
+    if (needsNew(e)) {
+      try {
+        const value = Reflect.construct(fn, cloned);
+        return { ok: true, value, argsAfter: cloned, thisAfter: clonedThis };
+      } catch (e2) {
+        return {
+          ok: false,
+          error: normalizeError(e2),
+          argsAfter: cloned,
+          thisAfter: clonedThis,
+        };
+      }
+    }
+    return {
+      ok: false,
+      error: normalizeError(e),
+      argsAfter: cloned,
+      thisAfter: clonedThis,
+    };
+  }
+}
+
+function needsNew(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /without ['"]?new['"]?/i.test(msg) || /Class constructor/i.test(msg);
+}
+
+function isThenable(v: unknown): v is PromiseLike<unknown> {
+  return Boolean(v && (typeof v === "object" || typeof v === "function") && typeof (v as { then?: unknown }).then === "function");
+}
+
+/** Await thenable return values so Promise-returning APIs compare by settlement. */
+export async function settleOutcome(out: CallOutcome, timeoutMs = 2000): Promise<CallOutcome> {
+  if (!out.ok || !isThenable(out.value)) return out;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const value = await Promise.race([
+      Promise.resolve(out.value),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error("thenable timeout")), timeoutMs);
+      }),
+    ]);
+    return { ok: true, value, argsAfter: out.argsAfter, thisAfter: out.thisAfter };
+  } catch (e) {
+    return {
+      ok: false,
+      error: normalizeError(e),
+      argsAfter: out.argsAfter,
+      thisAfter: out.thisAfter,
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 
@@ -84,7 +135,18 @@ export function equalThrown(
   if (a.name !== b.name) return false;
   /* errorMessage is always-on substitution: name+message+code. Flag records observation. */
   void hyrum?.errorMessage;
+  if (invalidUrlTypeError(a, b)) return true;
   return a.message === b.message && Object.is(a.code, b.code);
+}
+
+/** Node `URL` vs `whatwg-url`: same TypeError, Node message `Invalid URL` (+ ERR_INVALID_URL), polyfill `Invalid URL: <input>`. */
+function invalidUrlTypeError(
+  a: { name: string; message: string; code?: unknown },
+  b: { name: string; message: string; code?: unknown },
+): boolean {
+  if (a.name !== "TypeError") return false;
+  const norm = (m: string) => m.replace(/^Invalid URL(?::[\s\S]*)?$/, "Invalid URL");
+  return norm(a.message) === "Invalid URL" && norm(b.message) === "Invalid URL";
 }
 
 export function equal(
@@ -148,12 +210,22 @@ export function equalResults(
   }
 
   if (orig.ok && slim.ok) {
-    const retSeen = identity ? pairSeen : new WeakMap<object, object>();
-    if (!eq(orig.value, slim.value, ctx, retSeen)) {
-      return { ok: false, reason: "return value mismatch" };
-    }
-    if (!extras(orig.value, slim.value, ctx)) {
-      return { ok: false, reason: "return value mismatch" };
+    if (isMomentLike(orig.value) && isMomentLike(slim.value)) {
+      if (!eqMomentLike(orig.value, slim.value)) {
+        return { ok: false, reason: "return value mismatch" };
+      }
+    } else if (isUrlLike(orig.value) && isUrlLike(slim.value)) {
+      if (orig.value.href !== slim.value.href) {
+        return { ok: false, reason: "return value mismatch" };
+      }
+    } else {
+      const retSeen = identity ? pairSeen : new WeakMap<object, object>();
+      if (!eq(orig.value, slim.value, ctx, retSeen)) {
+        return { ok: false, reason: "return value mismatch" };
+      }
+      if (!extras(orig.value, slim.value, ctx)) {
+        return { ok: false, reason: "return value mismatch" };
+      }
     }
   }
   return { ok: true };
@@ -223,6 +295,13 @@ function eq(
     return at === bt;
   }
   if (a instanceof Date || b instanceof Date) return false;
+
+  if (isMomentLike(a) && isMomentLike(b)) {
+    return eqMomentLike(a, b);
+  }
+  if (isUrlLike(a) && isUrlLike(b)) {
+    return a.href === b.href;
+  }
 
   if (a instanceof RegExp && b instanceof RegExp) {
     return a.source === b.source && a.flags === b.flags;
@@ -353,6 +432,40 @@ function eqSet(
     unused.splice(idx, 1);
   }
   return true;
+}
+
+function isUrlLike(v: unknown): v is { href: string } {
+  return Boolean(
+    v &&
+      typeof v === "object" &&
+      typeof (v as { href?: unknown }).href === "string" &&
+      typeof (v as { hostname?: unknown }).hostname === "string",
+  );
+}
+
+function isMomentLike(
+  v: unknown,
+): v is { valueOf: () => number; format: (p?: string) => string } {
+  return Boolean(
+    v &&
+      typeof v === "object" &&
+      typeof (v as { valueOf?: unknown }).valueOf === "function" &&
+      typeof (v as { format?: unknown }).format === "function",
+  );
+}
+
+function eqMomentLike(
+  a: { valueOf: () => number; format: (p?: string) => string },
+  b: { valueOf: () => number; format: (p?: string) => string },
+): boolean {
+  const av = a.valueOf();
+  const bv = b.valueOf();
+  const aNaN = Number.isNaN(av);
+  const bNaN = Number.isNaN(bv);
+  if (aNaN !== bNaN) return false;
+  if (aNaN) return true;
+  if (!Object.is(av, bv)) return false;
+  return a.format("YYYY-MM-DD HH:mm:ss.SSS") === b.format("YYYY-MM-DD HH:mm:ss.SSS");
 }
 
 function enumerableOwn(obj: object, key: PropertyKey): boolean {

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { createGen, fromShapes, isExportTrace, pickObservedArgc } from "../../src/fuzz/gen.ts";
+import { createGen, enumerateLiteralUnions, fromShapes, isExportTrace, pickObservedArgc } from "../../src/fuzz/gen.ts";
 
 test("fromShapes uses array elements as a tuple", () => {
   const args = fromShapes(
@@ -30,6 +30,24 @@ test("isExportTrace skips result-member ops", () => {
     isExportTrace({ symbol: "debounce()", args: [], parentOriginId: "p", resultMember: "" }),
     false,
   );
+});
+
+test("enumerateLiteralUnions only expands shapes that already have literals", () => {
+  assert.deepEqual(
+    enumerateLiteralUnions(
+      [
+        { kind: "literal", literals: ["https://example.com/"] },
+        { kind: "literal", literals: [1, 2] },
+      ],
+      8,
+    ),
+    [
+      ["https://example.com/", 1],
+      ["https://example.com/", 2],
+    ],
+  );
+  assert.deepEqual(enumerateLiteralUnions([{ kind: "any" }], 8), []);
+  assert.deepEqual(enumerateLiteralUnions([{ kind: "literal", literals: ["a"] }, { kind: "any" }], 8), []);
 });
 
 test("pickObservedArgc uses the observed list", () => {

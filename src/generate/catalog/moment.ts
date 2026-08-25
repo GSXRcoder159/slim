@@ -110,10 +110,12 @@ function parseInput(input?: Date | string | number | null): Date {
   if (input === null) return new Date(NaN);
   if (input instanceof Date) return new Date(input.getTime());
   if (typeof input === "number") return new Date(input);
+  if (typeof input === "boolean" || typeof input === "function") return new Date(NaN);
   if (typeof input === "string") {
     if (input.trim() === "") return new Date(NaN);
     return parseIso(input);
   }
+  if (typeof input === "object") return new Date(Date.now());
   return new Date(NaN);
 }
 

@@ -14,6 +14,7 @@ import type { Envelope, SlimValue, TraceEvent } from "./envelope/types.ts";
 import { refusePackage, formatRefuse } from "./scan/refuse.ts";
 import { estimatePackageSize } from "./size/estimate.ts";
 import { matchCatalog } from "./generate/catalog/index.ts";
+import { catalogBoundary } from "./generate/catalog/boundary.ts";
 import { assembleCatalogModule } from "./generate/assemble.ts";
 import { withGeneratedHeader } from "./generate/header.ts";
 import { llmConfigFromEnv, generateWithLlm } from "./generate/llm.ts";
@@ -73,6 +74,10 @@ export async function runReplace(args: CliArgs): Promise<number> {
 
   const symbols = env.symbols.map((s) => s.exportName).filter((n) => n !== "*" && n !== "(scan)");
   const catalog = matchCatalog(args.pkg, symbols);
+  const boundary = catalogBoundary(env, args.pkg);
+  if (boundary && !args.force) {
+    throw new SlimExit(EXIT_REFUSED, formatRefuse(boundary));
+  }
   const llm = llmConfigFromEnv();
   let source: string;
   let catalogIds: string[] = [];
@@ -104,7 +109,9 @@ export async function runReplace(args: CliArgs): Promise<number> {
   assertValidGenerated(ts, source, env);
   const originalSize = estimatePackageSize(project.root, env.package.name);
   const replacementBytes = Buffer.byteLength(source);
-  assertSmaller(replacementBytes, originalSize.minBytes ?? 0, args.force);
+  if (!usedCatalog) {
+    assertSmaller(replacementBytes, originalSize.minBytes ?? 0, args.force);
+  }
 
   const seed = args.seed ?? randomInt(1, 2 ** 31);
   const budget = args.budgetMs ?? config.budgetMs;

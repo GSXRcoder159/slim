@@ -11,13 +11,16 @@ const INTERNAL_SPEC = /(?:^|\/)_internal(?:\.\w+)?$/;
 export function assembleCatalogModule(env: Envelope, projectRoot = slimRoot()): string | null {
   const ts = loadTargetTypescript(projectRoot);
   const family = env.package.family;
-  const symbols = env.symbols
+  const requested = env.symbols
     .map((s) => s.exportName)
-    .filter((n) => n !== "*" && n !== "default" && n !== "(scan)");
-  if (!symbols.length) return null;
+    .filter((n) => n !== "*" && n !== "(scan)");
+  const symbols = requested.filter((n) => n !== "default");
+  const defaultOnly = symbols.length === 0 && requested.includes("default");
+  if (!symbols.length && !defaultOnly) return null;
+  const entrySymbols = defaultOnly ? ["default"] : symbols;
   const entryFiles: string[] = [];
   const ids: string[] = [];
-  for (const sym of symbols) {
+  for (const sym of entrySymbols) {
     const found = firstCatalogFile(family, sym);
     if (!found) return null;
     ids.push(`${family}.${sym}`);
@@ -48,19 +51,20 @@ export function assembleCatalogModule(env: Envelope, projectRoot = slimRoot()): 
     if (body) parts.push(body);
   }
 
+  const assembledBody = parts.join("\n\n");
   const uniq = [...new Set(symbols.map((s) => (s === "first" ? "head" : s)))];
   let extra = "";
   if (uniq.includes("head") && !symbols.includes("first")) {
     extra += `\nexport const first = head;\n`;
   }
   let defaultExport = "";
-  if (wantsDefaultExport(env)) {
+  if (wantsDefaultExport(env) && !/\bexport\s+default\b/.test(assembledBody)) {
     const defaultObj = uniq
       .map((s) => (s === "head" ? "head, first: head" : s))
       .join(",\n  ");
     defaultExport = `\nexport default {\n  ${defaultObj}\n};\n`;
   }
-  return generatedHeader(env, { catalogIds: ids }) + parts.join("\n\n") + extra + defaultExport;
+  return generatedHeader(env, { catalogIds: ids }) + assembledBody + extra + defaultExport;
 }
 
 function wantsDefaultExport(env: Envelope): boolean {

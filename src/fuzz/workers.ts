@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { siblingModule } from "../runtime-path.ts";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../exit.ts";
-import { invoke, equalResults, equal } from "./equal.ts";
+import { invoke, equalResults, equal, settleOutcome } from "./equal.ts";
 import {
   setTimeout as timeoutFn,
   clearTimeout as clearTimeoutFn,
@@ -448,6 +448,24 @@ export function fromCloneableResult(result: FuzzResult): FuzzResult {
   };
 }
 
+function cryptoArgs(symbol: string, args: unknown[]): unknown[] {
+  if (symbol === "v4" && args.length === 0) {
+    return [{ random: globalThis.crypto.getRandomValues(new Uint8Array(16)) }];
+  }
+  return args;
+}
+
+function withFrozenNow<T>(fn: () => T): T {
+  const now = Date.now();
+  const orig = Date.now;
+  Date.now = () => now;
+  try {
+    return fn();
+  } finally {
+    Date.now = orig;
+  }
+}
+
 export async function runJob(
   original: Record<string, Function>,
   replacement: Record<string, Function>,
@@ -481,18 +499,19 @@ export async function runJob(
     }
     return { symbol: job.symbol, ok: true };
   }
-  const call = (): { o: ReturnType<typeof invoke>; s: ReturnType<typeof invoke> } => {
-    const o = invoke(origFn, job.args, job.thisArg);
-    const s = invoke(slimFn, job.args, job.thisArg);
-    return { o, s };
-  };
-  const pair =
+  const raw = withFrozenNow(() =>
     job.cryptoSeed === undefined
-      ? call()
+      ? { o: invoke(origFn, job.args, job.thisArg), s: invoke(slimFn, job.args, job.thisArg) }
       : {
-          o: withSeededCrypto(job.cryptoSeed, () => invoke(origFn, job.args, job.thisArg)),
-          s: withSeededCrypto(job.cryptoSeed, () => invoke(slimFn, job.args, job.thisArg)),
-        };
+          o: withSeededCrypto(job.cryptoSeed, () =>
+            invoke(origFn, cryptoArgs(job.symbol, job.args), job.thisArg),
+          ),
+          s: withSeededCrypto(job.cryptoSeed, () =>
+            invoke(slimFn, cryptoArgs(job.symbol, job.args), job.thisArg),
+          ),
+        },
+  );
+  const pair = { o: await settleOutcome(raw.o), s: await settleOutcome(raw.s) };
   const cmp = equalResults(pair.o, pair.s, job.hyrum);
   if (cmp.ok) {
     return { symbol: job.symbol, ok: true, args: job.args };
@@ -506,8 +525,8 @@ export async function runJob(
       job.cryptoSeed === undefined
         ? trial()
         : {
-            o: withSeededCrypto(job.cryptoSeed, () => invoke(origFn, a, job.thisArg)),
-            s: withSeededCrypto(job.cryptoSeed, () => invoke(slimFn, a, job.thisArg)),
+            o: withSeededCrypto(job.cryptoSeed, () => invoke(origFn, cryptoArgs(job.symbol, a), job.thisArg)),
+            s: withSeededCrypto(job.cryptoSeed, () => invoke(slimFn, cryptoArgs(job.symbol, a), job.thisArg)),
           };
     return !equalResults(both.o, both.s, job.hyrum).ok;
   };

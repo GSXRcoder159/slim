@@ -225,6 +225,129 @@ export function get(object: Record<string, unknown>, path: string) {
   assert.equal(r.status, 0, r.stderr + r.stdout);
 });
 
+test("standing frozen pairs drop unseeded CSPRNG hits and keep uuid random injects", () => {
+  const dir = tmpProject();
+  writeFileSync(
+    join(dir, "src", "uuid.ts"),
+    `export function v4(opts?: { random?: Uint8Array }) {
+  if (opts?.random) return "seeded";
+  return "live";
+}
+export function nanoid() { return "live"; }
+`,
+  );
+  const e = env({ symbols: ["v4", "nanoid"] });
+  e.package = { name: "uuid", version: "11.1.0", family: "uuid", subpath: "" };
+  e.cryptoRandom = true;
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "uuid",
+    env: e,
+    traces: [
+      {
+        symbol: "nanoid",
+        args: [{ t: "num", v: 10 }],
+        result: { t: "str", v: "abcdefghij" },
+      },
+      {
+        symbol: "v4",
+        args: [],
+        result: { t: "str", v: "live-uuid" },
+      },
+      {
+        symbol: "v4",
+        args: [
+          {
+            t: "obj",
+            keys: ["random"],
+            v: { random: { t: "bytes", kind: "u8", len: 16, b64: "AAAAAAAAAAAAAAAAAAAAAA==" } },
+          },
+        ],
+        result: { t: "str", v: "seeded" },
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./uuid.ts",
+  });
+  const body = readFileSync(file, "utf8");
+  assert.doesNotMatch(body, /abcdefghij/);
+  assert.doesNotMatch(body, /live-uuid/);
+  assert.match(body, /seeded/);
+  const r = spawnTest(file, dir);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+});
+
+test("standing frozen pairs drop URL host-object results that revive cannot rebuild", () => {
+  const dir = tmpProject();
+  writeFileSync(join(dir, "src", "whatwg-url.ts"), `export class URL {
+  constructor(href: string) { this.href = href; this.hostname = "example.com"; }
+}
+`);
+  const e = env({ symbols: ["URL"] });
+  e.package = { name: "whatwg-url", version: "14.2.0", family: "whatwg-url", subpath: "" };
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "whatwg-url",
+    env: e,
+    traces: [
+      {
+        symbol: "URL",
+        args: [{ t: "str", v: "https://example.com/" }],
+        result: { t: "obj", keys: [], v: {}, proto: "other", toStr: true },
+      },
+      {
+        symbol: "URL",
+        args: [{ t: "str", v: "nope" }],
+        threw: { name: "TypeError", message: "Invalid URL" },
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./whatwg-url.ts",
+  });
+  const body = readFileSync(file, "utf8");
+  assert.doesNotMatch(body, /https:\/\/example.com\//);
+  assert.match(body, /Invalid URL/);
+});
+
+test("standing frozen pairs keep envelope symbols and drop wrapped internals", () => {
+  const dir = tmpProject();
+  writeFileSync(
+    join(dir, "src", "bluebird.ts"),
+    `export function resolve(v: unknown) { return Promise.resolve(v); }
+export class Promise extends globalThis.Promise {}
+`,
+  );
+  const e = env({ symbols: ["resolve"] });
+  e.package = { name: "bluebird", version: "3.7.2", family: "bluebird", subpath: "" };
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "bluebird",
+    env: e,
+    traces: [
+      {
+        symbol: "Promise",
+        args: [{ t: "num", v: 16 }],
+        result: { t: "promise" },
+      },
+      {
+        symbol: "resolve",
+        args: [{ t: "str", v: "ok" }],
+        result: { t: "promise" },
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./bluebird.ts",
+  });
+  const body = readFileSync(file, "utf8");
+  assert.doesNotMatch(body, /"symbol": "Promise"/);
+  assert.doesNotMatch(body, /"symbol": "resolve"/);
+  const r = spawnTest(file, dir);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+});
+
 test("vitest flavor standing tests import vitest", () => {
   const dir = tmpProject();
   const file = emitStandingTests({

@@ -67,6 +67,13 @@ test("thrown errors compared as name, message, code", () => {
     ),
     false,
   );
+  assert.equal(
+    equalThrown(
+      { name: "TypeError", message: "Invalid URL", code: "ERR_INVALID_URL" },
+      { name: "TypeError", message: "Invalid URL: false" },
+    ),
+    true,
+  );
 });
 
 test("Date compared by getTime", () => {

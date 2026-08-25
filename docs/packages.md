@@ -24,10 +24,10 @@ Ranked for the Friday serverless engineer: bytes or CVE pain, 1–5 call-site fu
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | **lodash** | `get`, `pick`, `debounce` | 71.0 kB / 25.8 kB (`4.17.21`) | ~1.8 kB / 0.9 kB (~250 lines for get+debounce) | easy–med | The demo. `require('lodash')` does not tree-shake. Prototype-pollution history. Unbundled Lambda still copies ~1.4 MB unpacked onto the image. Golden fixture: `fixtures/lodash-get-debounce/`. |
 | 2 | **whatwg-url** | `new URL(...)` | 470.9 kB / 168.5 kB | **0** (use global `URL`) | easy | Worst size/function ratio in the wave. Pulled by `node-fetch` / jsdom. The IDNA table (`tr46`) is the body. Workers and Node 20 already have `URL`. |
-| 3 | **mime-types** (via **mime-db**) | `lookup('json')` / `contentType('html')` for 2–10 types | 162.5 kB / 24.1 kB | ~0.4 kB | easy | A JSON encyclopedia of every MIME type ever, to answer `.json → application/json`. |
+| 3 | **mime-types** (via **mime-db**) | `lookup` / `extension` for the v1 allowlist (html, json, png, …) | 162.5 kB / 24.1 kB | ~0.4 kB | easy | A JSON encyclopedia of every MIME type ever, to answer `.json → application/json`. v1 is the allowlist, not `contentType` or full mime-db. |
 | 4 | **validator** | `isEmail`, `isUUID`, `escape` | 125.2 kB / 39.2 kB | 2–8 kB | med | Auth/form Workers. `isEmail` is a rabbit hole (RFC + Gmail). v1 oracles against validator for *your* strings plus a fixture corpus, and says so on the tin. |
 | 5 | **cron-parser** | `parseExpression(expr).next()` | 100.0 kB / 29.8 kB | 4–8 kB | med | Almost all the weight is `luxon`. Scheduled Workers often need “next run,” not a datetime framework. |
-| 6 | **bluebird** | `Promise.delay`, `Promise.map` | 79.0 kB / 22.4 kB | ~0.8 kB | easy | A promises library in 2026. Native `Promise` + a loop. Cancellation / `promisifyAll` is out of envelope. |
+| 6 | **bluebird** | `resolve`, `reject`, `all`, `race`, `delay`, `promisify` | 79.0 kB / 22.4 kB | ~0.8 kB | easy | A promises library in 2026. Native `Promise` statics. `map` / `each` / `filter`, cancellation, and `promisifyAll` are out of envelope. |
 | 7 | **date-fns** (barrel import only) | `format`, `differenceInDays` | 72.1 kB / 17.9 kB | ~2 kB | easy | Already modular. Slim only fires if they import from `'date-fns'` / `'date-fns/fp'` as a barrel. Named `date-fns/format` is already slim. Scan will say “already tree-shaken” and skip. |
 | 8 | **crypto-js** | `SHA256` / `MD5` / `HmacSHA256` | 65.6 kB / 23.8 kB | ~0.3 kB (Web Crypto) | easy (hash) / hard (ciphers) | Hash-of-a-string on a Worker. Web Crypto is there. AES/PBKDF2/OpenSSL-KDF compatibility is a later envelope. |
 | 9 | **moment** | `moment(x).format('YYYY-MM-DD')` | 60.6 kB / 19.7 kB; **~300 kB** with locales | 1–3 kB | med (format) / hard (locales, plugins, `.tz`) | Abandoned, still everywhere, locales blow the isolate. v1: format/parse of ISO-like strings. Locales, `moment-timezone`, mutability plugins: refuse. |
@@ -36,7 +36,7 @@ Ranked for the Friday serverless engineer: bytes or CVE pain, 1–5 call-site fu
 | 12 | **jsonwebtoken** | `verify` HS256 / RS256, or `decode` | 54.5 kB / 16.1 kB (pulls `semver` ~27 kB unpacked) | 2–4 kB | med | Auth Workers. v1 uses Web Crypto. Algorithm `none`: never implemented. `sign` with PEM on a Worker: allowed only if envelope is that narrow; still flagged in evidence. |
 | 13 | **qs** | `parse`, `stringify` | 40.9 kB / 12.7 kB (+ `object-inspect` tree) | 3–6 kB | med | Query APIs. Prototype-pollution CVEs. v1: depth cap, no proto keys, arrays. `allowPrototypes: true` in a call site: refuse. |
 | 14 | **async** | `parallel`, `retry`, `mapLimit` | 21.9 kB / 7.6 kB | ~0.8 kB | easy | Native promises. High confidence, mid size. Good second PR after lodash. |
-| 15 | **uuid** | `v4` / `v7` | 10.2 kB / 3.8 kB | **0** (`crypto.randomUUID`) or ~0.4 kB for v7 | easy | Not the fattest. It is the cleanest delete. Request IDs on every Worker. Native `randomUUID` is RFC 4122 v4. |
+| 15 | **uuid** | `v4` only | 10.2 kB / 3.8 kB | **0** (`crypto.randomUUID`) | easy | Not the fattest. It is the cleanest delete. Request IDs on every Worker. Native `randomUUID` is RFC 4122 v4. `v7` / `v1` / `validate` refuse until catalog. |
 
 Siblings, same generators, not extra ranks:
 
@@ -44,7 +44,8 @@ Siblings, same generators, not extra ranks:
 - `underscore` uses the lodash generator.
 - `query-string` uses the qs generator (simpler default).
 - `mime-db` without `mime-types` is the same MIME map.
-- `url-parse`, `whatwg-url`, Node `url` polyfills → global `URL`.
+- `url-parse`, `whatwg-url`, Node `url` polyfills → global `URL` (`URL` / `URLSearchParams` / `default` only; `parseURL` / IDNA helpers refuse).
+- `classnames` uses the clsx catalog.
 - `jwt-decode` (1.1 kB / 0.6 kB) is the decode-only envelope of `jsonwebtoken`. Still worth doing: one less advisory surface.
 
 ### What “typical slice” is allowed to miss
@@ -53,13 +54,19 @@ v1 generators implement the options **observed at call sites**, not the README.
 
 | Package | Implemented in v1 if call sites use it | Refuse if call sites use |
 | --- | --- | --- |
-| lodash | `get`, `pick`, `omit`, `debounce` (trailing), `throttle`, `isEqual` (JSON-like), `clone`/`cloneDeep` (plain data), `uniq`, `compact`, `chunk`, `groupBy` (iteratee = string) | `_.template`, `_.chain` / implicit chaining, `fp`, `mixin`, `bind` with placeholders, `cloneDeep` with customizer, `set` with `__proto__` paths |
+| lodash | `get`, `pick`, `omit`, `debounce` (trailing), `throttle`, `isEqual` (JSON-like), `clone`/`cloneDeep` (plain data), `uniq`, `compact`, `chunk`, `groupBy` (string, function, or matcher iteratee, same as `map`/`filter`) | `_.template`, `_.chain` / implicit chaining, `fp`, `mixin`, `bind` with placeholders, `cloneDeep` with customizer, `set` with `__proto__` paths |
 | moment | `format` with a fixed token string, `valueOf`, ISO parse | locale packs, `moment.tz`, plugins, `updateLocale` |
+| uuid | `v4` (`crypto.randomUUID` at call time, injectable `{ random }`) | `v7`, `v1`, `validate`, and other exports until catalog |
+| ms | single duration token (`ms@2.1.3`); `"1h"` / numbers / `long` format | compound strings (`"1h 30m"`, `"1h30m"`) — oracle returns `undefined` |
+| clsx / classnames | `clsx(...)` class joining | none beyond the public clsx arity |
+| mime-types | `lookup` / `extension` for the documented allowlist keys | `contentType`, charset helpers, types outside the allowlist |
+| whatwg-url | platform `globalThis.URL` / `URLSearchParams` | `parseURL`, `serializeURL`, IDNA helpers |
+| bluebird | `resolve`, `reject`, `all`, `race`, `delay`, `promisify` | `map`, `each`, `filter`, `promisifyAll`, cancellation, coroutines |
+| nanoid | `nanoid` / `customAlphabet` with call-time `getRandomValues` | custom random injects other than platform CSPRNG |
 | crypto-js | `SHA256`, `SHA1`, `MD5`, `HmacSHA256`, `enc.Hex` / `Base64` | AES/TripleDES/Rabbit, OpenSSL KDF, streaming |
 | qs | parse/stringify, `arrayLimit`, `depth` ≤ 5 | `allowPrototypes`, `decoder` functions, `plainObjects` + constructor tricks |
 | validator | `isUUID`, `isISO8601`, `isIn`, `escape`, `isEmail` (oracle-bounded) | `isEmail` with `{allow_utf8_local_part, host_blacklist, …}` we did not capture; `normalizeEmail` |
 | jsonwebtoken | `decode`; `verify` HS256/RS256 | `none`, nested JWT encryption, clocks we cannot skew-test |
-| bluebird | `map`, `each`, `delay`, `filter` | cancellation, `promisifyAll`, coroutines |
 | js-yaml | `load` JSON-like, `dump` plain objects | `!!js/function`, schema extensions, merge `<<` |
 | cron-parser | 5-field cron, `next()` / `prev()` UTC | tz via luxon, 6/7-field with seconds if not in envelope |
 | ramda | `pick`, `omit`, `path`, `pathOr`, `identity` | transducers, placeholder `__` deep composition we cannot bound |
@@ -82,7 +89,7 @@ These are slimmable and painful, but the envelope is a project.
 | fast-xml-parser | med | XML. Same “wrong parser” problem as markdown. |
 | semver | ~range grammar | `jsonwebtoken` already drags it in. A `satisfies` slice is med. |
 
-Tiny packages Slim *can* replace (supply-chain, not bytes): `ms` (1.5 / 0.7), `cookie`, `escape-html` (0.6 / 0.4), `deepmerge` (1.7 / 0.7), `nanoid`. Scan lists them when they are declared or imported; it does not hide them behind `--all`. A CVE in `ms` is still a Friday.
+Tiny packages Slim *can* replace (supply-chain, not bytes): `ms` (1.5 / 0.7; single-token only, no compound strings), `cookie`, `escape-html` (0.6 / 0.4), `deepmerge` (1.7 / 0.7), `nanoid`, `clsx` (`classnames` is the same catalog). Scan lists them when they are declared or imported; it does not hide them behind `--all`. A CVE in `ms` is still a Friday.
 
 ---
 

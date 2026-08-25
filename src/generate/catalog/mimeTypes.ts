@@ -30,21 +30,22 @@ const TYPE_TO_EXT: Record<string, string> = {
   "text/html": "html",
   "text/css": "css",
   "application/javascript": "js",
-  "text/javascript": "js",
   "application/json": "json",
   "image/png": "png",
-  "image/jpeg": "jpg",
+  "image/jpeg": "jpeg",
   "image/gif": "gif",
   "image/svg+xml": "svg",
   "font/woff": "woff",
   "font/woff2": "woff2",
-  "application/font-woff": "woff",
   "application/wasm": "wasm",
   "text/plain": "txt",
   "application/xml": "xml",
   "text/xml": "xml",
   "application/pdf": "pdf",
 };
+
+export const MIME_LOOKUP_EXTS = new Set(Object.keys(EXT_TO_TYPE));
+export const MIME_EXTENSION_TYPES = new Set(Object.keys(TYPE_TO_EXT));
 
 function extensionOf(path: string): string {
   const base = path.split(/[/\\]/).pop() ?? path;

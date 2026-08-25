@@ -8,8 +8,9 @@ import { compact } from "../../src/generate/catalog/lodash.compact.ts";
 import { flatten } from "../../src/generate/catalog/lodash.flatten.ts";
 import { chunk } from "../../src/generate/catalog/lodash.chunk.ts";
 import { take } from "../../src/generate/catalog/lodash.take.ts";
-import { head } from "../../src/generate/catalog/lodash.head.ts";
+import { head, first } from "../../src/generate/catalog/lodash.head.ts";
 import { last } from "../../src/generate/catalog/lodash.last.ts";
+import { groupBy } from "../../src/generate/catalog/lodash.groupBy.ts";
 
 describe("lodash.map", () => {
   it("maps arrays and objects; iteratee may be a function or property path", () => {
@@ -91,8 +92,37 @@ describe("lodash.chunk / take / head / last", () => {
     assert.equal(head([]), lodash.head([]));
     assert.equal(head(null), lodash.head(null));
     assert.equal(head("ab"), lodash.head("ab"));
+    assert.equal(first([1, 2, 3]), lodash.first([1, 2, 3]));
+    assert.equal(first([]), lodash.first([]));
     assert.equal(last([1, 2, 3]), lodash.last([1, 2, 3]));
     assert.equal(last([]), lodash.last([]));
     assert.equal(last(null), lodash.last(null));
+  });
+});
+
+describe("lodash.groupBy", () => {
+  it("groups arrays by function, string path, and matcher", () => {
+    const nums = [6.1, 4.2, 6.3];
+    assert.deepEqual(
+      groupBy(nums, Math.floor),
+      lodash.groupBy(nums, Math.floor),
+    );
+    const rows = [
+      { dir: "left", n: 1 },
+      { dir: "right", n: 2 },
+      { dir: "left", n: 3 },
+    ];
+    assert.deepEqual(groupBy(rows, "dir"), lodash.groupBy(rows, "dir"));
+    assert.deepEqual(
+      groupBy(rows, { dir: "left" }),
+      lodash.groupBy(rows, { dir: "left" }),
+    );
+  });
+
+  it("groups objects, null, and identity iteratee like lodash", () => {
+    const obj = { a: { t: 1 }, b: { t: 2 }, c: { t: 1 } };
+    assert.deepEqual(groupBy(obj, "t"), lodash.groupBy(obj, "t"));
+    assert.deepEqual(groupBy(null, "t"), lodash.groupBy(null, "t"));
+    assert.deepEqual(groupBy(["a", "a", "b"]), lodash.groupBy(["a", "a", "b"]));
   });
 });

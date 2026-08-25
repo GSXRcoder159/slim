@@ -308,6 +308,8 @@ function checkIdentifier(
 function isPropertyNameId(ts: typeof import("typescript"), node: ts.Identifier): boolean {
   const p = node.parent;
   if (!p) return false;
+  if (ts.isPropertyDeclaration(p) && p.name === node) return true;
+  if (ts.isPropertySignature(p) && p.name === node) return true;
   if (ts.isPropertyAccessExpression(p) && p.name === node) return true;
   if (ts.isPropertyAssignment(p) && p.name === node) return true;
   if (ts.isMethodDeclaration(p) && p.name === node) return true;

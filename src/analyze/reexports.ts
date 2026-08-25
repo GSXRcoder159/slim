@@ -339,7 +339,7 @@ function addBindingsFromLink(pending: LocalPending, link: PkgLink, bindings: Bin
 
 export function localFromImportCall(
   ts: typeof import("typescript"),
-  node: ts.CallExpression,
+  node: ts.CallExpression | ts.NewExpression,
 ): string | null {
   let p: ts.Node = node.parent;
   if (ts.isAwaitExpression(p)) p = p.parent;

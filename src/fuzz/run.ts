@@ -226,23 +226,7 @@ async function runFuzzInProcess(opts: {
 
       const replayed = fromTraces(traces, gen);
       while (!over() && report.disagreements.length < MAX_DISAGREEMENTS) {
-        const r = gen.next();
-        let args: unknown[];
-        if (r < 0.7 && replayed.length) {
-          const base = gen.pick(replayed);
-          args = r < 0.35 ? (base.slice() as unknown[]) : mutateArgs(base, gen);
-        } else if (r < 0.9 && sym.callSites.length) {
-          const site = gen.pick(sym.callSites);
-          const argc = pickObservedArgc(site.argc.observed, gen, site.argShapes.length || 2);
-          args = fromShapes(site.argShapes, gen, argc);
-        } else {
-          const argc = pickObservedArgc(
-            sym.callSites.flatMap((c) => c.argc.observed),
-            gen,
-            2,
-          );
-          args = junkArgs(argc, gen);
-        }
+        const args = pickFuzzArgs(gen, replayed, sym);
         await recordCall(report, origFn, slimFn, sym.exportName, args, undefined, hyrum, opts, persistClock);
       }
     }
@@ -394,23 +378,7 @@ async function runFuzzPool(opts: {
 
       const replayed = fromTraces(traces, gen);
       while (!over() && !atCap()) {
-        const r = gen.next();
-        let args: unknown[];
-        if (r < 0.7 && replayed.length) {
-          const base = gen.pick(replayed);
-          args = r < 0.35 ? (base.slice() as unknown[]) : mutateArgs(base, gen);
-        } else if (r < 0.9 && sym.callSites.length) {
-          const site = gen.pick(sym.callSites);
-          const argc = pickObservedArgc(site.argc.observed, gen, site.argShapes.length || 2);
-          args = fromShapes(site.argShapes, gen, argc);
-        } else {
-          const argc = pickObservedArgc(
-            sym.callSites.flatMap((c) => c.argc.observed),
-            gen,
-            2,
-          );
-          args = junkArgs(argc, gen);
-        }
+        const args = pickFuzzArgs(gen, replayed, sym);
         await spawn(
           {
             symbol: sym.exportName,
@@ -549,6 +517,41 @@ export function traceHits(tr: TraceEvent, sym: SymbolEnvelope): boolean {
   const path = sym.callSites[0]?.memberPath?.join(".");
   if (path === undefined) return false;
   return tr.symbol === path || symbolMatches(path, tr.symbol);
+}
+
+function closedArgShapes(sym: SymbolEnvelope): boolean {
+  if (!sym.callSites.length) return false;
+  return sym.callSites.every(
+    (c) =>
+      c.argShapes.length > 0 &&
+      c.argShapes.every((s) => s.kind === "literal" || s.kind === "date" || s.kind === "union"),
+  );
+}
+
+function pickFuzzArgs(gen: ReturnType<typeof createGen>, replayed: unknown[][], sym: SymbolEnvelope): unknown[] {
+  const closed =
+    closedArgShapes(sym) ||
+    (replayed.length > 0 &&
+      replayed.every((args) =>
+        args.every((a) => a instanceof Date || typeof a === "string" || typeof a === "number"),
+      ));
+  const r = gen.next();
+  if (replayed.length && (closed || r < 0.7)) {
+    const base = gen.pick(replayed);
+    if (!closed && r < 0.35) return mutateArgs(base, gen);
+    return base.slice() as unknown[];
+  }
+  if (sym.callSites.length && r < 0.9) {
+    const site = gen.pick(sym.callSites);
+    const argc = pickObservedArgc(site.argc.observed, gen, site.argShapes.length || 2);
+    return fromShapes(site.argShapes, gen, argc);
+  }
+  const argc = pickObservedArgc(
+    sym.callSites.flatMap((c) => c.argc.observed),
+    gen,
+    2,
+  );
+  return junkArgs(argc, gen);
 }
 
 function exportTracesFor(envelope: Envelope, sym: SymbolEnvelope): TraceEvent[] {

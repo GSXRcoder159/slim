@@ -1,0 +1,14 @@
+{
+  "name": "bluebird-delay-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/index.test.ts"
+  },
+  "dependencies": {
+    "bluebird": "3.7.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

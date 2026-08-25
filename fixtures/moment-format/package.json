@@ -2,6 +2,13 @@
   "name": "moment-format-fixture",
   "private": true,
   "type": "module",
-  "dependencies": { "moment": "2.30.1" },
-  "devDependencies": { "typescript": "^5.9.2" }
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/index.test.ts"
+  },
+  "dependencies": {
+    "moment": "2.30.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
 }

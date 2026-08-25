@@ -1,0 +1,14 @@
+{
+  "name": "whatwg-url-host-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/index.test.ts"
+  },
+  "dependencies": {
+    "whatwg-url": "14.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

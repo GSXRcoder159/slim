@@ -139,19 +139,14 @@ export function junkArgs(argc: number, gen: Gen): unknown[] {
 }
 
 export function enumerateLiteralUnions(shapes: ArgShape[], cap: number): unknown[][] {
-  const domains: unknown[][] = shapes.map((s) => {
-    if ((s.kind === "literal" || s.kind === "union") && s.literals && s.literals.length) {
-      return s.literals;
-    }
-    return [SENTINEL];
-  });
+  if (!shapes.length) return [];
+  if (!shapes.every((s) => (s.kind === "literal" || s.kind === "union") && s.literals && s.literals.length)) {
+    return [];
+  }
+  const domains: unknown[][] = shapes.map((s) => s.literals ?? []);
   const combos = cartesian(domains, cap);
-  return combos.map((row) =>
-    row.map((v, i) => (v === SENTINEL ? fromShape(shapes[i]!, createGen(i + 1), 0) : v)),
-  );
+  return combos;
 }
-
-const SENTINEL = Symbol("shape");
 
 function fromShape(shape: ArgShape, gen: Gen, depth: number): unknown {
   if (depth > 6) return null;

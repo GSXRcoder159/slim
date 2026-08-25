@@ -42,7 +42,7 @@ describe("mime-types catalog", () => {
     assert.equal(extension("text/html"), "html");
     assert.equal(extension("application/javascript"), "js");
     assert.equal(extension("application/json"), "json");
-    assert.equal(extension("image/jpeg"), "jpg");
+    assert.equal(extension("image/jpeg"), "jpeg");
     assert.equal(extension("text/html; charset=utf-8"), "html");
     assert.equal(extension("no/such"), false);
     assert.equal(extension(""), false);

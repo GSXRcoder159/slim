@@ -75,8 +75,13 @@ test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tes
 
 test("installed tarball CLI matches source for help, doctor, scan --json, inspect, replace --dry-run", { timeout: 180_000 }, () => {
   execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
-  const tgz = execFileSync("npm", ["pack", "--silent"], { cwd: ROOT, encoding: "utf8" }).trim();
-  const tarball = join(ROOT, tgz.split("\n").pop() ?? tgz);
+  const packDir = mkdtempSync(join(tmpdir(), "slim-install-pack-"));
+  const tgz = execFileSync("npm", ["pack", "--silent", `--pack-destination=${packDir}`], {
+    cwd: ROOT,
+    encoding: "utf8",
+    timeout: 60_000,
+  }).trim();
+  const tarball = join(packDir, tgz.split("\n").pop() ?? tgz);
   const tmp = mkdtempSync(join(tmpdir(), "slim-install-"));
   try {
     writeFileSync(
@@ -240,7 +245,7 @@ test("add", () => { assert.equal(add(2, 3), 5); });
     assert.match(usage.stderr, /unknown command/);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
-    if (existsSync(tarball)) rmSync(tarball, { force: true });
+    rmSync(packDir, { recursive: true, force: true });
   }
 });
 

@@ -19,6 +19,7 @@ export { clone } from "./lodash.clone.ts";
 export { cloneDeep } from "./lodash.cloneDeep.ts";
 export { map } from "./lodash.map.ts";
 export { filter } from "./lodash.filter.ts";
+export { groupBy } from "./lodash.groupBy.ts";
 export { uniq } from "./lodash.uniq.ts";
 export { compact } from "./lodash.compact.ts";
 export { flatten } from "./lodash.flatten.ts";

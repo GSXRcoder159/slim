@@ -45,6 +45,36 @@ function env(symbols: string[], imports: { kind: ImportKind; names?: string[] }[
   };
 }
 
+test("assembled uuid and nanoid look up crypto at call time, not module scope", () => {
+  const uuidEnv: Envelope = {
+    ...env(["v4"]),
+    package: { name: "uuid", version: "11.1.0", family: "uuid", subpath: "" },
+    cryptoRandom: true,
+  };
+  const uuidSrc = assembleCatalogModule(uuidEnv);
+  assert.ok(uuidSrc);
+  assert.match(uuidSrc!, /globalThis\.crypto/);
+  assert.doesNotMatch(uuidSrc!, /const crypto = globalThis\.crypto/);
+  assert.doesNotMatch(uuidSrc!, /from ["']uuid["']/);
+  const uuidVal = validateGenerated(ts, uuidSrc!, { envelope: uuidEnv });
+  assert.equal(uuidVal.ok, true, uuidVal.errors.join("; "));
+
+  const nanoEnv: Envelope = {
+    ...env(["nanoid", "customAlphabet"]),
+    package: { name: "nanoid", version: "5.1.5", family: "nanoid", subpath: "" },
+    cryptoRandom: true,
+  };
+  const nanoSrc = assembleCatalogModule(nanoEnv);
+  assert.ok(nanoSrc);
+  assert.match(nanoSrc!, /globalThis\.crypto/);
+  assert.match(nanoSrc!, /export function nanoid/);
+  assert.match(nanoSrc!, /export function customAlphabet/);
+  assert.doesNotMatch(nanoSrc!, /from ["']nanoid["']/);
+  assert.doesNotMatch(nanoSrc!, /export function get\b/);
+  const nanoVal = validateGenerated(ts, nanoSrc!, { envelope: nanoEnv });
+  assert.equal(nanoVal.ok, true, nanoVal.errors.join("; "));
+});
+
 test("assemble get+debounce is standalone and names the exports", () => {
   const src = assembleCatalogModule(env(["get", "debounce"]));
   assert.ok(src);
@@ -135,4 +165,115 @@ test("generate assemble reads via OriginalSourceGuard, not raw lodash js", () =>
   const validatePath = fileURLToPath(new URL("../src/generate/validate.ts", import.meta.url));
   const vsrc = readFileSync(validatePath, "utf8");
   assert.doesNotMatch(vsrc, /node_modules\/lodash\/.*\.js/);
+});
+
+function familyEnv(
+  name: string,
+  version: string,
+  symbols: string[],
+  importKind: ImportKind = "named",
+): Envelope {
+  const e = env(symbols, [{ kind: importKind, names: symbols }]);
+  e.package = { name, version, family: name, subpath: "" };
+  e.clock = symbols.includes("debounce") || symbols.includes("throttle") || symbols.includes("delay");
+  e.cryptoRandom = name === "uuid" || name === "nanoid";
+  for (const imp of e.imports) imp.specifier = name;
+  return e;
+}
+
+test("each registered family assembles requested exports only, with SPDX provenance", () => {
+  const cases: Array<{
+    pkg: string;
+    version: string;
+    symbols: string[];
+    kind: ImportKind;
+    expect: RegExp[];
+    absent: RegExp[];
+  }> = [
+    {
+      pkg: "lodash",
+      version: "4.17.21",
+      symbols: ["get", "debounce"],
+      kind: "named",
+      expect: [/export function get/, /export function debounce/],
+      absent: [/export function groupBy/, /from ["']lodash/],
+    },
+    {
+      pkg: "moment",
+      version: "2.30.1",
+      symbols: ["default"],
+      kind: "default",
+      expect: [/export default/, /export const moment|export function createMoment/],
+      absent: [/export function get\b/, /from ["']moment/],
+    },
+    {
+      pkg: "uuid",
+      version: "11.1.0",
+      symbols: ["v4"],
+      kind: "named",
+      expect: [/export function v4/, /globalThis\.crypto/],
+      absent: [/from ["']uuid/, /export function get\b/],
+    },
+    {
+      pkg: "ms",
+      version: "2.1.3",
+      symbols: ["default"],
+      kind: "default",
+      expect: [/export default/, /export function ms/],
+      absent: [/from ["']ms["']/, /export function get\b/],
+    },
+    {
+      pkg: "nanoid",
+      version: "5.1.5",
+      symbols: ["nanoid"],
+      kind: "named",
+      expect: [/export function nanoid/, /globalThis\.crypto/],
+      absent: [/from ["']nanoid/, /export function get\b/],
+    },
+    {
+      pkg: "clsx",
+      version: "2.1.1",
+      symbols: ["clsx"],
+      kind: "named",
+      expect: [/export function clsx/],
+      absent: [/from ["']clsx/, /export function get\b/],
+    },
+    {
+      pkg: "whatwg-url",
+      version: "14.2.0",
+      symbols: ["URL", "URLSearchParams"],
+      kind: "named",
+      expect: [/export const URL/, /URLSearchParams/],
+      absent: [/from ["']whatwg-url/, /export function get\b/],
+    },
+    {
+      pkg: "bluebird",
+      version: "3.7.2",
+      symbols: ["delay", "resolve"],
+      kind: "named",
+      expect: [/export function delay/, /export function resolve/],
+      absent: [/from ["']bluebird/, /export function get\b/],
+    },
+    {
+      pkg: "mime-types",
+      version: "2.1.35",
+      symbols: ["lookup"],
+      kind: "named",
+      expect: [/export function lookup/],
+      absent: [/from ["']mime-types/, /export function get\b/],
+    },
+  ];
+
+  for (const c of cases) {
+    const e = familyEnv(c.pkg, c.version, c.symbols, c.kind);
+    const src = assembleCatalogModule(e);
+    assert.ok(src, `${c.pkg}: assemble must not return null`);
+    assert.match(src!, /^\s*\/\*\*\n \* SPDX-License-Identifier: MIT\n/m, c.pkg);
+    assert.doesNotMatch(src!, /@license/, c.pkg);
+    assert.doesNotMatch(src!, /Copyright .+ OpenJS/, c.pkg);
+    for (const re of c.expect) assert.match(src!, re, `${c.pkg} ${re}`);
+    for (const re of c.absent) assert.doesNotMatch(src!, re, `${c.pkg} ${re}`);
+    const val = validateGenerated(ts, src!, { envelope: e });
+    assert.equal(val.ok, true, `${c.pkg}: ${val.errors.join("; ")}`);
+  }
 });

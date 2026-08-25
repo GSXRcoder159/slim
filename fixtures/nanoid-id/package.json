@@ -1,0 +1,14 @@
+{
+  "name": "nanoid-id-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/index.test.ts"
+  },
+  "dependencies": {
+    "nanoid": "5.1.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

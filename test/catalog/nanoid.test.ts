@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { customAlphabet as nanoidAlphabet, nanoid as nanoidOracle } from "nanoid";
 import { customAlphabet, nanoid } from "../../src/generate/catalog/nanoid.ts";
 
 const DEFAULT_ALPHABET =
-  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
+  "useandom-26T198340PX75pxJACKVERYMINDBUSHWOLF_GQZbfghjklqvwyzrict";
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const CATALOG = join(ROOT, "src/generate/catalog/nanoid.ts");
 
 describe("nanoid", () => {
   it("returns 21 URL-safe characters by default", () => {
@@ -47,7 +52,62 @@ describe("nanoid", () => {
 
   it("throws on an empty alphabet or negative size", () => {
     assert.throws(() => customAlphabet("", 4)(), { name: "Error" });
-    assert.throws(() => nanoid(-1), { name: "Error" });
+    assert.equal(nanoid(-1), "");
+  });
+
+  it("agrees with nanoid byte-for-byte under a shared getRandomValues stream", () => {
+    const env = { ...process.env };
+    delete env.NODE_TEST_CONTEXT;
+    delete env.NODE_CHANNEL_FD;
+    const r = spawnSync(
+      process.execPath,
+      [
+        "--experimental-strip-types",
+        "--input-type=module",
+        "-e",
+        `
+import assert from "node:assert/strict";
+import { customAlphabet as nanoidAlphabet, nanoid as nanoidOracle } from "nanoid";
+import { customAlphabet, nanoid } from ${JSON.stringify(pathToFileURL(CATALOG).href)};
+
+assert.throws(() => nanoid(-1), { name: "RangeError" });
+
+const stream = (seed) => {
+  let i = 0;
+  return (buf) => {
+    const u8 = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+    for (let k = 0; k < u8.length; k++) u8[k] = (seed + i++) & 255;
+    return buf;
+  };
+};
+const cryptoObj = globalThis.crypto;
+const original = cryptoObj.getRandomValues.bind(cryptoObj);
+try {
+  cryptoObj.getRandomValues = stream(7);
+  const slimDefault = nanoid();
+  cryptoObj.getRandomValues = stream(7);
+  const realDefault = nanoidOracle();
+  assert.equal(slimDefault, realDefault);
+
+  cryptoObj.getRandomValues = stream(11);
+  const slimAbc = customAlphabet("abc", 5)();
+  cryptoObj.getRandomValues = stream(11);
+  const realAbc = nanoidAlphabet("abc", 5)();
+  assert.equal(slimAbc, realAbc);
+
+  cryptoObj.getRandomValues = stream(13);
+  const slimSized = nanoid(10);
+  cryptoObj.getRandomValues = stream(13);
+  const realSized = nanoidOracle(10);
+  assert.equal(slimSized, realSized);
+} finally {
+  cryptoObj.getRandomValues = original;
+}
+        `,
+      ],
+      { encoding: "utf8", cwd: ROOT, env, timeout: 15_000 },
+    );
+    assert.equal(r.status, 0, `${r.stderr}\n${r.stdout}`);
   });
 
   it("agrees with nanoid on public size/alphabet and injectable getRandomValues", () => {

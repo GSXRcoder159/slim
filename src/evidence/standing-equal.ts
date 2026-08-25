@@ -183,6 +183,7 @@ function eqDeep(a, b, ctx, seen) {
     return at === bt;
   }
   if (a instanceof Date || b instanceof Date) return false;
+  if (isUrlLike(a) && isUrlLike(b)) return a.href === b.href;
   if (a instanceof RegExp && b instanceof RegExp) return a.source === b.source && a.flags === b.flags;
   if (typeof Buffer !== "undefined" && Buffer.isBuffer(a) && Buffer.isBuffer(b)) return a.equals(b);
   if (a instanceof Map && b instanceof Map) {
@@ -278,6 +279,26 @@ function standingEqual(a, b, hyrum) {
   return extras(a, b, ctx);
 }
 
+function isUrlLike(v) {
+  return Boolean(v && typeof v === "object" && typeof v.href === "string" && typeof v.hostname === "string");
+}
+
+function callFn(fn, thisArg, args) {
+  try {
+    return { ok: true, value: fn.apply(thisArg, args) };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/without ['"]?new['"]?/i.test(msg) || /Class constructor/i.test(msg)) {
+      try {
+        return { ok: true, value: Reflect.construct(fn, args) };
+      } catch (err2) {
+        return { ok: false, err: err2 };
+      }
+    }
+    return { ok: false, err };
+  }
+}
+
 function eq(actual, expected, hyrum) {
   if (!standingEqual(actual, expected, hyrum)) {
     throw new Error("standing mismatch");
@@ -288,25 +309,23 @@ function checkFrozenPair(fn, p) {
   const live = reviveEvent(p);
   const hyrum = p.hyrum ?? {};
   if (p.threw) {
-    let threw = false;
-    try {
-      fn.apply(live.thisArg, live.args);
-    } catch (err) {
-      threw = true;
-      const got = err instanceof Error
-        ? { name: err.name, message: err.message, code: err.code }
-        : { name: "Error", message: String(err) };
-      if (got.name !== p.threw.name || got.message !== p.threw.message) {
-        throw new Error("error mismatch: " + got.name + ":" + got.message);
-      }
-      if (p.threw.code !== undefined && !Object.is(got.code, p.threw.code)) {
-        throw new Error("error code mismatch");
-      }
+    const called = callFn(fn, live.thisArg, live.args);
+    if (called.ok) throw new Error("expected throw " + p.threw.name);
+    const err = called.err;
+    const got = err instanceof Error
+      ? { name: err.name, message: err.message, code: err.code }
+      : { name: "Error", message: String(err) };
+    if (got.name !== p.threw.name || got.message !== p.threw.message) {
+      throw new Error("error mismatch: " + got.name + ":" + got.message);
     }
-    if (!threw) throw new Error("expected throw " + p.threw.name);
+    if (p.threw.code !== undefined && !Object.is(got.code, p.threw.code)) {
+      throw new Error("error code mismatch");
+    }
     return;
   }
-  const got = fn.apply(live.thisArg, live.args);
+  const called = callFn(fn, live.thisArg, live.args);
+  if (!called.ok) throw called.err;
+  const got = called.value;
   const identity = hyrum.sameReference === true || hyrum.dateIdentity === true;
   if (identity && aliasedFromInputs(live.result, live.args, live.thisArg) && got !== live.result) {
     throw new Error("standing identity mismatch for " + p.symbol);

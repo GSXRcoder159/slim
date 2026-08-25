@@ -1,9 +1,9 @@
 /**
  * MIT License
  *
- * Original Slim implementation of the public `ms` duration API.
- * Not derived from vercel/ms source. Includes a 100-character parse cap
- * (the documented ReDoS mitigation) and compound strings such as "1h 30m".
+ * Original Slim implementation of the public `ms` duration API (parse one
+ * duration token, format a millisecond count). Not derived from vercel/ms
+ * source. Compound strings such as "1h 30m" are not valid inputs.
  */
 
 const S = 1000;
@@ -13,41 +13,42 @@ const D = H * 24;
 const W = D * 7;
 const Y = D * 365.25;
 
-const UNIT_TO_MS: Record<string, number> = {
-  year: Y,
+const UNIT: Record<string, number> = {
   years: Y,
+  year: Y,
   yrs: Y,
   yr: Y,
   y: Y,
-  week: W,
   weeks: W,
+  week: W,
   w: W,
-  day: D,
   days: D,
+  day: D,
   d: D,
-  hour: H,
   hours: H,
+  hour: H,
   hrs: H,
   hr: H,
   h: H,
-  minute: M,
   minutes: M,
+  minute: M,
   mins: M,
   min: M,
   m: M,
-  second: S,
   seconds: S,
+  second: S,
   secs: S,
   sec: S,
   s: S,
-  millisecond: 1,
   milliseconds: 1,
+  millisecond: 1,
   msecs: 1,
   msec: 1,
   ms: 1,
 };
 
-const UNIT_NAMES = Object.keys(UNIT_TO_MS).sort((a, b) => b.length - a.length);
+const PARSE =
+  /^(-?(?:\d+)?\.?\d+) *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i;
 
 export interface MsOptions {
   long?: boolean;
@@ -55,50 +56,24 @@ export interface MsOptions {
 
 function badValue(val: unknown): never {
   throw new Error(
-    `ms(): value must be a non-empty string or a finite number (got ${String(val)})`,
+    `val is not a non-empty string or a valid number. val=${JSON.stringify(val)}`,
   );
 }
 
-function matchUnit(input: string, pos: number): string | null {
-  const rest = input.slice(pos).toLowerCase();
-  for (const name of UNIT_NAMES) {
-    if (!rest.startsWith(name)) continue;
-    const next = rest[name.length];
-    if (next === undefined || next === " " || /[0-9.+-]/.test(next)) return name;
-  }
-  return null;
-}
-
 function parse(str: string): number | undefined {
-  if (str.length > 100) {
-    throw new Error("ms(): value exceeds 100 characters");
-  }
-  const input = str.trim();
-  if (!input) return undefined;
-
-  let pos = 0;
-  let total = 0;
-  let saw = false;
-  while (pos < input.length) {
-    while (input[pos] === " ") pos += 1;
-    if (pos >= input.length) break;
-    const num = /^-?(?:\d+\.?\d*|\.\d+)/.exec(input.slice(pos));
-    if (!num) return undefined;
-    const n = Number.parseFloat(num[0]);
-    if (!Number.isFinite(n)) return undefined;
-    pos += num[0].length;
-    while (input[pos] === " ") pos += 1;
-    const unit = matchUnit(input, pos);
-    if (unit) pos += unit.length;
-    total += n * (unit ? (UNIT_TO_MS[unit] ?? 1) : 1);
-    saw = true;
-  }
-  return saw ? total : undefined;
+  if (str.length > 100) return undefined;
+  const match = PARSE.exec(str);
+  if (!match) return undefined;
+  const n = Number.parseFloat(match[1] ?? "");
+  if (!Number.isFinite(n)) return undefined;
+  const unit = (match[2] || "ms").toLowerCase();
+  return n * (UNIT[unit] ?? 1);
 }
 
 function plural(msVal: number, unit: number, name: string): string {
+  const abs = Math.abs(msVal);
   const n = Math.round(msVal / unit);
-  return `${n} ${name}${Math.abs(n) === 1 ? "" : "s"}`;
+  return `${n} ${name}${abs >= unit * 1.5 ? "s" : ""}`;
 }
 
 function format(msVal: number, long: boolean): string {

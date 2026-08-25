@@ -51,6 +51,19 @@ describe("uuid v4", () => {
     assert.throws(() => v4({ random: new Uint8Array(8) }), { name: "TypeError" });
   });
 
+  it("agrees with uuid v4 under seeded crypto.randomUUID", async () => {
+    const { withSeededCrypto } = await import("../../src/fuzz/crypto.ts");
+    for (const seed of [1, 7, 99]) {
+      const slim = withSeededCrypto(seed, () => v4());
+      const real = withSeededCrypto(seed, () => {
+        const random = globalThis.crypto.getRandomValues(new Uint8Array(16));
+        return uuidV4({ random });
+      });
+      assert.equal(slim, real);
+      assert.match(slim, UUID_V4);
+    }
+  });
+
   it("agrees with uuid v4 given injectable random bytes", () => {
     const tables = [
       new Uint8Array(16),

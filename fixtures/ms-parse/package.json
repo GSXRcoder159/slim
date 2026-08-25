@@ -1,0 +1,14 @@
+{
+  "name": "ms-parse-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --experimental-strip-types --test src/index.test.ts"
+  },
+  "dependencies": {
+    "ms": "2.1.3"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
+  CATALOG_ORACLES,
   catalogSymbols,
   getCatalog,
   matchCatalog,
@@ -59,5 +63,29 @@ describe("catalog matcher", () => {
   it("aliases mime-db and url-parse", () => {
     assert.ok(catalogSymbols("mime-db").includes("lookup"));
     assert.ok(catalogSymbols("url-parse").includes("URL"));
+  });
+
+  it("aliases classnames to the clsx catalog", () => {
+    assert.deepEqual(catalogSymbols("classnames"), catalogSymbols("clsx"));
+    assert.equal(getCatalog("classnames", "clsx")?.impl, clsx);
+    const { matched, missing } = matchCatalog("classnames", ["clsx", "default"]);
+    assert.deepEqual(missing, []);
+    assert.equal(matched.length, 2);
+  });
+
+  it("lists groupBy on the lodash catalog", () => {
+    assert.ok(catalogSymbols("lodash").includes("groupBy"));
+    assert.equal(typeof getCatalog("lodash", "groupBy")?.impl, "function");
+    const { missing } = matchCatalog("lodash", ["groupBy"]);
+    assert.deepEqual(missing, []);
+  });
+
+  it("pins installed catalog oracles to CATALOG_ORACLES", () => {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    for (const [pkg, pin] of Object.entries(CATALOG_ORACLES)) {
+      const pkgJson = join(root, "node_modules", pkg, "package.json");
+      const installed = JSON.parse(readFileSync(pkgJson, "utf8")) as { version: string };
+      assert.equal(installed.version, pin, `${pkg} must be pinned at ${pin}`);
+    }
   });
 });

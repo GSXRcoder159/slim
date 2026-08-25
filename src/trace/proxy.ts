@@ -83,6 +83,9 @@ function wrapFn(
   }
 
   const wrapped = function (this: unknown, ...args: unknown[]) {
+    if (new.target) {
+      return recordConstruct(fn, args, new.target as Function, symbol, opts, meta);
+    }
     return recordCall(fn, this, args, symbol, opts, meta);
   };
 
@@ -94,6 +97,11 @@ function wrapFn(
   }
   try {
     Object.setPrototypeOf(wrapped, Object.getPrototypeOf(fn));
+  } catch {
+    /* ignore */
+  }
+  try {
+    wrapped.prototype = (fn as { prototype?: unknown }).prototype;
   } catch {
     /* ignore */
   }
@@ -146,6 +154,62 @@ function copyFnProps(
         /* ignore */
       }
     }
+  }
+}
+
+function recordConstruct(
+  fn: Function,
+  args: unknown[],
+  newTarget: Function,
+  symbol: string,
+  opts: WrapOpts,
+  meta: WrapMeta,
+): unknown {
+  ensureSession();
+  const originId = randomUUID();
+  const tRelMs = Date.now() - sessionStartMs;
+  const site = captureUserSite();
+  const walker = createWalker();
+  const beforeLive = args.map((a) => walker.value(a));
+  const beforeSnap = snapshot(args);
+  try {
+    const result = Reflect.construct(fn, args, newTarget);
+    const afterSnap = snapshot(args);
+    const recorded = wrapResult(result, symbol, opts, originId);
+    const event: TraceEvent = {
+      symbol,
+      originId,
+      argc: args.length,
+      args: beforeLive,
+      result: walker.value(recorded),
+      mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
+      truncated: walker.truncated,
+      tRelMs,
+      sessionId,
+    };
+    if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
+    if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
+    if (site) event.site = site;
+    opts.onEvent(event);
+    return recorded;
+  } catch (err) {
+    const afterSnap = snapshot(args);
+    const event: TraceEvent = {
+      symbol,
+      originId,
+      argc: args.length,
+      args: beforeLive,
+      threw: threwShape(err),
+      mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
+      truncated: walker.truncated,
+      tRelMs,
+      sessionId,
+    };
+    if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
+    if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
+    if (site) event.site = site;
+    opts.onEvent(event);
+    throw err;
   }
 }
 
