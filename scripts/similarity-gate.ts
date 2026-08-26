@@ -6,4 +6,6 @@ if (!r.ok) {
   console.error(r.failed);
   process.exit(1);
 }
-console.log(`similarity-gate ok (worst ${r.worst} hits in ${r.worstFile || "none"})`);
+console.log(
+  `similarity-gate ok (worst ${r.worst} hits in ${r.worstFile || "none"}; skipped oracle dirs: ${r.skipped.join(", ") || "none"})`,
+);

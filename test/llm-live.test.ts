@@ -17,7 +17,7 @@ function env(): Envelope {
     imports: [],
     symbols: [
       {
-        exportName: "ms",
+        exportName: "default",
         packages: [],
         callSites: [],
         resultMembers: [],
@@ -53,6 +53,9 @@ if (live && process.env.ANTHROPIC_API_KEY) {
     } as NodeJS.ProcessEnv);
     assert.ok(cfg);
     const out = await generateWithLlm(env(), spec, [], cfg!);
+    assert.ok(out.promptHash);
+    assert.match(out.source, /SPDX-License-Identifier: MIT/);
+    assert.doesNotMatch(out.source, /FROM_IMPL/);
     assertValidGenerated(ts, out.source, env());
     const contracts = checkContracts(ts, out.source, env());
     assert.equal(contracts.ok, true, contracts.errors.join("; "));
@@ -66,6 +69,9 @@ if (live && process.env.OPENAI_API_KEY) {
     } as NodeJS.ProcessEnv);
     assert.ok(cfg);
     const out = await generateWithLlm(env(), spec, [], cfg!);
+    assert.ok(out.promptHash);
+    assert.match(out.source, /SPDX-License-Identifier: MIT/);
+    assert.doesNotMatch(out.source, /FROM_IMPL/);
     assertValidGenerated(ts, out.source, env());
     const contracts = checkContracts(ts, out.source, env());
     assert.equal(contracts.ok, true, contracts.errors.join("; "));

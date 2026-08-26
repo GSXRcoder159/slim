@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.compact. Not derived from lodash source.
+ * Original Slim implementation of lodash.compact. Not affiliated with lodash authors.
  */
 
 import { toArrayLike } from "./_internal.ts";

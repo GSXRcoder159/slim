@@ -3,7 +3,7 @@
  *
  * Original Slim implementation of UUID v4 using the public RFC 4122 layout
  * and `crypto.randomUUID` when the caller does not supply bytes.
- * Not derived from the uuid package source.
+ * Not affiliated with the uuid package authors.
  */
 
 function toHex(bytes: Uint8Array): string {

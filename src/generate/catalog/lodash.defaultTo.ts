@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.defaultTo. Not derived from lodash source.
+ * Original Slim implementation of lodash.defaultTo. Not affiliated with lodash authors.
  */
 
 export function defaultTo<T, D>(value: T, defaultValue: D): T | D {

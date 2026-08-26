@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Re-export of Slim's original lodash catalog slices. Not derived from lodash source.
+ * Re-export of Slim's original lodash catalog slices. Not affiliated with lodash authors.
  */
 
 export { get } from "./lodash.get.ts";

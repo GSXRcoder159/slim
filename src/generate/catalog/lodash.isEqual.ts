@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.isEqual. Not derived from lodash source.
+ * Original Slim implementation of lodash.isEqual. Not affiliated with lodash authors.
  */
 
 import { baseIsEqual } from "./_internal.ts";

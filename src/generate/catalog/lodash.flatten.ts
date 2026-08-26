@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.flatten. Not derived from lodash source.
+ * Original Slim implementation of lodash.flatten. Not affiliated with lodash authors.
  */
 
 import { isArguments, toArrayLike } from "./_internal.ts";

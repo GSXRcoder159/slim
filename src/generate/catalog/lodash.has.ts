@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.has. Not derived from lodash source.
+ * Original Slim implementation of lodash.has. Not affiliated with lodash authors.
  */
 
 import { baseHas } from "./_internal.ts";

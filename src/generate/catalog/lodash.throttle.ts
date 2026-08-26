@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.throttle. Not derived from lodash source.
+ * Original Slim implementation of lodash.throttle. Not affiliated with lodash authors.
  * Implemented as debounce with leading and trailing edges and maxWait = wait.
  */
 

@@ -63,6 +63,8 @@ try {
       "lodash",
       "--no-pr",
       "--no-install",
+      "--seed",
+      "1",
       "--budget-ms",
       "30000",
     ],

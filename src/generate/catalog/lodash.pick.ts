@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.pick. Not derived from lodash source.
+ * Original Slim implementation of lodash.pick. Not affiliated with lodash authors.
  */
 
 import { pickPaths } from "./_internal.ts";

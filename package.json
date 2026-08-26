@@ -28,15 +28,18 @@
     "dist",
     "action",
     "slim.schema.json",
+    "docs/*.schema.json",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && node scripts/copy-pack-assets.mjs",
     "prepack": "npm run build",
     "test": "node --experimental-strip-types --test --test-reporter=spec test/*.test.ts test/*/*.test.ts",
     "slim": "node --experimental-strip-types src/main.ts",
-    "refresh:golden": "node --experimental-strip-types scripts/refresh-golden-fixture.ts"
+    "refresh:golden": "node --experimental-strip-types scripts/refresh-golden-fixture.ts",
+    "measure:claims": "node --experimental-strip-types scripts/measure-claims.ts"
   },
   "keywords": [
     "dependencies",

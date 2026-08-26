@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.clone. Not derived from lodash source.
+ * Original Slim implementation of lodash.clone. Not affiliated with lodash authors.
  */
 
 import { baseClone } from "./_internal.ts";

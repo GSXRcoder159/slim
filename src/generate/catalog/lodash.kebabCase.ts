@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.kebabCase. Not derived from lodash source.
+ * Original Slim implementation of lodash.kebabCase. Not affiliated with lodash authors.
  */
 
 import { words } from "./_internal.ts";

@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Slim contributors
  *
- * Original Slim helpers for catalog lodash slices. Not derived from lodash source.
+ * Original Slim helpers for catalog lodash slices. Not affiliated with lodash authors.
  */
 
 const MAX_SAFE = Number.MAX_SAFE_INTEGER;

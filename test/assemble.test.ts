@@ -89,7 +89,7 @@ test("assembled header uses SPDX MIT and exact provenance lines", () => {
   assert.ok(src);
   assert.ok(src!.startsWith("/**"), "header must be the first lines");
   assert.match(src!, /^\s*\/\*\*\n \* SPDX-License-Identifier: MIT\n/m);
-  assert.match(src!, /Original implementation, not derived from lodash, Underscore, or OpenJS\./);
+  assert.match(src!, /Slim generated implementation\. n-gram similarity is a CI heuristic, not a legal opinion\./);
   assert.match(src!, /Envelope [0-9a-f]{64}/);
   assert.match(src!, /Catalog lodash\.get, lodash\.debounce/);
   assert.match(src!, /Evidence: \.slim\/lodash\/evidence\.md/);

@@ -2,8 +2,8 @@
  * MIT License
  *
  * Original Slim implementation of the public nanoid / customAlphabet API.
- * Uses `crypto.getRandomValues` looked up at call time. Not derived from
- * the nanoid package source.
+ * Uses `crypto.getRandomValues` looked up at call time. Not affiliated with
+ * the nanoid package authors.
  */
 
 const DEFAULT_SIZE = 21;

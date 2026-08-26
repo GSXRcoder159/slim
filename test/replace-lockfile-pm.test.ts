@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const NODE_BIN = dirname(process.execPath);
-const COREPACK = join(NODE_BIN, "corepack");
+const COREPACK =
+  process.platform === "win32" ? join(NODE_BIN, "corepack.cmd") : join(NODE_BIN, "corepack");
 const PM_PATH = `${NODE_BIN}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
 
 function pmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -19,16 +20,22 @@ function pmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 }
 
 function which(bin: string): boolean {
-  const r = spawnSync("sh", ["-c", `command -v ${bin}`], { encoding: "utf8", env: pmEnv() });
-  return r.status === 0 && Boolean(r.stdout.trim());
+  const probe = process.platform === "win32" ? ["cmd", "/c", "where", bin] : ["sh", "-c", `command -v ${bin}`];
+  const r = spawnSync(probe[0]!, probe.slice(1), { encoding: "utf8", env: pmEnv() });
+  return r.status === 0 && Boolean((r.stdout ?? "").trim());
 }
 
 function runSlim(cwd: string, args: string[]) {
-  return spawnSync(
-    process.execPath,
-    ["--experimental-strip-types", join(ROOT, "src/main.ts"), ...args],
-    { cwd, encoding: "utf8", env: pmEnv({ CI: "1" }), timeout: 180_000 },
-  );
+  const dist = join(ROOT, "dist", "main.js");
+  const argv = existsSync(dist)
+    ? [dist, ...args]
+    : ["--experimental-strip-types", join(ROOT, "src/main.ts"), ...args];
+  return spawnSync(process.execPath, argv, {
+    cwd,
+    encoding: "utf8",
+    env: pmEnv({ CI: "1" }),
+    timeout: 180_000,
+  });
 }
 
 function prepareCorepack(pkg: string): void {

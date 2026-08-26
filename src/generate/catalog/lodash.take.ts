@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.take. Not derived from lodash source.
+ * Original Slim implementation of lodash.take. Not affiliated with lodash authors.
  */
 
 import { toArrayLike, toInteger } from "./_internal.ts";

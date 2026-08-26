@@ -1,3 +1,5 @@
+# HISTORICAL — pre-v1 CLI dump. Not the shipped command surface as of 2026-08-26.
+# See README.md and docs/help.txt for current flags, exits, and output.
 # Friday 16:40 — lodash CVE, two call sites, merge before standup
 # Streams: lines tagged OUT / ERR. Unmarked human copy is OUT.
 # Exit codes at the end of each command.

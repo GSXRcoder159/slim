@@ -9,6 +9,7 @@ import type { PublicApiSpec } from "../src/generate/public-api.ts";
 const spec: PublicApiSpec = {
   text: "export function ms(val: string | number): number;",
   source: "bundled-dts",
+  from: "node_modules/ms/index.d.ts",
 };
 
 function env(): Envelope {
@@ -64,6 +65,15 @@ function assertSlimExit(err: unknown, code: number): SlimExit {
   return err;
 }
 
+function assertCleanRoomBody(init: RequestInit): void {
+  const raw = String(init.body);
+  assert.doesNotMatch(raw, /FROM_IMPL/);
+  assert.doesNotMatch(raw, /node_modules\/[^"'\\\s]+\.js/);
+  assert.doesNotMatch(raw, /index\.js/);
+}
+
+const providers: LlmConfig[] = [anthropic, openai];
+
 test("llmConfigFromEnv reads Anthropic", () => {
   const c = llmConfigFromEnv({
     ANTHROPIC_API_KEY: "sk-test",
@@ -82,6 +92,25 @@ test("llmConfigFromEnv reads OpenAI", () => {
   assert.equal(c!.kind, "openai");
   assert.equal(c!.model, "gpt-4.1");
   assert.equal(c!.baseUrl, "https://api.openai.com/v1/chat/completions");
+});
+
+test("llmConfigFromEnv returns null without a key", () => {
+  assert.equal(llmConfigFromEnv({} as NodeJS.ProcessEnv), null);
+  assert.equal(
+    llmConfigFromEnv({
+      ANTHROPIC_API_KEY: "",
+      OPENAI_API_KEY: "",
+      SLIM_LLM_API_KEY: "",
+    } as NodeJS.ProcessEnv),
+    null,
+  );
+  assert.equal(
+    llmConfigFromEnv({
+      SLIM_LLM_BASE_URL: "https://api.openai.com/v1/chat/completions",
+      SLIM_LLM_MODEL: "gpt-4.1",
+    } as NodeJS.ProcessEnv),
+    null,
+  );
 });
 
 test("generateWithLlm uses a fake provider", async () => {
@@ -130,6 +159,8 @@ test("Anthropic request contract", async () => {
   assert.equal(body.temperature, 0);
   assert.ok(body.system);
   assert.equal(body.messages[0]?.role, "user");
+  assertCleanRoomBody(init);
+  assert.match(String(init.body), /index\.d\.ts/);
 });
 
 test("OpenAI request contract", async () => {
@@ -159,19 +190,46 @@ test("OpenAI request contract", async () => {
   assert.equal(body.max_tokens, 8192);
   assert.equal(body.messages[0]?.role, "system");
   assert.equal(body.messages[1]?.role, "user");
+  assertCleanRoomBody(init);
+  assert.match(String(init.body), /index\.d\.ts/);
 });
 
-test("HTTP 429 and 500 are EXIT_ENV and redact the key", async () => {
-  for (const status of [429, 500]) {
-    const fake: typeof fetch = async () =>
-      new Response(`unauthorized sk-secret-key-xyz`, { status });
-    await assert.rejects(
-      () => generateWithLlm(env(), spec, [], anthropic, fake),
-      (err: unknown) => {
-        assertSlimExit(err, EXIT_ENV);
-        return true;
-      },
-    );
+test("HTTP 429 and 5xx are EXIT_ENV for both providers and redact the key", async () => {
+  for (const cfg of providers) {
+    for (const status of [429, 500, 502, 503]) {
+      const fake: typeof fetch = async () =>
+        new Response(`unauthorized sk-secret-key-xyz`, { status });
+      await assert.rejects(
+        () => generateWithLlm(env(), spec, [], cfg, fake),
+        (err: unknown) => {
+          const e = assertSlimExit(err, EXIT_ENV);
+          assert.match(e.message, new RegExp(`LLM HTTP ${status}`));
+          return true;
+        },
+      );
+    }
+  }
+});
+
+test("AbortError and TimeoutError are EXIT_ENV for both providers", async () => {
+  const errors = [
+    new DOMException("The operation was aborted", "AbortError"),
+    new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+  ];
+  for (const cfg of providers) {
+    for (const thrown of errors) {
+      const fake: typeof fetch = async () => {
+        throw thrown;
+      };
+      await assert.rejects(
+        () => generateWithLlm(env(), spec, [], cfg, fake),
+        (err: unknown) => {
+          const e = assertSlimExit(err, EXIT_ENV);
+          assert.match(e.message, /LLM network error/);
+          return true;
+        },
+      );
+    }
   }
 });
 
@@ -188,15 +246,18 @@ test("fetch throw is EXIT_ENV", async () => {
   );
 });
 
-test("invalid JSON is EXIT_FAIL", async () => {
-  const fake: typeof fetch = async () => new Response("not-json sk-secret-key-xyz", { status: 200 });
-  await assert.rejects(
-    () => generateWithLlm(env(), spec, [], anthropic, fake),
-    (err: unknown) => {
-      assertSlimExit(err, EXIT_FAIL);
-      return true;
-    },
-  );
+test("malformed JSON is EXIT_FAIL for both providers", async () => {
+  for (const cfg of providers) {
+    const fake: typeof fetch = async () => new Response("not-json sk-secret-key-xyz", { status: 200 });
+    await assert.rejects(
+      () => generateWithLlm(env(), spec, [], cfg, fake),
+      (err: unknown) => {
+        const e = assertSlimExit(err, EXIT_FAIL);
+        assert.match(e.message, /invalid JSON/);
+        return true;
+      },
+    );
+  }
 });
 
 test("empty and prose-only responses are EXIT_FAIL", async () => {

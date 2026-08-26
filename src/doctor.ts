@@ -44,7 +44,7 @@ export function collectDoctor(
   const nodeOk = nodeMeetsMinimum();
   if (!nodeOk) {
     issues.push(
-      `Node ${process.versions.node} is older than ${MIN_NODE_LABEL}. Slim needs registerHooks (22.15+) and CJS sync-hook fixes (22.22.3+ recommended).`,
+      `Node ${process.versions.node} is older than ${MIN_NODE_LABEL}. Slim needs registerHooks (${MIN_NODE_LABEL}+) and CJS sync-hook fixes (22.22.3+ recommended).`,
     );
   }
   const hooks = typeof registerHooks === "function";

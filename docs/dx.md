@@ -4,7 +4,7 @@ Wedge: a serverless/edge engineer on a Friday. CVE in a library they use two fun
 
 Money and billing are out of scope. There is no SaaS. Slim is a CLI plus three GitHub Actions that call that CLI.
 
-Parser: `node:util.parseArgs`. No commander, yargs, cac, meow. Subcommands are a `switch` on `positionals[0]`. Alias `upstream` → `watch`.
+Parser: `node:util.parseArgs`. No commander, yargs, cac, meow. Subcommands are a `switch` on `positionals[0]`. Alias `watch` → `upstream`.
 
 ---
 
@@ -12,11 +12,11 @@ Parser: `node:util.parseArgs`. No commander, yargs, cac, meow. Subcommands are a
 
 ### Process contract
 
-| Stream | Default | `--json` | `--quiet` |
-| --- | --- | --- | --- |
-| stdout | Human report (the thing you read) | One JSON value, no logs | Same as default / JSON |
-| stderr | Progress (`fuzz 400/1000`), warnings | Progress | Errors only |
-| GitHub Actions | Also emit `::error file=line::` / `::notice::` on stderr when `GITHUB_ACTIONS=1` | same | errors only |
+| Stream | Default | `--json` |
+| --- | --- | --- |
+| stdout | Human report (the thing you read) | One JSON value, no logs |
+| stderr | Progress (`fuzz 400/1000`), warnings | Progress |
+| GitHub Actions | Also emit `::error file=line::` / `::notice::` on stderr when `GITHUB_ACTIONS=1` | same |
 
 `--json` never interleaves human lines on stdout. CI greps stdout or `jq`.
 
@@ -34,9 +34,7 @@ Confirmations: none. `--no-pr` skips GitHub. CI is non-interactive.
 | 3 | Refused / envelope too wide / native / network / fs. Human-readable error already on stderr. |
 | 4 | Environment: Node too old, network required but failed (OSV/npm), `gh` and `GITHUB_TOKEN` both missing when a PR is requested, no origin/unparseable GitHub remote, no `package.json`, Jest/no-runner/missing hook/timeout when traces are required. |
 
-The shipped CLI uses **0–4 only**. Code 5 is reserved for an internal bug path and is not emitted yet.
-
-SIGINT → 130. Do not invent other codes in v1.
+The shipped CLI uses **0–4 only**. SIGINT is the process default (typically 130), not a SlimExit.
 
 `slim-bloat` (the Action) runs the compiled bloat checker (`action/run.mjs bloat`), not `scan --diff`. Default exit 0 when the PR comment path is unused. The action fails (exit 1) when a production `BLOAT_PACKAGES` dependency has no Slim replacement.
 
@@ -44,14 +42,10 @@ SIGINT → 130. Do not invent other codes in v1.
 
 ```
 -h, --help
--V, --version
-    --cwd <dir>
--q, --quiet
-    --verbose
     --json
 ```
 
-`--help` with a command prints that command’s help and exits 0. Bare `slim` and `slim --help` print top-level help on stdout and exit 0. An unknown command prints `unknown command:` plus help on stderr and exits 2.
+`--version`, `--cwd`, `--quiet`, and `--verbose` are **not** shipped. `--help` with a command prints that command’s help and exits 0. Bare `slim` and `slim --help` print top-level help on stdout and exit 0. An unknown command prints `unknown command:` plus help on stderr and exits 2.
 
 Shipped top-level help is the `HELP` string in `src/cli.ts` (`slim --help`). Keep [`help.txt`](./help.txt) equal to that string; `test/cli.test.ts` diffs them.
 
@@ -121,6 +115,8 @@ Steps, in order, stop on first failure. After the first project write, failure *
 10. Unless `--no-pr`: after merge-gate, create `slim/<pkg>` from `HEAD` without switching the user's branch or writing `.git/index`. Commit only Slim files, `git push` without `--force`, then `gh pr create --repo --base --head` or GitHub REST with `GITHUB_TOKEN`/`GH_TOKEN`. PRs target origin (not a fork parent). Local or remote branch collision, commit failure, push failure, and `gh`/REST failure are nonzero; the user's branch and index stay recoverable. No `gh` and no token → exit 4 after local writes, with no git refs created. `--no-pr` performs no branch, commit, push, or network.
 
 Default without `--no-pr`: attempt a PR after a successful merge-gate. There is no TTY confirm and no `--yes` / `--no-commit` flag.
+
+(The Friday transcript under `docs/transcripts/` is **historical** and must not be read as the shipped CLI.)
 
 ### `slim check [pkg]`
 
@@ -221,7 +217,7 @@ lodash@4.17.21  MIT  71.0 kB min / 25.8 kB gz
 
   size (est.)
     package:     71.0 kB min  →  ~1.8 kB
-    this worker: 82.4 kB gz   →  ~58 kB gz   (−24 kB, −29%)
+    Worker gzip / cold-start CPU: not measured by Slim (vendor isolate budget). See docs/measurements.json for Node parse/size of the golden slice.
     Lambda unpacked, if you also ship this: −1.4 MB node_modules/lodash
 
   next:  slim replace lodash
@@ -244,7 +240,7 @@ package.json     - lodash
   .slim/lodash/envelope.json
   .slim/lodash/evidence.md
 
-Open PR 'slim/replace-lodash'? [Y/n] y
+Open PR after merge-gate (no TTY confirm)
 branch  slim/replace-lodash
 pr      https://github.com/acme/edge-api/pull/842
 
@@ -258,20 +254,11 @@ See §8. They open `.slim/lodash/evidence.md`, then the ~250-line file. The PR b
 
 ### Cold-start framing (print this, don’t overclaim)
 
-Workers: isolate must finish **startup in 1 s**. Cloudflare warns past **1 MiB gz**; hard limit **3 MiB gz free / 10 MiB paid**. Bytes you never parse are the only honest cold-start claim until we measure.
+Workers: isolate CPU is a **vendor** startup budget. Slim does not publish a measured Worker gzip or cold-start number. Node parse/size receipts: [`docs/measurements.json`](./measurements.json).
 
-Lambda: **bundled** (esbuild) behaves like Workers. **Unbundled** `node_modules` is unzip + V8 compile; deleting lodash is ~1.4 MB unpacked, which is the number to put on the PR if `wrangler`/`esbuild` is absent.
+Lambda: **bundled** (esbuild) behaves like Workers. **Unbundled** `node_modules` is unzip + V8 compile; deleting lodash is ~1.4 MB unpacked when that path applies.
 
-v1 prints:
-
-```
-cold start
-  Workers:  less JS to parse on isolate start (limit 1s). We did not
-            measure CPU. Bundle −24 kB gz on this worker.
-  Lambda:   if unbundled, −1.4 MB unpacked lodash from the image.
-```
-
-No “50% faster p95.” If a later flag `--measure` exists, it can run `wrangler dev` / a fixture. Not required for v1.
+v1 prints estimated original min and measured replacement bytes in evidence. No “50% faster p95.” No invented Worker gzip delta.
 
 ### After merge
 
@@ -281,7 +268,7 @@ No “50% faster p95.” If a later flag `--measure` exists, it can run `wrangle
 
 ## 5. GitHub Actions
 
-Three composite actions in this repo (`check`, `bloat`, `upstream`). They wrap the CLI via `action/run.mjs`, which prefers `dist/github/*.js`. This repository’s workflows run `npm run build` first and set `SLIM_REQUIRE_DIST=1` so CI cannot pass on strip-types source when the distributable is missing. Published `uses: slim-js/slim/action/check@v1` still falls back to source when dist is absent (GitHub checkouts do not include gitignored `dist/`). Users still `actions/checkout` first.
+Three composite actions in this repo (`check`, `bloat`, `upstream`). They wrap the CLI via `action/run.mjs`, which prefers `dist/github/*.js`. This repository’s workflows run `npm run build` first and set `SLIM_REQUIRE_DIST=1` so CI cannot pass on strip-types source when the distributable is missing. Published `uses: slim-hq/slim/action/check@v1` still falls back to source when dist is absent (GitHub checkouts do not include gitignored `dist/`). Users still `actions/checkout` first.
 
 ### `slim-check` (on every PR)
 
@@ -298,7 +285,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: slim-js/slim/action/check@v1
+      - uses: slim-hq/slim/action/check@v1
 ```
 
 `action/check/action.yml` requires Node >= 22.18 and runs `action/run.mjs check`. Fails the PR on envelope drift, missing standing tests, or a failing standing/hardening suite. No recorded replacements → pass.
@@ -319,7 +306,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: slim-js/slim/action/bloat@v1
+      - uses: slim-hq/slim/action/bloat@v1
 ```
 
 `action/bloat/action.yml` runs `action/run.mjs bloat` (compiled `dist/github/bloat-action.js` when present). It flags production `BLOAT_PACKAGES` without a Slim replacement; it does not run `slim scan --diff`.
@@ -340,7 +327,7 @@ This repository dogfoods `.github/workflows/slim-upstream.yml` (compiled CLI, `S
 
 ## 8. Evidence report (90 seconds)
 
-File: `src/slim/<pkg>.evidence.md`
+File: `.slim/<pkg>/evidence.md`
 
 Tone on line 1: **evidence, not proof.** If we write “safe” we have failed the product.
 
@@ -374,7 +361,7 @@ Slim never phones home. Watch uses public APIs from the machine that runs it (yo
 
 There is no daemon.
 
-1. **Default:** GitHub Action, weekly. Copy `docs/examples/slim-watch.yml` or use `uses: slim-js/slim/action/upstream` after a dist build.
+1. **Default:** GitHub Action, weekly. Copy `docs/examples/slim-watch.yml` or use `uses: slim-hq/slim/action/upstream` after a dist build.
 2. **Laptop:** `slim watch` whenever. cron `0 9 * * 1 slim watch` if they insist.
 3. `doctor` warns if slices exist and the workflow file is missing.
 
@@ -412,54 +399,22 @@ Local cron is documented, not installed.
 
 GitHub Advisory GraphQL and OSV `querybatch` are later-scope; OSV already mirrors GHSA ids. No NVD key. No Slim servers.
 
-### Meta each slice stores (`*.meta.json`)
+### What each slice stores
 
-Enough to answer “was my slice exposed?”
-
-```json
-{
-  "package": "lodash",
-  "version": "4.17.21",
-  "ecosystem": "npm",
-  "generated": "synthesize",
-  "exports": ["get", "debounce"],
-  "upstreamRepo": "https://github.com/lodash/lodash",
-  "upstreamFilesHint": ["get.js", "debounce.js", "toPath.js"],
-  "slice": "lodash.js",
-  "license": "MIT"
-}
-```
-
-`generated: "synthesize"` means we wrote new JS and used lodash as oracle. There is no byte-for-byte file list. `upstreamFilesHint` is the mapping table for diffs (lodash’s per-method files).
+Identity lives in `.slim/<pkg>/envelope.json`, `evidence.json`, and the module under `src/slim/`. There is no separate `*.meta.json` in v1.
 
 ### Decision: was my slice exposed?
 
-For each new **advisory** on `name` whose affected range includes the sliced version, *or* a patched version we never took:
+For each advisory whose affected range includes the sliced version:
 
-1. Collect **symbols** from the advisory summary + GHSA / OSV `affected.ecosystem_specific`.
-2. Fetch `compare/v{sliced}...v{patched}` (or the fixing commit) from `upstreamRepo`. Parse changed paths.
-3. Map paths → export names (`get.js` → `get`). Union with symbols from (1).
-4. Intersect with `meta.exports`.
+1. Map advisory text and affected ranges onto used symbols from the envelope.
+2. **Exposed** — intersection nonempty → regenerate only with a verified oracle (exit 1 until merged if `--pr`).
+3. **Not exposed** — mapped, empty intersection → print that fact, exit 0 for that pkg.
+4. **Unmapped** — cannot map → write `.slim/UPSTREAM.md`, no rewrite, fail closed (exit 1). `--fail-on` is not v1.
 
-| Intersection | Advisory mapping | Action |
-| --- | --- | --- |
-| empty | mapped | Not exposed. Print “CVE-… patches `template`. You use `get`, `debounce`.” Exit 0 for that pkg. |
-| nonempty | mapped | Exposed. `--pr`: regenerate against the patched version (or, if we still don’t need the patched fn, rewrite evidence + bump `version` in meta after re-fuzz). Exit 1 until merged. |
-| — | cannot map (minified, “all lodash”, no repo) | **Uncertain.** Treat as exposed for `--fail-on slice-exposed`. PR body: advisory + slice file + “human must decide.” Fail closed. |
+Routine npm releases that are not advisories are notes, not security conclusions. Unmapped routine releases do not claim “not exposed.”
 
-For each new **npm release** that is not an advisory:
-
-| Diff vs used exports | Action |
-| --- | --- |
-| no used files/symbols | Note, exit 0 |
-| used exports changed | PR to regenerate |
-| cannot map | Note, exit 0 (**fail open** on routine releases) |
-
-`--fail-on any-advisory` fails even on empty intersection (for orgs that want a human every time lodash has a GHSA). Default is `slice-exposed`.
-
-Regenerate PR branch: `slim/upstream-lodash-CVE-2026-1234` or `slim/upstream-lodash-4.18.1`. Body = new evidence report + the intersection table.
-
-We do **not** auto-merge.
+Regenerate PR branch: `slim/upstream-lodash-…`. Body = new evidence. We do **not** auto-merge.
 
 ---
 
@@ -470,13 +425,13 @@ v1 implements the **full core loop**: envelope, generate, fuzz, PR, standing tes
 | In v1 | Later (same CLI, wider envelopes) |
 | --- | --- |
 | All 6 commands + aliases + exit codes above | `slim replace --all` (dangerous; not default) |
-| First-wave envelopes in [`packages.md`](./packages.md) | moment locales, js-yaml tags, markdown, ajv, AES, path-to-regexp |
+| Catalog envelopes in [`packages.md`](./packages.md) | moment locales, js-yaml tags, markdown, ajv, AES, path-to-regexp |
 | Synthesize + oracle fuzz | Extract-from-upstream mode when the method file is already small |
 | Call-site scanner without TypeScript as a dependency | Use the project’s `typescript` if present |
 | `src/slim` + optional `slim.json` | package.json `"slim"` key, workspaces |
 | Actions: check, bloat, watch | IDE, language besides JS/TS, axios→fetch rewriter |
 | Zero production deps for Slim itself | still zero, if we can help it |
 
-Out of scope on purpose: billing, accounts, a hosted “slice registry,” auto-merge, rewriting HTTP clients.
+Out of scope on purpose: billing, accounts, a hosted slice registry, auto-merge, rewriting HTTP clients, top-10k corpus scoring, merged-PR pricing, enterprise licensing, PDF generation, Node 26 CI.
 
 If a later Slim adds network, it is a different command (`slim rewire-fetch`), not `replace`.

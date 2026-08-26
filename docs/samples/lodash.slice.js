@@ -1,6 +1,8 @@
+// HISTORICAL JS sketch — not the shipped slice. Current output is TypeScript
+// in fixtures/lodash-get-debounce/src/slim/lodash.ts (SPDX MIT, Slim-generated).
 // src/slim/lodash.js
 // Slice of lodash@4.17.21 for this repo. Evidence: lodash.evidence.md
-// License: MIT (lodash). See lodash.LICENSE.
+// Historical note: do not attach an upstream lodash LICENSE to generated output.
 //
 // Implements: get(object, path), debounce(fn, wait) trailing-only.
 // Throws on path segments __proto__, constructor, prototype.

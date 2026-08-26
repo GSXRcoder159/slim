@@ -1,6 +1,6 @@
 /**
  * SPDX-License-Identifier: MIT
- * Original implementation, not derived from lodash, Underscore, or OpenJS.
+ * Slim generated implementation. n-gram similarity is a CI heuristic, not a legal opinion.
  * Envelope 217c102e5c34a74ba017061f1a5574a2ada6cd6a6497e6797e6eb97eafa706c4
  * Catalog lodash.get, lodash.debounce
  * Evidence: .slim/lodash/evidence.md

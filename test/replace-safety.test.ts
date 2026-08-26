@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { delimiter, dirname, join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { applyRevert, type RevertPlan } from "../src/rewrite/revert.ts";
@@ -38,7 +38,8 @@ function copyMs(dest: string): void {
       const rel = relative(join(ROOT, "fixtures", "ms-parse"), p);
       if (!rel || rel === ".") return true;
       if (rel.split(/[/\\]/)[0] === "node_modules") return false;
-      if (rel.startsWith("src/slim") || rel.startsWith(".slim")) return false;
+      if (rel.replace(/\\/g, "/").startsWith("src/slim") || rel.replace(/\\/g, "/").startsWith(".slim"))
+        return false;
       return true;
     },
   });
@@ -113,13 +114,17 @@ test("lockfile refresh failure restores package.json and does not write evidence
   npmInstall(dest);
   const fake = join(dest, ".fake-bin");
   mkdirSync(fake);
-  writeFileSync(join(fake, "npm"), "#!/bin/sh\nexit 1\n");
-  chmodSync(join(fake, "npm"), 0o755);
+  if (process.platform === "win32") {
+    writeFileSync(join(fake, "npm.cmd"), "@echo off\r\nexit /b 1\r\n");
+  } else {
+    writeFileSync(join(fake, "npm"), "#!/bin/sh\nexit 1\n");
+    chmodSync(join(fake, "npm"), 0o755);
+  }
   const before = snapshotTree(dest);
   const r = runSlim(
     dest,
     ["replace", "ms", "--no-pr", "--no-trace", "--budget-ms", "800", "--workers", "1"],
-    { PATH: `${fake}:${process.env.PATH ?? ""}` },
+    { PATH: `${fake}${delimiter}${process.env.PATH ?? ""}` },
   );
   assert.notEqual(r.status, 0, r.stderr);
   assert.match(r.stderr, /lockfile refresh failed/i);

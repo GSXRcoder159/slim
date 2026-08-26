@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.debounce. Not derived from lodash source.
+ * Original Slim implementation of lodash.debounce. Not affiliated with lodash authors.
  * Date.now / setTimeout / clearTimeout are resolved at call time, not module load.
  */
 

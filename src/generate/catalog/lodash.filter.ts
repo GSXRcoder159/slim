@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.filter. Not derived from lodash source.
+ * Original Slim implementation of lodash.filter. Not affiliated with lodash authors.
  */
 
 import { forEachCollection, resolveIteratee } from "./_internal.ts";

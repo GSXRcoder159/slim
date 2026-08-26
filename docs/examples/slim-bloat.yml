@@ -11,5 +11,5 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: slim-js/slim/action/bloat@v1
+      - uses: slim-hq/slim/action/bloat@v1
         # fail: true   # optional: exit 1 when a fat slimmable dep is added

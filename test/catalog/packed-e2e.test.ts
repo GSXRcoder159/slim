@@ -3,17 +3,18 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   cpSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const TMP = join(ROOT, ".tmp");
 
 const CASES: Array<{ dir: string; pkg: string; lodashInput?: boolean }> = [
   { dir: "lodash-get-debounce", pkg: "lodash", lodashInput: true },
@@ -46,7 +47,7 @@ function copyFixture(name: string, dest: string, lodashInput: boolean): void {
   cpSync(src, dest, {
     recursive: true,
     filter: (p) => {
-      const rel = relative(src, p);
+      const rel = relative(src, p).replace(/\\/g, "/");
       if (!rel || rel === ".") return true;
       if (rel.split(/[/\\]/)[0] === "node_modules") return false;
       if (rel.startsWith("src/slim") || rel.startsWith(".slim")) return false;
@@ -98,14 +99,15 @@ export function badDebounce(): ReturnType<typeof _.debounce> {
 
 test("packed CLI replace → standing tests → slim check for every registered catalog package", { timeout: 720_000 }, () => {
   execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
-  const packDir = mkdtempSync(join(tmpdir(), "slim-catalog-pack-"));
+  mkdirSync(TMP, { recursive: true });
+  const packDir = mkdtempSync(join(TMP, "slim-catalog-pack-"));
   const tgz = execFileSync("npm", ["pack", "--silent", `--pack-destination=${packDir}`], {
     cwd: ROOT,
     encoding: "utf8",
     timeout: 60_000,
   }).trim();
   const tarball = join(packDir, tgz.split("\n").pop() ?? tgz);
-  const tmp = mkdtempSync(join(tmpdir(), "slim-catalog-e2e-"));
+  const tmp = mkdtempSync(join(TMP, "slim-catalog-e2e-"));
   try {
     for (const c of CASES) {
       const dest = join(tmp, c.dir);

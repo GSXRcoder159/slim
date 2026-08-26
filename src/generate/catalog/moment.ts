@@ -5,7 +5,7 @@
  * format tokens (YYYY MM DD HH mm ss SSS M D H m s A a), unix/valueOf/toDate,
  * add/subtract for days/months/years/hours/minutes/seconds, isValid.
  * Local timezone. No locales, no moment-timezone, no plugins.
- * Not derived from Moment.js source.
+ * Not affiliated with Moment.js authors.
  */
 
 export interface Moment {

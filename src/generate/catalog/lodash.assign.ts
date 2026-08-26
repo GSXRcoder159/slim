@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.assign. Not derived from lodash source.
+ * Original Slim implementation of lodash.assign. Not affiliated with lodash authors.
  * Copies own enumerable string keys only (not symbols).
  */
 

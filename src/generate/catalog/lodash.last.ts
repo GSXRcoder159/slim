@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.last. Not derived from lodash source.
+ * Original Slim implementation of lodash.last. Not affiliated with lodash authors.
  */
 
 import { isArrayLike } from "./_internal.ts";

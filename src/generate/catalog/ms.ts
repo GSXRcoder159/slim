@@ -2,8 +2,8 @@
  * MIT License
  *
  * Original Slim implementation of the public `ms` duration API (parse one
- * duration token, format a millisecond count). Not derived from vercel/ms
- * source. Compound strings such as "1h 30m" are not valid inputs.
+ * duration token, format a millisecond count). Not affiliated with vercel/ms.
+ * Compound strings such as "1h 30m" are not valid inputs.
  */
 
 const S = 1000;

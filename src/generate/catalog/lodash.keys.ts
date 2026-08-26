@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.keys. Not derived from lodash source.
+ * Original Slim implementation of lodash.keys. Not affiliated with lodash authors.
  */
 
 import { arrayKeys } from "./_internal.ts";

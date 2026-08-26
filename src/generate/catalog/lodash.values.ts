@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.values. Not derived from lodash source.
+ * Original Slim implementation of lodash.values. Not affiliated with lodash authors.
  */
 
 import { arrayValues } from "./_internal.ts";

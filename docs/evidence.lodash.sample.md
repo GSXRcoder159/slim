@@ -1,77 +1,58 @@
-# Evidence: lodash@4.17.21 → src/slim/lodash.ts
+# EVIDENCE, NOT PROOF
 
-**EVIDENCE, NOT PROOF.** Slim compared a new ~248-line file to lodash on random inputs
-and on your call sites. You still read the file. Merge only if you accept the residual
-risk below.
+Differential fuzzing over the inferred envelope is **strong evidence, not proof**. Slim ships the envelope as a standing regression suite. When a new call site appears, `slim check` fails and you re-run `slim replace`.
 
-- Slim 0.1.0  ·  2026-08-15T20:41Z  ·  generated: synthesize  ·  oracle: node_modules/lodash@4.17.21
+## 1. Evidence, not proof
 
-## What you used
+Differential fuzzing over the inferred envelope is strong evidence, not proof.
 
-2 call sites, 2 exports.
+## 2. What was used
 
-| Where | Call |
-| --- | --- |
-| `src/handler.ts:14` | `_.get(event, 'query.id')` |
-| `src/handler.ts:41` | `debounce(flush, 50)` |
+- Package: `lodash@4.17.21` (family `lodash`)
+- Symbols: `get`, `debounce`
+- Call sites: 6
+- Unknowns: 0
+- Catalog: lodash.get, lodash.debounce
+- Envelope hash: `217c102e5c34a74ba017061f1a5574a2ada6cd6a6497e6797e6eb97eafa706c4`
 
-## What we wrote
+## 3. Byte delta
 
-Read this: **`src/slim/lodash.ts`** (~248 lines).
+71000 B estimated original min → 6981 B replacement
 
-| File | Role |
-| --- | --- |
-| `src/slim/lodash.ts` | slice |
-| `src/slim/lodash.test.ts` | standing tests (`node --test`) |
-| `.slim/lodash/envelope.json` | envelope + hashes + upstream hints |
-| `.slim/lodash/evidence.md` | this report |
+## 4. Edge
 
-Imports in `src/handler.ts` now point at the slice. `lodash` removed from package.json.
+Stock lodash uses `Function(String)` and is rejected on Cloudflare/Vercel Edge. This slice does not.
+Cloudflare isolate CPU is a vendor startup budget. Slim does not publish a measured Worker cold-start number.
 
-## Size
+## 5. Fuzz
 
-| | Before | After |
-| --- | --- | --- |
-| package (Bundlephobia min / gz) | 71.0 kB / 25.8 kB | 1.9 kB / 0.9 kB |
-| this Worker (wrangler minify, gz) | 82.4 kB | 58.1 kB (−24.3 kB, −29%) |
-| unpacked `node_modules/lodash` | 1.4 MB | 0 |
+- cases: 1771205
+- comparisons: 1771225
+- timerCases: 10
+- traces replayed: 12
+- disagreements: 0
+- wall: 30005 ms
+- seed: 141647386
 
-Cold start: Workers must finish isolate startup in 1s; this is fewer bytes to parse.
-We did not measure CPU. Unbundled Lambda: 1.4 MB less to unzip/compile.
+## 6. Coverage holes
 
-## What we ran
+- debounce options (maxWait/leading) never observed; taxonomy still run in Slim CI
+- debounce.cancel never accessed at call sites
 
-| Gate | Result |
-| --- | --- |
-| oracle fuzz `get` × 200 (plain objects, dotted paths, missing keys) | 0 mismatches vs lodash.get |
-| oracle fuzz `debounce` | skipped as random timing; used lodash’s own debounce tests filtered to trailing-only (8) |
-| standing tests | 12 pass |
-| `npm test` | 3 pass |
+## 7. Upstream pin
 
-Oracle is the copy of lodash that was in node_modules before uninstall.
+Slim will watch this slice via `slim upstream` / osv.dev. Registry: https://www.npmjs.com/package/lodash
 
-## Envelope
+## 8. How to revert
 
-- Pure functions. No `fs`, no network, no native addons, no `process.env`.
-- Does not write `Object.prototype` / `Array.prototype`.
-- `get(object, path)` — `path` is a string of `[.a-zA-Z0-9_]*` as in your call site. Array paths not implemented (you don’t use them).
-- `debounce(fn, wait)` — trailing, last-call. No `leading`, no `maxWait`.
-- Grep of the repo: no `leading:`, no `maxWait`, no `_.template`, no `_.chain`.
+1. Restore `lodash@4.17.21` in package.json.
+2. Delete `src/slim/lodash.ts` and `src/slim/lodash.test.ts`.
+3. Restore import specifiers in: src/index.ts
+4. Run `npm install`.
+Or: git revert the Slim PR.
 
-## Residual risk (always non-empty)
+## Residual risk
 
-- This is **new code**, not a copy of `lodash/get.js`. A bug will look like Slim’s, not lodash’s.
-- Fuzz used plain JSON-like objects. Host objects, getters that throw, and `__proto__` paths are not in the corpus. `get` throws on a path segment `__proto__` / `constructor` / `prototype` (lodash historically has gotten this wrong; we refuse those paths).
-- `debounce` under fake timers / `wait=0` is not fuzzed; we copied the trailing cases from lodash’s tests.
-- We did not prove the slice against future call sites. `slim check` fails if you start using `_.merge`.
-
-## Upstream
-
-`slim watch` will treat a lodash advisory as **exposing this slice** only if the patch
-diff or GHSA text maps to `get` or `debounce`. A `_.template` CVE (today’s one) is
-**not** an exposure. If watch cannot map the advisory to file names, it fails closed
-and opens a human-review PR.
-
-## Verdict
-
-Merge if you accept residual risk. Read `src/slim/lodash.ts` first.
+- Differential fuzzing over the inferred envelope is strong evidence, not proof. Unobserved call shapes can still disagree.
+- Timer taxonomy is sampled, not exhaustive of every interleaving.
+- Upstream may patch bugs outside this slice; slim upstream watches advisories for used symbols.

@@ -8,4 +8,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: slim-js/slim/action/check@v1
+      - uses: slim-hq/slim/action/check@v1

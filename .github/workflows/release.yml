@@ -18,8 +18,20 @@ jobs:
         with:
           node-version: "22.18"
           registry-url: https://registry.npmjs.org
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: corepack enable
       - run: npm ci
       - run: npm run build
+      - run: npm test
+      - name: n-gram similarity gate
+        run: node --experimental-strip-types scripts/similarity-gate.ts
+      - name: pack and publish dry-run
+        run: |
+          npm pack
+          npm publish --dry-run
+          node -e "const {createHash}=require('crypto');const {readFileSync,readdirSync}=require('fs');const t=readdirSync('.').find(f=>f.endsWith('.tgz'));const h=createHash('sha256').update(readFileSync(t)).digest('hex');console.log('artifact',t,'sha256',h);"
       - run: npm publish --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

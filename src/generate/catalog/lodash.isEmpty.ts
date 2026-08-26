@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.isEmpty. Not derived from lodash source.
+ * Original Slim implementation of lodash.isEmpty. Not affiliated with lodash authors.
  */
 
 import { isEmptyValue } from "./_internal.ts";

@@ -2,7 +2,7 @@
  * MIT License
  *
  * Original Slim implementation of the public clsx API (conditional className
- * strings). Not derived from the clsx package source.
+ * strings). Not affiliated with the clsx package authors.
  */
 
 function append(input: unknown, out: string[]): void {

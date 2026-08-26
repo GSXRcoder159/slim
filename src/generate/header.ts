@@ -8,7 +8,7 @@ export function generatedHeader(
   const lines = [
     "/**",
     " * SPDX-License-Identifier: MIT",
-    " * Original implementation, not derived from lodash, Underscore, or OpenJS.",
+    " * Slim generated implementation. n-gram similarity is a CI heuristic, not a legal opinion.",
     ` * Envelope ${hashEnvelope(env)}`,
     ` * Catalog ${ids}`,
     ` * Evidence: .slim/${env.package.name}/evidence.md`,

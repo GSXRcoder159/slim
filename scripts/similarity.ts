@@ -1,6 +1,8 @@
 /**
- * Legal similarity gate: catalog sources must not share long n-grams with
- * pinned oracle implementation files. Missing oracle trees fail closed.
+ * Legal similarity gate: catalog sources and checked-in fixture slices must
+ * not share long n-grams with pinned oracle implementation files.
+ * Missing oracle trees fail closed. locale/ is skipped as data tables and
+ * reported; lodash fp/ is scanned.
  */
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -9,6 +11,8 @@ import { CATALOG_ORACLES } from "../src/generate/catalog/oracles.ts";
 
 export const NGRAM_N = 12;
 export const MAX_HITS = 3;
+/** Data tables, not implementation. Always reported so a skip cannot hide. */
+export const SKIPPED_ORACLE_DIRS = ["locale"] as const;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -28,13 +32,19 @@ function ngrams(toks: string[], n: number): Set<string> {
   return s;
 }
 
-function walk(dir: string, pred: (f: string) => boolean, acc: string[] = []): string[] {
+function walk(
+  dir: string,
+  pred: (f: string) => boolean,
+  skipDirs: ReadonlySet<string>,
+  acc: string[] = [],
+): string[] {
   if (!existsSync(dir)) return acc;
-  for (const e of readdirSync(dir)) {
-    if (e === "node_modules" || e === "locale" || e === "fp") continue;
+  const names = readdirSync(dir).slice().sort();
+  for (const e of names) {
+    if (e === "node_modules" || skipDirs.has(e)) continue;
     const p = join(dir, e);
     const st = statSync(p);
-    if (st.isDirectory()) walk(p, pred, acc);
+    if (st.isDirectory()) walk(p, pred, skipDirs, acc);
     else if (pred(p)) acc.push(p);
   }
   return acc;
@@ -42,6 +52,11 @@ function walk(dir: string, pred: (f: string) => boolean, acc: string[] = []): st
 
 function oracleFile(path: string): boolean {
   return path.endsWith(".js") || path.endsWith(".cjs") || path.endsWith(".mjs");
+}
+
+function sliceFile(path: string): boolean {
+  const n = path.replace(/\\/g, "/");
+  return /\/src\/slim\/[^/]+\.(ts|js)$/.test(n);
 }
 
 export function runSimilarityGate(opts?: {
@@ -52,38 +67,44 @@ export function runSimilarityGate(opts?: {
   missing: string[];
   worst: number;
   worstFile: string;
+  skipped: string[];
   failed?: string;
 } {
   const root = opts?.root ?? ROOT;
   const pkgs = opts?.oraclePkgs ?? ORACLE_PKGS;
-  const catalog = walk(join(root, "src/generate/catalog"), (f) => f.endsWith(".ts"));
+  const skipped = [...SKIPPED_ORACLE_DIRS];
+  const catalog = walk(
+    join(root, "src/generate/catalog"),
+    (f) => f.endsWith(".ts"),
+    new Set(),
+  );
+  const slices = walk(join(root, "fixtures"), sliceFile, new Set());
+  const targets = [...catalog, ...slices].sort();
   const missing: string[] = [];
   const oracles: string[] = [];
+  const oracleSkip = new Set<string>(SKIPPED_ORACLE_DIRS);
   for (const pkg of pkgs) {
     const dir = join(root, "node_modules", pkg);
     if (!existsSync(dir)) {
       missing.push(pkg);
       continue;
     }
-    oracles.push(...walk(dir, oracleFile));
+    oracles.push(...walk(dir, oracleFile, oracleSkip));
   }
+  oracles.sort();
+  const fail = (failed: string, extra?: Partial<{ missing: string[]; worst: number; worstFile: string }>) => ({
+    ok: false as const,
+    missing: extra?.missing ?? missing,
+    worst: extra?.worst ?? 0,
+    worstFile: extra?.worstFile ?? "",
+    skipped,
+    failed,
+  });
   if (missing.length) {
-    return {
-      ok: false,
-      missing,
-      worst: 0,
-      worstFile: "",
-      failed: `similarity-gate FAIL: missing oracle tree(s): ${missing.join(", ")}`,
-    };
+    return fail(`similarity-gate FAIL: missing oracle tree(s): ${missing.join(", ")}`);
   }
   if (!oracles.length) {
-    return {
-      ok: false,
-      missing: pkgs,
-      worst: 0,
-      worstFile: "",
-      failed: "similarity-gate FAIL: no oracle implementation files found",
-    };
+    return fail("similarity-gate FAIL: no oracle implementation files found", { missing: pkgs });
   }
 
   const oracleGrams = new Set<string>();
@@ -93,7 +114,7 @@ export function runSimilarityGate(opts?: {
 
   let worst = 0;
   let worstFile = "";
-  for (const f of catalog) {
+  for (const f of targets) {
     const grams = [...ngrams(tokens(readFileSync(f, "utf8")), NGRAM_N)];
     const hits = grams.filter((g) => oracleGrams.has(g)).length;
     if (hits > worst) {
@@ -101,14 +122,11 @@ export function runSimilarityGate(opts?: {
       worstFile = f;
     }
     if (hits > MAX_HITS) {
-      return {
-        ok: false,
-        missing: [],
-        worst,
-        worstFile,
-        failed: `similarity-gate FAIL ${f}: ${hits} shared ${NGRAM_N}-grams with pinned oracles`,
-      };
+      return fail(`similarity-gate FAIL ${f}: ${hits} shared ${NGRAM_N}-grams with pinned oracles`, {
+        worst: hits,
+        worstFile: f,
+      });
     }
   }
-  return { ok: true, missing: [], worst, worstFile };
+  return { ok: true, missing: [], worst, worstFile, skipped };
 }

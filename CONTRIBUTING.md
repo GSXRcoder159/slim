@@ -9,7 +9,7 @@ Catalog implementations are written from **public documentation and observed beh
 - Do not implement a slice with upstream source open in another window.
 - `.d.ts` and README are API specs. Implementation files are not.
 
-Slim CI runs an n-gram similarity gate against lodash/moment tarballs in `node_modules`.
+Slim CI runs an n-gram similarity gate against pinned catalog oracles in `node_modules` (including lodash `fp/`) and checked-in `fixtures/**/src/slim` slices. Missing oracle trees fail closed. The gate is a heuristic, not a legal opinion.
 
 ## Tests
 
@@ -28,3 +28,5 @@ Zero `dependencies`. Node stdlib first. Mark intentional ceilings with a `ponyta
 ## PRs
 
 Evidence, not proof — keep that sentence in user-facing text.
+
+Security issues: [SECURITY.md](SECURITY.md) (email or private advisory). Similarity CI is not a reporting channel.

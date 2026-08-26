@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.omit. Not derived from lodash source.
+ * Original Slim implementation of lodash.omit. Not affiliated with lodash authors.
  */
 
 import { omitPaths } from "./_internal.ts";

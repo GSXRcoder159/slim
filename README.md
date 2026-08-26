@@ -1,10 +1,10 @@
 # Slim
 
-**Delete your dependencies.** Point Slim at a JS/TS repo. It infers the *usage envelope* of a heavyweight package — every call site, input shape, Hyrum accident — emits a dependency-free clean-room slice, differentially fuzzes original vs replacement, and opens a PR with standing evidence.
+**Delete your dependencies.** Point Slim at a JS/TS repo. It infers the *usage envelope* of a heavyweight package — every call site, input shape, Hyrum accident — emits a dependency-free slice, differentially fuzzes original vs replacement, and opens a PR with standing evidence.
 
 Differential fuzzing is **evidence, not proof**. That sentence is on the tin.
 
-Slim is not affiliated with lodash, Underscore, OpenJS, Moment.js, or any target library. Generated files are original implementations. They do **not** inherit the upstream license. The original package is a CI-only oracle during `slim replace`; after merge it is gone.
+Slim is not affiliated with lodash, Underscore, OpenJS, Moment.js, or any target library. Generated files are SPDX MIT original work; they do **not** inherit the upstream license. Do not attach upstream LICENSE files to generated output. n-gram similarity in CI is a heuristic, not a legal opinion. The original package is a CI-only oracle during `slim replace`; after merge it is gone.
 
 ## Friday afternoon
 
@@ -26,14 +26,14 @@ You get:
 - `lodash` removed from `package.json`
 - a `gh` PR if GitHub CLI is on PATH
 
-Stock lodash uses `Function(String)` and is rejected on Cloudflare/Vercel Edge. Tree-shaking does not fix that. The Worker cap that bites is **1s startup parse**, not gzip 3MB.
+Stock lodash uses `Function(String)` and is rejected on Cloudflare/Vercel Edge. Tree-shaking does not fix that. Cloudflare isolate CPU is a **vendor** startup budget; Slim does not publish a measured Worker cold-start number. Node parse/size receipts for the golden slice live in [`docs/measurements.json`](docs/measurements.json).
 
 ## Commands
 
 ```
 slim scan [dir] [--json]
 slim inspect <pkg> [--json] [--allow-unknown]
-slim replace <pkg> [--budget-ms 30000] [--no-trace] [--no-pr] [--dry-run] [--keep-original] [--no-install] [--allow-unknown] [--force] [--out src/slim]
+slim replace <pkg> [--budget-ms 30000] [--no-trace] [--no-pr] [--dry-run] [--keep-original] [--no-install] [--allow-unknown] [--force] [--out src/slim] [--llm] [--template-only] [--max-attempts 3] [--allow-flaky] [--workers n] [--seed n]
 slim check [pkg] [--json]
 slim upstream [--pr] [--json]
 slim watch                  # alias of upstream
@@ -46,14 +46,14 @@ Exit codes: `0` ok · `1` fail · `2` usage · `3` refused / no catalog and no L
 
 1. **Envelope** — the target repo's `typescript` walks imports and call sites. Unknowns (`_[k]()`, `eval`, `arr.map(get)`) are recorded, never guessed.
 2. **Traces** — fail-closed. `node --import slim/hooks` for node:test; `slim/vitest` plugin for Vitest (named exports included). Jest is detect-only (no setup file). `--no-trace` is the only intentional static-only path and cannot claim trace closure.
-3. **Generate** — verified catalog (lodash slice, moment format, uuid v4, ms, nanoid, clsx, …) or clean-room LLM. Catalog disagreements are Slim bugs; they are not LLM-patched.
+3. **Generate** — verified catalog (lodash slice, moment format, uuid v4, ms, nanoid, clsx, …) or LLM from public `.d.ts`/README only. Catalog disagreements are Slim bugs; they are not LLM-patched.
 4. **Fuzz** — original vs replacement, fake clock for debounce, in-house generators (no fast-check).
 5. **Rewrite** — position splice of import specifiers. Untouched files stay byte-identical.
 6. **Upstream** — `osv.dev` + npm latest. Unmapped advisories fail closed.
 
 ## Install
 
-Node `>=22.18` (`module.registerHooks`). The target repo needs `typescript` as a devDependency.
+Node `>=22.18` (`module.registerHooks`). CI tests 22.18 and Active LTS 24 on Ubuntu, macOS, and Windows. Node 26 Current is not in CI until it is LTS. The target repo needs `typescript` as a devDependency.
 
 ```bash
 npm i -D typescript
@@ -90,9 +90,13 @@ react, vue, next, prisma, typescript, eslint, webpack, vite, AWS SDK, firebase, 
 
 `_.template` / anything that needs `Function` is a refuse, not a sandbox hole.
 
+## Out of scope (v1)
+
+Top-10,000 corpus scoring, billing/SaaS, merged-PR pricing, enterprise licensing, PDF generation, auto-merge, Node 26 CI, and catalog entries that are not listed in [`docs/packages.md`](docs/packages.md).
+
 ## Legal
 
-MIT for Slim. Catalog and generated slices: original work, SPDX MIT, “not derived from lodash/Underscore/OpenJS.” Do not attach upstream LICENSE files to generated output. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md).
+MIT for Slim ([LICENSE](LICENSE)). Catalog and generated slices: SPDX MIT. Slim is not affiliated with upstream authors. n-gram similarity is a CI heuristic, not a legal opinion. Do not attach upstream LICENSE files to generated output. See [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md). Revert: [CHANGELOG.md](CHANGELOG.md).
 
 ## Cite
 

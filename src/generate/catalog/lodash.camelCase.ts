@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.camelCase. Not derived from lodash source.
+ * Original Slim implementation of lodash.camelCase. Not affiliated with lodash authors.
  */
 
 import { capitalizeWord, words } from "./_internal.ts";

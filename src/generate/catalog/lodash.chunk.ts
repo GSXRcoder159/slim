@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.chunk. Not derived from lodash source.
+ * Original Slim implementation of lodash.chunk. Not affiliated with lodash authors.
  */
 
 import { toArrayLike, toInteger } from "./_internal.ts";

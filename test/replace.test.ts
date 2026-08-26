@@ -98,9 +98,13 @@ test("runMergeGate finds binaries in node_modules/.bin", () => {
   const dir = mkdtempSync(join(tmpdir(), "slim-gate-bin-"));
   const bin = join(dir, "node_modules", ".bin");
   mkdirSync(bin, { recursive: true });
-  const runner = join(bin, "slim-fake-test-runner");
-  writeFileSync(runner, "#!/bin/sh\nexit 0\n");
-  chmodSync(runner, 0o755);
+  if (process.platform === "win32") {
+    writeFileSync(join(bin, "slim-fake-test-runner.cmd"), "@echo off\r\nexit /b 0\r\n");
+  } else {
+    const runner = join(bin, "slim-fake-test-runner");
+    writeFileSync(runner, "#!/bin/sh\nexit 0\n");
+    chmodSync(runner, 0o755);
+  }
   writeFileSync(
     join(dir, "package.json"),
     JSON.stringify({ name: "gate-bin", scripts: { test: "slim-fake-test-runner" } }),

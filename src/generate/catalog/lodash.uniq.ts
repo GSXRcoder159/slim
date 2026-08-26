@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.uniq. Not derived from lodash source.
+ * Original Slim implementation of lodash.uniq. Not affiliated with lodash authors.
  * Uniqueness uses SameValueZero (NaN equals NaN, +0 equals -0).
  */
 

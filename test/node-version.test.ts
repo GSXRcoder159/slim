@@ -43,10 +43,12 @@ test("package, CI, Actions, README, and doctor name the same minimum Node", () =
   const readme = readFileSync(join(ROOT, "README.md"), "utf8");
   assert.match(readme, />=22\.18/);
 
-  for (const name of ["ci.yml", "release.yml"] as const) {
-    const yml = readFileSync(join(ROOT, ".github/workflows", name), "utf8");
-    assert.match(yml, /node-version:\s*"22\.18"/);
-  }
+  const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  assert.match(ci, /node:\s*\["22\.18", "24"\]/);
+  assert.match(ci, /node-version:\s*\$\{\{\s*matrix\.node\s*\}\}/);
+
+  const release = readFileSync(join(ROOT, ".github/workflows/release.yml"), "utf8");
+  assert.match(release, /node-version:\s*"22\.18"/);
 
   for (const name of ["check", "bloat", "upstream"] as const) {
     const yml = readFileSync(join(ROOT, "action", name, "action.yml"), "utf8");

@@ -59,6 +59,9 @@ test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tes
     "action/run.mjs",
     "action/check/action.yml",
     "slim.schema.json",
+    "docs/scan.schema.json",
+    "docs/error.schema.json",
+    "CHANGELOG.md",
     "package.json",
     "README.md",
   ];
@@ -71,6 +74,25 @@ test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tes
     assert.ok(!f.startsWith("src/"), `pack leaked source file ${f}`);
   }
   assert.ok(![...files].some((f) => f.includes(".env")), "pack leaked env file");
+});
+
+test("npm publish --dry-run lists the same production files", { timeout: 120_000 }, () => {
+  execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+  const out = execFileSync("npm", ["publish", "--dry-run", "--json"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  const parsed = JSON.parse(out) as { filename?: string; files?: Array<{ path: string }> };
+  const files = new Set((parsed.files ?? []).map((f) => f.path.replace(/\\/g, "/")));
+  assert.ok(files.has("dist/main.js"), "publish dry-run missing dist/main.js");
+  assert.ok(files.has("CHANGELOG.md"), "publish dry-run missing CHANGELOG.md");
+  assert.ok(files.has("docs/scan.schema.json"), "publish dry-run missing command schema");
+  for (const f of files) {
+    assert.ok(!f.startsWith("test/"), `publish dry-run leaked ${f}`);
+    assert.ok(!f.startsWith("src/"), `publish dry-run leaked ${f}`);
+    assert.ok(!f.includes(".env"), `publish dry-run leaked ${f}`);
+  }
 });
 
 test("installed tarball CLI matches source for help, doctor, scan --json, inspect, replace --dry-run", { timeout: 180_000 }, () => {

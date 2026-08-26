@@ -130,7 +130,7 @@ export function renderEvidenceMd(json: EvidenceJson, env: Envelope, catalogIds: 
     env.package.family === "lodash"
       ? [
           "Stock lodash uses `Function(String)` and is rejected on Cloudflare/Vercel Edge. This slice does not.",
-          "The cap that bites Workers is **1s startup parse**, not gzip 3MB/10MB (those limits are in flux).",
+          "Cloudflare isolate CPU is a vendor startup budget. Slim does not publish a measured Worker cold-start number.",
         ].join("\n")
       : "n/a";
   return `# EVIDENCE, NOT PROOF

@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.get. Not derived from lodash source.
+ * Original Slim implementation of lodash.get. Not affiliated with lodash authors.
  */
 
 import { baseGet } from "./_internal.ts";

@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Original Slim implementation of lodash.once. Not derived from lodash source.
+ * Original Slim implementation of lodash.once. Not affiliated with lodash authors.
  */
 
 export function once<F extends (...args: never[]) => unknown>(func: F): F {
