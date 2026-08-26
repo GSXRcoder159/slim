@@ -172,7 +172,8 @@
             "binding-escape",
             "namespace-escape",
             "eval",
-            "ts-any"
+            "ts-any",
+            "unresolved-shape"
           ]
         },
         "detail": { "type": "string" },

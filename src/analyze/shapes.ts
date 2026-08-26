@@ -17,6 +17,10 @@ export function shapeOf(
   if (node.kind === ts.SyntaxKind.NullKeyword) return { kind: "literal", literals: [null] };
   if (node.kind === ts.SyntaxKind.UndefinedKeyword) return { kind: "literal", literals: [undefined] };
   if (ts.isArrayLiteralExpression(node)) {
+    const unresolved = node.elements.some((el) => ts.isOmittedExpression(el) || ts.isSpreadElement(el));
+    if (unresolved && node.elements.every((el) => ts.isOmittedExpression(el) || ts.isSpreadElement(el))) {
+      return { kind: "unknown" };
+    }
     return {
       kind: "array",
       elements: node.elements.map((el) => {
@@ -26,9 +30,12 @@ export function shapeOf(
     };
   }
   if (ts.isObjectLiteralExpression(node)) {
+    if (objectHasUnresolved(ts, node)) return { kind: "unknown" };
     const props: Record<string, ArgShape> = {};
     for (const p of node.properties) {
-      if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name)) {
+      if (ts.isShorthandPropertyAssignment(p)) {
+        props[p.name.text] = { kind: "any" };
+      } else if (ts.isPropertyAssignment(p) && ts.isIdentifier(p.name)) {
         props[p.name.text] = shapeOf(ts, p.initializer as ts.Expression, checker);
       } else if (ts.isPropertyAssignment(p) && ts.isStringLiteral(p.name)) {
         props[p.name.text] = shapeOf(ts, p.initializer as ts.Expression, checker);
@@ -45,6 +52,35 @@ export function shapeOf(
     if (lits.length > 1) return { kind: "union", literals: lits };
   }
   return { kind: "any" };
+}
+
+export function argShapeUnresolved(shape: ArgShape): boolean {
+  if (shape.kind === "unknown") return true;
+  if (shape.kind === "array") return (shape.elements ?? []).some(argShapeUnresolved);
+  if (shape.kind === "object") return Object.values(shape.props ?? {}).some(argShapeUnresolved);
+  return false;
+}
+
+function objectHasUnresolved(ts: typeof import("typescript"), node: ts.ObjectLiteralExpression): boolean {
+  for (const p of node.properties) {
+    if (ts.isSpreadAssignment(p)) return true;
+    if (ts.isShorthandPropertyAssignment(p)) continue;
+    if (ts.isPropertyAssignment(p) && ts.isComputedPropertyName(p.name)) {
+      const expr = unwrapParens(ts, p.name.expression);
+      if (!ts.isStringLiteral(expr) && !ts.isNoSubstitutionTemplateLiteral(expr) && !ts.isNumericLiteral(expr)) {
+        return true;
+      }
+    }
+    if (
+      ts.isMethodDeclaration(p) ||
+      ts.isGetAccessorDeclaration(p) ||
+      ts.isSetAccessorDeclaration(p) ||
+      ts.isSpreadAssignment(p)
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function inferHyrum(exportName: string, sites: CallSite[]) {

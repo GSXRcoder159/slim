@@ -238,3 +238,225 @@ test("inspect --json shape; open envelope exits 3; allow-unknown never closed", 
     process.chdir(cwd);
   }
 });
+
+function assertGetCall(env: Envelope, file: string) {
+  const sites = getSites(env);
+  assert.ok(sites.length >= 1, `${file}: expected get call site, symbols=${exportNames(env)} unknowns=${env.unknowns.map((u) => u.kind)}`);
+  assert.equal(
+    sites.some((c) => c.argc.observed.length === 0),
+    false,
+    `${file}: empty observed arity`,
+  );
+}
+
+test("local alias, chain, namespace member, and destructure retain get call sites", () => {
+  linkTypescript(FIXTURE);
+  const project = loadProject(FIXTURE);
+  for (const file of ["local-alias.ts", "alias-chain.ts", "ns-member-alias.ts", "ns-destructure.ts"]) {
+    const env = analyzePackage(project, "lodash", { include: [file] });
+    assertGetCall(env, file);
+    const getSym = env.symbols.find((s) => s.exportName === "get");
+    assert.ok(getSym);
+    assert.notEqual(getSym!.callSites.length, 0, `${file}: zero-call get`);
+    assert.equal(env.closure.confidence, "closed", `${file}: ${env.closure.reason}`);
+    assert.equal(env.closure.readyToGenerate, true, file);
+  }
+});
+
+test("assignment, return, property, shorthand, and array stores are binding escapes", () => {
+  linkTypescript(FIXTURE);
+  const project = loadProject(FIXTURE);
+  for (const file of [
+    "return-escape.ts",
+    "property-store.ts",
+    "object-literal-escape.ts",
+    "shorthand-escape.ts",
+    "array-store.ts",
+  ]) {
+    const env = analyzePackage(project, "lodash", { include: [file] });
+    assert.ok(
+      env.unknowns.some((u) => u.kind === "binding-escape"),
+      `${file}: expected binding-escape, got ${env.unknowns.map((u) => `${u.kind}:${u.detail}`).join("; ") || "none"}`,
+    );
+    assert.equal(env.closure.readyToGenerate, false, file);
+    assert.notEqual(env.closure.confidence, "closed", file);
+  }
+});
+
+test("typeof _.debounce in a type query is not a namespace escape", () => {
+  const env = analyzePackage(
+    loadProject(
+      mini({
+        "src/app.ts": `
+          import _ from "lodash";
+          export const ping = _.debounce((n: number) => n, 50);
+          export function schedule(fn: () => void): ReturnType<typeof _.debounce> {
+            return _.debounce(fn, 25);
+          }
+        `,
+      }),
+    ),
+    "lodash",
+  );
+  assert.equal(
+    env.unknowns.some((u) => u.kind === "binding-escape" || u.kind === "namespace-escape"),
+    false,
+    env.unknowns.map((u) => `${u.kind}:${u.detail}`).join("; "),
+  );
+  assert.ok(env.symbols.some((s) => s.exportName === "debounce"));
+  assert.equal(env.closure.confidence, "closed");
+});
+
+test("namespace import of a local module is not a lodash namespace escape", () => {
+  const env = analyzePackage(
+    loadProject(
+      mini({
+        "src/index.ts": `import _ from "lodash";\nexport function value() { return _.get({ a: 1 }, "a") as number; }\n`,
+        "src/index.test.ts": `import * as mod from "./index.ts";\nexport const fn = "get" in mod ? mod.get : mod.value;\n`,
+      }),
+    ),
+    "lodash",
+  );
+  assert.equal(
+    env.unknowns.some((u) => u.kind === "namespace-escape" || u.kind === "binding-escape"),
+    false,
+    env.unknowns.map((u) => `${u.kind}:${u.detail}`).join("; "),
+  );
+  assert.ok(env.symbols.some((s) => s.exportName === "get"));
+  assert.equal(env.closure.confidence, "closed");
+});
+
+test("tagged template on an alias is a get call site", () => {
+  const env = analyzePackage(
+    loadProject(
+      mini({
+        "src/app.ts": `
+          import { get } from "lodash";
+          const fn = get as unknown as (strings: TemplateStringsArray, ...vals: unknown[]) => unknown;
+          export const v = fn\`a\`;
+        `,
+      }),
+    ),
+    "lodash",
+  );
+  assertGetCall(env, "tagged");
+});
+
+test("equivalent eval and Function forms refuse closure", () => {
+  const forms: Record<string, string> = {
+    "globalThis.eval": `import { get } from "lodash"; export const v = get({ a: 1 }, "a"); globalThis.eval("1");`,
+    "window.Function": `import { get } from "lodash"; export const v = get({ a: 1 }, "a"); (window as any).Function("return 1");`,
+    "new globalThis.Function": `import { get } from "lodash"; export const v = get({ a: 1 }, "a"); new (globalThis as any).Function("return 1");`,
+    "indirect eval": `import { get } from "lodash"; export const v = get({ a: 1 }, "a"); (0, eval)("1");`,
+    "eval alias": `import { get } from "lodash"; export const v = get({ a: 1 }, "a"); const e = eval; e("1");`,
+    "Function alias": `import { get } from "lodash"; export const v = get({ a: 1 }, "a"); const F = Function; F("return 1");`,
+    'globalThis["eval"]': `import { get } from "lodash"; export const v = get({ a: 1 }, "a"); (globalThis as any)["eval"]("1");`,
+    "optional eval": `import { get } from "lodash"; export const v = get({ a: 1 }, "a"); eval?.("1");`,
+    "optional member": `import { get } from "lodash"; export const v = get({ a: 1 }, "a"); globalThis.eval?.("1");`,
+  };
+  for (const [name, body] of Object.entries(forms)) {
+    const env = analyzePackage(loadProject(mini({ "src/app.ts": body })), "lodash");
+    assert.ok(
+      env.unknowns.some((u) => u.kind === "eval" && u.widensTo === "refuse"),
+      `${name}: expected eval refuse, got ${env.unknowns.map((u) => `${u.kind}:${u.detail}`).join("; ") || "none"} closed=${env.closure.confidence}`,
+    );
+    assert.notEqual(env.closure.confidence, "closed", name);
+    assert.equal(env.closure.readyToGenerate, false, name);
+    const allowed = analyzePackage(loadProject(mini({ "src/app.ts": body })), "lodash", {
+      allowUnknown: true,
+    });
+    assert.notEqual(allowed.closure.confidence, "closed", `${name} allow-unknown`);
+    assert.equal(allowed.closure.readyToGenerate, false, `${name} allow-unknown still refused`);
+  }
+});
+
+test("object spread and computed keys are unresolved shapes, not empty known objects", () => {
+  linkTypescript(FIXTURE);
+  const project = loadProject(FIXTURE);
+  for (const file of ["object-spread-arg.ts", "computed-key-arg.ts", "mixed-spread-arg.ts"]) {
+    const env = analyzePackage(project, "lodash", { include: [file] });
+    assert.ok(
+      env.unknowns.some((u) => u.kind === "unresolved-shape"),
+      `${file}: expected unresolved-shape, got ${env.unknowns.map((u) => u.kind).join(",") || "none"}`,
+    );
+    const third = getSites(env).find((c) => c.argShapes.length >= 3)?.argShapes[2];
+    assert.ok(third, `${file}: missing third arg`);
+    assert.equal(third!.kind, "unknown", `${file}: third arg ${JSON.stringify(third)}`);
+    assert.equal(third!.props && Object.keys(third!.props).length === 0 ? "empty" : "ok", "ok", file);
+    assert.equal(env.closure.readyToGenerate, false, file);
+    assert.notEqual(env.closure.confidence, "closed", file);
+  }
+});
+
+test("export type produces no runtime symbols; local re-export hop keeps get", () => {
+  linkTypescript(FIXTURE);
+  const project = loadProject(FIXTURE);
+  const typeOnly = analyzePackage(project, "lodash", { include: ["type-only-export.ts"] });
+  assert.equal(typeOnly.imports.length, 0);
+  assert.equal(typeOnly.symbols.length, 0);
+  assert.equal(typeOnly.closure.readyToGenerate, false);
+  assert.notEqual(typeOnly.closure.confidence, "closed");
+
+  const hopped = analyzePackage(project, "lodash", { include: ["export-local.ts", "from-export-local.ts"] });
+  assertGetCall(hopped, "export-local hop");
+
+  const aliasHopRoot = mini({
+    "src/barrel.ts": `import { get } from "lodash"; const fn = get; export { fn };`,
+    "src/app.ts": `import { fn } from "./barrel"; export const v = fn({ a: 1 }, "a");`,
+  });
+  const aliasHop = analyzePackage(loadProject(aliasHopRoot), "lodash");
+  assertGetCall(aliasHop, "export { fn } alias hop");
+});
+
+test("multiple get calls retain distinct arities, option shapes, and receivers", () => {
+  const env = analyzePackage(
+    loadProject(
+      mini({
+        "src/app.ts": `
+          import { get } from "lodash";
+          export const a = get({ a: 1 }, "a");
+          export const b = get({ a: 1 }, "a", 0);
+          export const c = get.call(null, { a: 1 }, "a");
+        `,
+      }),
+    ),
+    "lodash",
+  );
+  const sites = getSites(env);
+  assert.ok(sites.some((c) => c.argc.observed[0] === 2));
+  assert.ok(sites.some((c) => c.argc.observed[0] === 3));
+  assert.ok(sites.some((c) => c.thisBinding.kind === "call"));
+  assert.ok(sites.some((c) => c.thisBinding.kind === "unbound"));
+});
+
+test("inspect unresolved shape exits 3; allow-unknown stays open", async () => {
+  const root = mini({
+    "src/app.ts": `
+      import { get } from "lodash";
+      const extra: object = {};
+      export const v = get({ a: 1 }, "a", { ...extra });
+    `,
+  });
+  const cwd = process.cwd();
+  process.chdir(root);
+  try {
+    const refused = await captureInspect(["inspect", "lodash", "--json"]);
+    assert.equal(refused.code, 3);
+    const doc = JSON.parse(refused.out) as {
+      decision: string;
+      envelope: Envelope;
+    };
+    assert.equal(doc.decision, "refuse");
+    assert.equal(doc.envelope.closure.readyToGenerate, false);
+    assert.ok(doc.envelope.unknowns.some((u) => u.kind === "unresolved-shape"));
+
+    const allowed = await captureInspect(["inspect", "lodash", "--json", "--allow-unknown"]);
+    assert.equal(allowed.code, 0);
+    const allowedDoc = JSON.parse(allowed.out) as { decision: string; envelope: Envelope; reason: string };
+    assert.equal(allowedDoc.decision, "try");
+    assert.equal(allowedDoc.envelope.closure.confidence, "open");
+    assert.match(allowedDoc.reason, /--allow-unknown/);
+  } finally {
+    process.chdir(cwd);
+  }
+});

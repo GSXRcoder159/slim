@@ -19,6 +19,10 @@ export function unwrapExpr(ts: typeof import("typescript"), expr: ts.Expression)
       cur = cur.expression;
       continue;
     }
+    if (ts.isBinaryExpression(cur) && cur.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      cur = cur.right;
+      continue;
+    }
     return cur;
   }
 }

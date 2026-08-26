@@ -1,4 +1,7 @@
 declare module "lodash" {
+  export interface Dictionary<T> {
+    [index: string]: T;
+  }
   export function get(object: object, path: string | readonly unknown[], defaultValue?: unknown): unknown;
   export function debounce<T extends (...args: never[]) => unknown>(
     fn: T,

@@ -17,6 +17,7 @@ import { readInstalledVersion } from "../size/estimate.ts";
 import { applySlimmable, usedSliceGraphPure } from "../envelope/slimmable.ts";
 import { closeEnvelope } from "../envelope/close.ts";
 import { walkUses } from "./calls.ts";
+import { collectFileAliases } from "./flow.ts";
 import type { Binding, CollectExtra } from "./model.ts";
 import { exportNameOf, scriptKind } from "./model.ts";
 import { createScopedProgram, readTsConfig, shouldEscalate } from "./program.ts";
@@ -94,6 +95,10 @@ export function analyzePackage(
   for (const file of walked) {
     const sf = getSf(file);
     collectImports(ts, sf, bindings, imports, wanted, extra);
+  }
+
+  for (const file of walked) {
+    collectFileAliases(ts, getSf(file), bindings, extra);
   }
 
   bindLocalReexports(bindings, extra);

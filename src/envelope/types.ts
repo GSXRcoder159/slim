@@ -28,7 +28,8 @@ export type UnknownKind =
   | "binding-escape"
   | "namespace-escape"
   | "eval"
-  | "ts-any";
+  | "ts-any"
+  | "unresolved-shape";
 
 export interface PackageRef {
   name: string;

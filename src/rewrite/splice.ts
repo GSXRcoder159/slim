@@ -44,12 +44,16 @@ export function rewriteSpecifiers(
     ) {
       const spec = node.moduleSpecifier.text;
       if (fromSpecifiers.has(spec)) {
+        const typeOnlyDecl =
+          (ts.isImportDeclaration(node) && Boolean(node.importClause?.isTypeOnly)) ||
+          (ts.isExportDeclaration(node) && Boolean(node.isTypeOnly));
+        if (typeOnlyDecl) return;
         edits.push({
           start: node.moduleSpecifier.getStart(sf),
           end: node.moduleSpecifier.getEnd(),
           text: JSON.stringify(toSpecifier),
         });
-        if (ts.isImportDeclaration(node)) {
+        if (ts.isImportDeclaration(node) && !node.importClause?.isTypeOnly) {
           rewriteDefaultPerMethodClause(ts, sf, node, spec, edits);
         }
       }
@@ -95,7 +99,7 @@ function rewriteDefaultPerMethodClause(
 ): void {
   const method = methodExportName(spec);
   const clause = node.importClause;
-  if (!method || !clause?.name || clause.namedBindings) return;
+  if (!method || !clause?.name || clause.namedBindings || clause.isTypeOnly) return;
   const local = clause.name.text;
   const named = local === method ? `{ ${method} }` : `{ ${method} as ${local} }`;
   edits.push({ start: clause.getStart(sf), end: clause.getEnd(), text: named });

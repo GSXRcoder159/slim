@@ -93,9 +93,6 @@ export function collectImports(
           if (specifierMatches(specifier, wanted)) {
             imports.push({ loc: locOf(sf, node, extra.root), specifier, kind, names });
           }
-          if (namespaceLocal && parseSpecifier(specifier) && !specifier.startsWith(".")) {
-            extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: "*" });
-          }
           if (defaultLocal && parseSpecifier(specifier) && !specifier.startsWith(".")) {
             extra.pkgLinks.push({
               file: normPath(sf.fileName),
@@ -368,15 +365,6 @@ function addBindingsFromLink(pending: LocalPending, link: PkgLink, bindings: Bin
       imported: orig,
       specifier: link.specifier,
       kind: "named",
-      loc: pending.loc,
-    });
-  }
-  if (pending.namespaceLocal) {
-    bindings.push({
-      local: pending.namespaceLocal,
-      imported: "*",
-      specifier: link.specifier,
-      kind: "namespace",
       loc: pending.loc,
     });
   }
