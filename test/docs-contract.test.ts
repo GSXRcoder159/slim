@@ -139,7 +139,7 @@ test("release qualifies before provenance publish", () => {
   const rel = readFileSync(join(ROOT, ".github/workflows/release.yml"), "utf8");
   assert.match(rel, /npm test/);
   assert.match(rel, /similarity-gate/);
-  assert.match(rel, /npm pack/);
+  assert.match(rel, /pack-destination/);
   assert.match(rel, /npm publish --dry-run/);
   assert.match(rel, /sha256/);
   const publish = rel.lastIndexOf("npm publish --provenance");

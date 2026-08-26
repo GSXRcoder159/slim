@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../exit.ts";
 import type { Project } from "../project.ts";
 
@@ -22,12 +24,25 @@ type ExecFile = (
 ) => unknown;
 
 /** Install must update the lockfile after package.json edits; CI frozen-lockfile would fail closed incorrectly. */
-function installEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+export function hermeticPmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const cacheRoot = join(tmpdir(), "slim-pm-cache");
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
   delete env.CI;
+  delete env.INIT_CWD;
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_CHANNEL_FD;
   delete env.npm_config_frozen_lockfile;
   delete env.YARN_ENABLE_IMMUTABLE_INSTALLS;
+  env.npm_config_cache = join(cacheRoot, "npm");
+  env.npm_config_store_dir = join(cacheRoot, "pnpm");
+  env.npm_config_store = join(cacheRoot, "pnpm");
+  env.YARN_CACHE_FOLDER = join(cacheRoot, "yarn");
+  env.BUN_INSTALL_CACHE_DIR = join(cacheRoot, "bun");
   return env;
+}
+
+function installEnv(): NodeJS.ProcessEnv {
+  return hermeticPmEnv();
 }
 
 function pmBinary(lockfile: Project["lockfile"]): string {
@@ -49,8 +64,13 @@ export function refreshLockfile(
   if (opts && !shouldRefreshLockfile(opts)) return;
   const cwd = project.root;
   const bin = pmBinary(project.lockfile);
+  const env = installEnv();
+  const args =
+    bin === "pnpm" && env.npm_config_store_dir
+      ? ["install", "--store-dir", env.npm_config_store_dir]
+      : ["install"];
   try {
-    execFile(bin, ["install"], { cwd, encoding: "utf8", stdio: "inherit", env: installEnv() });
+    execFile(bin, args, { cwd, encoding: "utf8", stdio: "inherit", env });
   } catch (err) {
     const code = err && typeof err === "object" && "code" in err ? String((err as { code?: unknown }).code) : "";
     const stderr =

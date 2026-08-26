@@ -29,9 +29,12 @@ jobs:
         run: node --experimental-strip-types scripts/similarity-gate.ts
       - name: pack and publish dry-run
         run: |
-          npm pack
+          PACK_DIR="${RUNNER_TEMP:-$(mktemp -d)}"
+          npm pack --pack-destination "$PACK_DIR"
           npm publish --dry-run
-          node -e "const {createHash}=require('crypto');const {readFileSync,readdirSync}=require('fs');const t=readdirSync('.').find(f=>f.endsWith('.tgz'));const h=createHash('sha256').update(readFileSync(t)).digest('hex');console.log('artifact',t,'sha256',h);"
+          node -e "const {createHash}=require('crypto');const {readFileSync,readdirSync}=require('fs');const dir=process.env.PACK_DIR;const t=readdirSync(dir).find(f=>f.endsWith('.tgz'));if(!t) throw new Error('missing tarball');const p=require('path').join(dir,t);const h=createHash('sha256').update(readFileSync(p)).digest('hex');console.log('artifact',t,'sha256',h);"
+        env:
+          PACK_DIR: ${{ runner.temp }}
       - run: npm publish --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

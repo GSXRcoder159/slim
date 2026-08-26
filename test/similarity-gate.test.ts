@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, writeFileSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { MAX_HITS, NGRAM_N, runSimilarityGate } from "../scripts/similarity.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const TMP = join(ROOT, ".tmp");
+const TMP = tmpdir();
 
 test("similarity gate passes against all pinned catalog oracles", () => {
   const r = runSimilarityGate();

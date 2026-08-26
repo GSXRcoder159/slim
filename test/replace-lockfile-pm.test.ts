@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const NODE_BIN = dirname(process.execPath);
@@ -13,10 +14,7 @@ const COREPACK =
 const PM_PATH = `${NODE_BIN}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
 
 function pmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, PATH: PM_PATH, ...extra };
-  delete env.NODE_TEST_CONTEXT;
-  delete env.NODE_CHANNEL_FD;
-  return env;
+  return hermeticPmEnv({ PATH: PM_PATH, ...extra });
 }
 
 function which(bin: string): boolean {

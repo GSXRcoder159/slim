@@ -257,6 +257,32 @@ test("add", () => { assert.equal(add(2, 3), 5); });
     assert.equal(workerLoad.status, 0, workerLoad.stderr);
     assert.match(workerLoad.stdout, /worker-thread\.js/);
 
+    const resolved = run(
+      process.execPath,
+      [
+        "-e",
+        `import { createRequire } from "node:module";
+         import { pathToFileURL } from "node:url";
+         const req = createRequire(pathToFileURL(${JSON.stringify(join(tmp, "package.json"))}).href);
+         for (const spec of ["slim", "slim/hooks", "slim/vitest"]) {
+           const r = req.resolve(spec);
+           if (!r) process.exit(1);
+           console.log(spec, r);
+         }`,
+      ],
+      tmp,
+    );
+    assert.equal(resolved.status, 0, resolved.stderr);
+    assert.match(resolved.stdout, /slim .*main\.js/);
+    assert.match(resolved.stdout, /slim\/hooks .*hook\.js/);
+    assert.match(resolved.stdout, /slim\/vitest .*vitest\.js/);
+
+    const binName = process.platform === "win32" ? "slim.cmd" : "slim";
+    const binPath = join(tmp, "node_modules", ".bin", binName);
+    const binHelp = run(binPath, ["--help"], proj);
+    assert.equal(binHelp.status, 0, binHelp.stderr);
+    assert.match(binHelp.stdout, /Exit codes:/);
+
     const help = run(installedBin[0]!, installedBin.slice(1).concat(["--help"]), proj);
     assert.equal(help.status, 0);
     assert.match(help.stdout, /Exit codes:/);

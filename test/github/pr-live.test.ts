@@ -2,12 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as pr from "../../src/github/pr.ts";
 
 const live = process.env.SLIM_PR_LIVE === "1";
-const TMP = join(dirname(fileURLToPath(import.meta.url)), "../../.tmp");
+const TMP = tmpdir();
 
 const BODY = `# EVIDENCE, NOT PROOF
 

@@ -7,7 +7,7 @@
     "node": ">=22.18.0"
   },
   "bin": {
-    "slim": "./dist/main.js"
+    "slim": "dist/main.js"
   },
   "exports": {
     ".": {
@@ -24,6 +24,7 @@
     }
   },
   "types": "./dist/main.d.ts",
+  "main": "./dist/main.js",
   "files": [
     "dist",
     "action",
@@ -34,7 +35,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && node scripts/copy-pack-assets.mjs",
+    "build": "node scripts/build.mjs",
     "prepack": "npm run build",
     "test": "node --experimental-strip-types --test --test-reporter=spec test/*.test.ts test/*/*.test.ts",
     "slim": "node --experimental-strip-types src/main.ts",
@@ -51,8 +52,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/slim-hq/slim"
+    "url": "git+https://github.com/slim-hq/slim.git"
   },
+  "bugs": {
+    "url": "https://github.com/slim-hq/slim/issues"
+  },
+  "homepage": "https://github.com/slim-hq/slim#readme",
   "dependencies": {},
   "devDependencies": {
     "@types/lodash": "^4.17.20",

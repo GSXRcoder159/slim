@@ -28,11 +28,11 @@ slim/
     lodash-dynamic-refuse/ native-addon-refuse/
   action/                   # check, bloat, upstream composites → action/run.mjs
   docs/                     # dx, packages, schemas, examples
-  scripts/                  # copy-pack-assets, similarity-gate, refresh-golden, measure-claims
+  scripts/                  # build.mjs (wipe dist, tsc, catalog copy, stamp), similarity-gate, refresh-golden, measure-claims
   .github/workflows/        # ci (OS × Node matrix), release, slim-check, slim-bloat, slim-upstream
 ```
 
-TypeScript compiles to `dist/` (`tsc`). `"type": "module"`. `package.json` `"files"` ships `dist`, `action/`, root `slim.schema.json`, `docs/*.schema.json`, `LICENSE`, `README.md`, `CHANGELOG.md`. Tests, fixtures, and `src/` are not packed. Catalog `.ts` sources are copied into `dist/generate/catalog/` at build time.
+TypeScript compiles to `dist/` via `npm run build` (`scripts/build.mjs` runs `tsc` with `noEmitOnError`, deletes stale outputs, copies catalog `.ts` sources, writes `dist/.slim-build.json`). `"type": "module"`. `package.json` `"files"` ships `dist`, `action/`, root `slim.schema.json`, `docs/*.schema.json`, `LICENSE`, `README.md`, `CHANGELOG.md`. Tests, fixtures, and `src/` are not packed. Do not commit `dist/` or `*.tgz`.
 
 Fixtures are mini-apps. Tests invoke `dist/main.js` or `src/main.ts` under `--experimental-strip-types`.
 

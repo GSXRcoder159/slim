@@ -35,6 +35,20 @@ test("refreshLockfile npm install on npm lockfile", () => {
   assert.equal(calls[0]!.file, "npm");
   assert.deepEqual(calls[0]!.args, ["install"]);
   assert.equal(calls[0]!.env?.CI, undefined);
+  assert.equal(calls[0]!.env?.INIT_CWD, undefined);
+  assert.match(calls[0]!.env?.npm_config_cache ?? "", /slim-pm-cache/);
+});
+
+test("refreshLockfile pnpm install uses an isolated store-dir", () => {
+  const calls: Array<{ file: string; args: string[] }> = [];
+  refreshLockfile(project("pnpm"), undefined, (file, args) => {
+    calls.push({ file: String(file), args: args as string[] });
+    return Buffer.from("");
+  });
+  assert.equal(calls[0]!.file, "pnpm");
+  assert.equal(calls[0]!.args[0], "install");
+  assert.equal(calls[0]!.args[1], "--store-dir");
+  assert.match(calls[0]!.args[2] ?? "", /slim-pm-cache/);
 });
 
 test("refreshLockfile pnpm/yarn/bun commands", () => {

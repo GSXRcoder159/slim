@@ -10,15 +10,15 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as pr from "../../src/github/pr.ts";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../../src/exit.ts";
 
 const TITLE = "slim: replace lodash with a verified slice";
 const BRANCH = "slim/lodash";
 const FILES = ["src/slim/lodash.ts", ".slim/lodash/evidence.md"];
-const TMP = join(dirname(fileURLToPath(import.meta.url)), "../../.tmp");
+const TMP = tmpdir();
 
 const SAMPLE_PR_BODY = `# EVIDENCE, NOT PROOF
 

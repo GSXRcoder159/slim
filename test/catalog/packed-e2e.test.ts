@@ -10,11 +10,12 @@ import {
   cpSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
-const TMP = join(ROOT, ".tmp");
+const TMP = tmpdir();
 
 const CASES: Array<{ dir: string; pkg: string; lodashInput?: boolean }> = [
   { dir: "lodash-get-debounce", pkg: "lodash", lodashInput: true },
