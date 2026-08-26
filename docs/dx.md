@@ -57,9 +57,9 @@ Inventory of third-party packages (declared deps plus imported undeclared names)
 --json                One schema-valid document on stdout (docs/scan.schema.json)
 ```
 
-Optional `[dir]` is a project directory. Relative imports, absolute paths, URLs, Node builtins, and `file:`/`workspace:`/`link:`/`portal:` packages are omitted. `verdict` is `candidate` | `review` | `refuse` | `unused` — never `slim` or `closed`. Size fields are `measured` (unpacked `node_modules`), `estimated` (known min table / gzip guess), or `unknown`. Lockfile versions are `exact`, or `unknown` with `versionState` `range-only` / `malformed` / `unavailable`.
+Optional `[dir]` is a project directory. Relative imports, absolute paths, URLs, Node builtins, and `file:`/`workspace:`/`link:`/`portal:` packages are omitted. `import type` / `export type` / type-only named bindings are not runtime sites; a declared package used only for types is `unused` with `typeOnlySites > 0`. `verdict` is `candidate` | `review` | `refuse` | `unused` — never `slim` or `closed`. Size `minBytes` provenance is `measured` (complete unpacked walk), `estimated` (known min table), `partial` (cap/unreadable/omitted), or `unknown`. `gzipBytes` is always a 0.36 estimate. Lockfile versions are `exact`, or `unknown` with `versionState` `range-only` / `malformed` / `unavailable`.
 
-Stdout (human): a table of every row including unused and undeclared. JSON: `{ schemaVersion, lockfile, rows }` with no absolute `root`. No `--all`, `--min-size`, `--diff`, `--fail`, or `--limit`.
+Stdout (human): a table of every row including unused and undeclared, with size provenance and type-only notes. JSON: `{ schemaVersion: 2, lockfile, rows }` with no absolute `root`. No `--all`, `--min-size`, `--diff`, `--fail`, or `--limit`.
 
 Does not network. Unpacked or estimated size is local; missing size is `unknown`.
 
@@ -186,14 +186,14 @@ Project: a Cloudflare Worker. `lodash@4.17.21`. GHSA out for `_.template` protot
 
 ```
 $ slim scan
-package                      relation              verdict     sites    min       note
-lodash                       declared-imported     candidate   2        71.0kB
-axios                        declared-imported     refuse      3        18.1kB    network client — envelope is HTTP
+package                      relation              verdict     sites    types    min       size        note
+lodash                       declared-imported     candidate   2        0        71.0kB    estimated
+axios                        declared-imported     refuse      3        0        18.1kB    measured    network client — envelope is HTTP
 
 1 candidate. Scan does not close an envelope. Run slim inspect <pkg> then slim replace <pkg>.
 ```
 
-JSON (`--json`) is `{ schemaVersion, lockfile, rows }`. See `docs/scan.schema.json`.
+JSON (`--json`) is `{ schemaVersion: 2, lockfile, rows }`. See `docs/scan.schema.json`.
 
 ### `slim inspect lodash`
 

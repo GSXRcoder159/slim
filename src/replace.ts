@@ -74,6 +74,14 @@ export async function runReplace(args: CliArgs): Promise<number> {
   }
   assertNoPollutionDependence(env.traces);
 
+  if (!env.symbols.length) {
+    const rec = config.replacements[args.pkg] ?? config.replacements[env.package.name];
+    if (rec?.module && existsSync(join(project.root, rec.module))) {
+      process.stdout.write(`already replaced ${env.package.name} (${rec.module}); nothing to do\n`);
+      return EXIT_OK;
+    }
+  }
+
   if (env.slimmable.verdict === "refuse" && !args.force) {
     throw new SlimExit(
       EXIT_REFUSED,
@@ -84,11 +92,6 @@ export async function runReplace(args: CliArgs): Promise<number> {
     throw new SlimExit(EXIT_REFUSED, `envelope not closed: ${env.closure.reason}`);
   }
   if (!env.symbols.length) {
-    const rec = config.replacements[args.pkg] ?? config.replacements[env.package.name];
-    if (rec?.module && existsSync(join(project.root, rec.module))) {
-      process.stdout.write(`already replaced ${env.package.name} (${rec.module}); nothing to do\n`);
-      return EXIT_OK;
-    }
     throw new SlimExit(EXIT_FAIL, `no used symbols found for ${args.pkg}`);
   }
 

@@ -498,3 +498,80 @@ test("debounce Date.now is a seam, not a used-graph refuse", () => {
   assert.equal(env.slimmable.verdict === "refuse", false);
   assert.ok(env.slimmable.score >= 40);
 });
+
+test("type-only lodash produces no runtime imports or symbols and is not closed", () => {
+  const env = analyze({
+    "src/app.ts": `import type { Dictionary } from "lodash";\nexport type T = Dictionary<string>;\n`,
+  });
+  assert.equal(env.imports.length, 0);
+  assert.equal(env.symbols.length, 0);
+  assert.equal(env.closure.readyToGenerate, false);
+  assert.notEqual(env.closure.confidence, "closed");
+  assert.match(env.closure.reason, /no runtime import sites/);
+});
+
+test("mixed type/runtime import keeps only runtime symbols", () => {
+  const env = analyze({
+    "src/app.ts": `import { type Dictionary, get } from "lodash";\nexport const a = get({}, "x");\nexport type T = Dictionary<string>;\n`,
+  });
+  assert.ok(env.imports.some((i) => i.names.includes("get")));
+  assert.equal(
+    env.imports.some((i) => i.names.includes("Dictionary")),
+    false,
+  );
+  assert.ok(env.symbols.some((s) => s.exportName === "get"));
+  assert.equal(
+    env.symbols.some((s) => s.exportName === "Dictionary"),
+    false,
+  );
+});
+
+test("replace dry-run refuses a type-only package", async () => {
+  const root = mini({
+    "src/app.ts": `import type { Dictionary } from "lodash";\nexport type T = Dictionary<string>;\n`,
+  });
+  const prev = process.cwd();
+  process.chdir(root);
+  try {
+    const { runReplace } = await import("../src/replace.ts");
+    await assert.rejects(
+      () => runReplace(parseCli(["replace", "lodash", "--dry-run", "--no-trace", "--no-pr"])),
+      (err: unknown) => {
+        assert.ok(err instanceof Error);
+        assert.match(err.message, /no runtime import sites|envelope not closed/);
+        return true;
+      },
+    );
+  } finally {
+    process.chdir(prev);
+  }
+});
+
+test("inspect --json refuses a type-only package", async () => {
+  const root = mini({
+    "src/app.ts": `import type { Dictionary } from "lodash";\nexport type T = Dictionary<string>;\n`,
+  });
+  const prev = process.cwd();
+  process.chdir(root);
+  const out: string[] = [];
+  const so = process.stdout.write.bind(process.stdout);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    out.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    const code = await runInspect(parseCli(["inspect", "lodash", "--json"]));
+    assert.equal(code, 3);
+    const doc = JSON.parse(out.join("")) as {
+      decision: string;
+      envelope: { closure: { readyToGenerate: boolean; confidence: string; reason: string } };
+    };
+    assert.equal(doc.decision, "refuse");
+    assert.equal(doc.envelope.closure.readyToGenerate, false);
+    assert.notEqual(doc.envelope.closure.confidence, "closed");
+    assert.match(doc.envelope.closure.reason, /no runtime import sites/);
+  } finally {
+    process.stdout.write = so;
+    process.chdir(prev);
+  }
+});

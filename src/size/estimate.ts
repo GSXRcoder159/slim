@@ -1,5 +1,5 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { join, sep } from "node:path";
 
 /** Bundlephobia-ish min bytes for first-wave packages (2026-08-15). */
 export const KNOWN_MIN_BYTES: Record<string, number> = {
@@ -27,13 +27,35 @@ export const KNOWN_MIN_BYTES: Record<string, number> = {
 
 export interface SizeEstimate {
   minBytes: number | null;
-  source: "estimated" | "measured" | "unknown";
+  source: "estimated" | "measured" | "unknown" | "partial";
   unpackedBytes: number | null;
 }
 
-export function dirSize(path: string, capFiles = 4000): number {
+export interface DirSize {
+  bytes: number;
+  complete: boolean;
+  reason: string;
+}
+
+function confined(rootReal: string, target: string): boolean {
+  return target === rootReal || target.startsWith(rootReal + sep);
+}
+
+export function dirSize(path: string, capFiles = 4000): DirSize {
   let total = 0;
   let n = 0;
+  let complete = true;
+  let reason = "";
+  const mark = (why: string) => {
+    complete = false;
+    if (!reason) reason = why;
+  };
+  let rootReal = path;
+  try {
+    rootReal = realpathSync(path);
+  } catch {
+    return { bytes: 0, complete: false, reason: "unreadable directory" };
+  }
   const stack = [path];
   while (stack.length) {
     const d = stack.pop()!;
@@ -41,11 +63,42 @@ export function dirSize(path: string, capFiles = 4000): number {
     try {
       ents = readdirSync(d, { withFileTypes: true });
     } catch {
+      mark("unreadable directory");
       continue;
     }
+    ents.sort((a, b) => a.name.localeCompare(b.name));
     for (const e of ents) {
-      if (n++ > capFiles) return total;
+      if (n++ >= capFiles) {
+        mark("file cap");
+        return { bytes: total, complete, reason };
+      }
       const p = join(d, e.name);
+      if (e.isSymbolicLink()) {
+        let real: string;
+        let st;
+        try {
+          real = realpathSync(p);
+          st = statSync(p);
+        } catch {
+          mark("unreadable symlink");
+          continue;
+        }
+        if (st.isDirectory()) {
+          if (!confined(rootReal, real)) {
+            mark("symlink escapes package");
+            continue;
+          }
+          if (e.name === "node_modules") continue;
+          stack.push(p);
+        } else {
+          if (!confined(rootReal, real)) {
+            mark("symlink escapes package");
+            continue;
+          }
+          total += st.size;
+        }
+        continue;
+      }
       if (e.isDirectory()) {
         if (e.name === "node_modules") continue;
         stack.push(p);
@@ -53,24 +106,36 @@ export function dirSize(path: string, capFiles = 4000): number {
         try {
           total += statSync(p).size;
         } catch {
-          /* ignore */
+          mark("unreadable file");
         }
       }
     }
   }
-  return total;
+  return { bytes: total, complete, reason };
 }
 
-export function estimatePackageSize(projectRoot: string, name: string): SizeEstimate {
+export function estimatePackageSize(
+  projectRoot: string,
+  name: string,
+  opts: { capFiles?: number } = {},
+): SizeEstimate {
   const known = KNOWN_MIN_BYTES[name];
   const nm = join(projectRoot, "node_modules", name);
   let unpacked: number | null = null;
-  if (existsSync(nm)) unpacked = dirSize(nm);
+  let complete = true;
+  if (existsSync(nm)) {
+    const walked = dirSize(nm, opts.capFiles ?? 4000);
+    unpacked = walked.bytes;
+    complete = walked.complete;
+  }
   if (known != null) {
     return { minBytes: known, source: "estimated", unpackedBytes: unpacked };
   }
-  if (unpacked != null) {
+  if (unpacked != null && complete) {
     return { minBytes: unpacked, source: "measured", unpackedBytes: unpacked };
+  }
+  if (unpacked != null) {
+    return { minBytes: unpacked, source: "partial", unpackedBytes: unpacked };
   }
   return { minBytes: null, source: "unknown", unpackedBytes: null };
 }

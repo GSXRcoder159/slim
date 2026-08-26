@@ -4,7 +4,7 @@ import type { CliArgs } from "./cli.ts";
 import { EXIT_OK, EXIT_USAGE } from "./exit.ts";
 import { loadProject, type PackageJson } from "./project.ts";
 import { loadConfig } from "./config.ts";
-import { collectImportSpecifiers, resolvePackageFamily } from "./analyze/index.ts";
+import { collectPackageSpecifiers, resolvePackageFamily } from "./analyze/index.ts";
 import { parseSpecifier, resolvePackageImports } from "./analyze/family.ts";
 import { estimatePackageSize, gzipGuess, readInstalledVersion } from "./size/estimate.ts";
 import { refusePackage, BLOAT_PACKAGES } from "./scan/refuse.ts";
@@ -12,13 +12,13 @@ import { lockfileDirectDeps, type LockfileResult } from "./scan/lockfile-deps.ts
 import { envelopeForDisk } from "./envelope/types.ts";
 import type { Envelope, ImportSite } from "./envelope/types.ts";
 
-export const SCAN_SCHEMA_VERSION = 1 as const;
+export const SCAN_SCHEMA_VERSION = 2 as const;
 
 export type VersionState = "exact" | "range-only" | "malformed" | "unavailable";
 export type ScanRelation = "declared-imported" | "declared-unused" | "imported-undeclared";
 export type DeclaredAs = "dependency" | "optional" | "peer" | "dev" | "none";
 export type ScanVerdict = "candidate" | "review" | "refuse" | "unused";
-export type SizeProvenance = "measured" | "estimated" | "unknown";
+export type SizeProvenance = "measured" | "estimated" | "unknown" | "partial";
 export type SizeState = "measured" | "estimated" | "unknown" | "refused" | "review";
 
 export interface ScanRow {
@@ -26,6 +26,7 @@ export interface ScanRow {
   family: string;
   subpaths: string[];
   importSites: number;
+  typeOnlySites: number;
   version: string;
   versionState: VersionState;
   versionReason: string;
@@ -126,7 +127,7 @@ function rankVerdict(
 export function scanProject(cwd = process.cwd()): ScanReport {
   const project = loadProject(cwd);
   const config = loadConfig(project.root);
-  const imports = collectImportSpecifiers(project, {
+  const { runtime: imports, typeOnly } = collectPackageSpecifiers(project, {
     include: config.include,
     ignore: config.ignore,
   });
@@ -150,6 +151,7 @@ export function scanProject(cwd = process.cwd()): ScanReport {
     const fam = resolvePackageFamily(name);
     const sites = imports.get(name) ?? [];
     const unique = sites.length;
+    const typeOnlySites = typeOnly.get(name)?.length ?? 0;
     const decl = declared.get(name);
     const unused = unique === 0 && Boolean(decl);
     const relation: ScanRelation = !decl
@@ -163,19 +165,22 @@ export function scanProject(cwd = process.cwd()): ScanReport {
     const { verdict, slimmable } = rankVerdict(name, unique, size.minBytes, refuse?.why, unused);
     const sizeProvenance: SizeProvenance = size.source;
     const sizeState: SizeState =
-      verdict === "refuse" ? "refused" : verdict === "review" ? "review" : sizeProvenance;
+      verdict === "refuse" ? "refused" : sizeProvenance === "partial" ? "review" : sizeProvenance;
     const note =
       refuse?.why ??
-      (relation === "declared-unused"
-        ? "declared but no import specifier"
-        : relation === "imported-undeclared"
-          ? "imported but not declared in package.json"
-          : "");
+      (relation === "declared-unused" && typeOnlySites > 0
+        ? "type-only imports only"
+        : relation === "declared-unused"
+          ? "declared but no import specifier"
+          : relation === "imported-undeclared"
+            ? "imported but not declared in package.json"
+            : "");
     rows.push({
       name,
       family: fam?.family ?? name,
       subpaths: subpathsOf(name, sites, project.packageJson.imports),
       importSites: unique,
+      typeOnlySites,
       version: ver.version,
       versionState: ver.versionState,
       versionReason: ver.versionReason,
@@ -203,7 +208,9 @@ export function formatScanHuman(report: ScanReport): string {
       pad("relation", 22) +
       pad("verdict", 12) +
       pad("sites", 8) +
+      pad("types", 8) +
       pad("min", 10) +
+      pad("size", 12) +
       "note",
   ];
   for (const r of report.rows) {
@@ -213,7 +220,9 @@ export function formatScanHuman(report: ScanReport): string {
         pad(r.relation, 22) +
         pad(r.verdict, 12) +
         pad(String(r.importSites), 8) +
+        pad(String(r.typeOnlySites), 8) +
         pad(min, 10) +
+        pad(r.sizeProvenance, 12) +
         (r.note || ""),
     );
   }

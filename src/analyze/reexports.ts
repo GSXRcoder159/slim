@@ -41,89 +41,134 @@ export function collectImports(
     if (ts.isImportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
       const specifier = node.moduleSpecifier.text;
       const clause = node.importClause;
-      const names: string[] = [];
-      const pendingNames: Array<{ local: string; imported: string }> = [];
-      let kind: ImportKind = "side-effect";
-      let namespaceLocal: string | undefined;
-      let defaultLocal: string | undefined;
-      if (!clause) {
-        kind = "side-effect";
+      if (clause?.isTypeOnly) {
+        extra.typeOnly.push({ loc: locOf(sf, node, extra.root), specifier, kind: "named", names: [] });
       } else {
-        if (clause.name) {
-          kind = "default";
-          names.push("default");
-          defaultLocal = clause.name.text;
-          pendingNames.push({ local: clause.name.text, imported: "default" });
-          pushPkgBinding(bindings, sf, node, specifier, clause.name.text, "default", "default", extra);
-        }
-        if (clause.namedBindings) {
-          if (ts.isNamespaceImport(clause.namedBindings)) {
-            kind = "namespace";
-            names.push("*");
-            namespaceLocal = clause.namedBindings.name.text;
-            pushPkgBinding(bindings, sf, node, specifier, namespaceLocal, "*", "namespace", extra);
-          } else if (ts.isNamedImports(clause.namedBindings)) {
-            kind = "named";
-            const map = new Map<string, string>();
-            for (const el of clause.namedBindings.elements) {
-              const imported = (el.propertyName ?? el.name).text;
-              names.push(imported);
-              pendingNames.push({ local: el.name.text, imported });
-              map.set(imported, imported);
-              pushPkgBinding(bindings, sf, node, specifier, el.name.text, imported, "named", extra);
-            }
-            if (!specifier.startsWith(".") && !specifier.startsWith("#") && parseSpecifier(specifier)) {
-              extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: map });
+        const names: string[] = [];
+        const pendingNames: Array<{ local: string; imported: string }> = [];
+        let kind: ImportKind = "side-effect";
+        let namespaceLocal: string | undefined;
+        let defaultLocal: string | undefined;
+        let sawTypeOnly = false;
+        if (!clause) {
+          kind = "side-effect";
+        } else {
+          if (clause.name) {
+            kind = "default";
+            names.push("default");
+            defaultLocal = clause.name.text;
+            pendingNames.push({ local: clause.name.text, imported: "default" });
+            pushPkgBinding(bindings, sf, node, specifier, clause.name.text, "default", "default", extra);
+          }
+          if (clause.namedBindings) {
+            if (ts.isNamespaceImport(clause.namedBindings)) {
+              kind = "namespace";
+              names.push("*");
+              namespaceLocal = clause.namedBindings.name.text;
+              pushPkgBinding(bindings, sf, node, specifier, namespaceLocal, "*", "namespace", extra);
+            } else if (ts.isNamedImports(clause.namedBindings)) {
+              kind = "named";
+              const map = new Map<string, string>();
+              for (const el of clause.namedBindings.elements) {
+                if (el.isTypeOnly) {
+                  sawTypeOnly = true;
+                  continue;
+                }
+                const imported = (el.propertyName ?? el.name).text;
+                names.push(imported);
+                pendingNames.push({ local: el.name.text, imported });
+                map.set(imported, imported);
+                pushPkgBinding(bindings, sf, node, specifier, el.name.text, imported, "named", extra);
+              }
+              if (map.size && !specifier.startsWith(".") && !specifier.startsWith("#") && parseSpecifier(specifier)) {
+                extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: map });
+              }
             }
           }
         }
+        if (sawTypeOnly) {
+          extra.typeOnly.push({ loc: locOf(sf, node, extra.root), specifier, kind: "named", names: [] });
+        }
+        if (names.length || !clause) {
+          if (specifierMatches(specifier, wanted)) {
+            imports.push({ loc: locOf(sf, node, extra.root), specifier, kind, names });
+          }
+          if (namespaceLocal && parseSpecifier(specifier) && !specifier.startsWith(".")) {
+            extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: "*" });
+          }
+          if (defaultLocal && parseSpecifier(specifier) && !specifier.startsWith(".")) {
+            extra.pkgLinks.push({
+              file: normPath(sf.fileName),
+              specifier,
+              names: new Map([["default", "default"]]),
+            });
+          }
+          queueLocalOrAlias(ts, sf, node, specifier, pendingNames, namespaceLocal, defaultLocal, extra);
+        }
       }
-      if (specifierMatches(specifier, wanted)) {
-        imports.push({ loc: locOf(sf, node, extra.root), specifier, kind, names });
-      }
-      if (namespaceLocal && parseSpecifier(specifier) && !specifier.startsWith(".")) {
-        extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: "*" });
-      }
-      if (defaultLocal && parseSpecifier(specifier) && !specifier.startsWith(".")) {
-        extra.pkgLinks.push({
-          file: normPath(sf.fileName),
-          specifier,
-          names: new Map([["default", "default"]]),
-        });
-      }
-      queueLocalOrAlias(ts, sf, node, specifier, pendingNames, namespaceLocal, defaultLocal, extra);
     }
 
     if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
       const specifier = node.moduleSpecifier.text;
-      const names: string[] = [];
-      if (node.exportClause && ts.isNamedExports(node.exportClause)) {
-        const map = new Map<string, string>();
-        for (const el of node.exportClause.elements) {
-          const exported = el.name.text;
-          const orig = (el.propertyName ?? el.name).text;
-          names.push(orig);
-          map.set(exported, orig);
+      if (node.isTypeOnly) {
+        extra.typeOnly.push({ loc: locOf(sf, node, extra.root), specifier, kind: "named", names: [] });
+      } else {
+        const names: string[] = [];
+        let sawTypeOnly = false;
+        if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+          const map = new Map<string, string>();
+          for (const el of node.exportClause.elements) {
+            if (el.isTypeOnly) {
+              sawTypeOnly = true;
+              continue;
+            }
+            const orig = (el.propertyName ?? el.name).text;
+            names.push(orig);
+            map.set(el.name.text, orig);
+          }
+          if (sawTypeOnly) {
+            extra.typeOnly.push({ loc: locOf(sf, node, extra.root), specifier, kind: "named", names: [] });
+          }
+          if (map.size) {
+            if (specifier.startsWith(".")) extra.localHops.push({ file: normPath(sf.fileName), specifier });
+            else extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: map });
+          }
+        } else if (!node.exportClause) {
+          if (specifier.startsWith(".")) extra.localHops.push({ file: normPath(sf.fileName), specifier });
+          else extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: "*" });
         }
-        if (specifier.startsWith(".")) {
-          extra.localHops.push({ file: normPath(sf.fileName), specifier });
-        } else {
-          extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: map });
-        }
-      } else if (!node.exportClause) {
-        if (specifier.startsWith(".")) {
-          extra.localHops.push({ file: normPath(sf.fileName), specifier });
-        } else {
-          extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: "*" });
+        if ((names.length || !node.exportClause) && specifierMatches(specifier, wanted)) {
+          imports.push({
+            loc: locOf(sf, node, extra.root),
+            specifier,
+            kind: node.exportClause ? "named" : "namespace",
+            names: names.length ? names : ["*"],
+          });
         }
       }
-      if (specifierMatches(specifier, wanted)) {
-        imports.push({
-          loc: locOf(sf, node, extra.root),
-          specifier,
-          kind: node.exportClause ? "named" : "namespace",
-          names: names.length ? names : ["*"],
-        });
+    }
+
+    if (ts.isImportEqualsDeclaration(node)) {
+      const ref = node.moduleReference;
+      if (ts.isExternalModuleReference(ref) && ref.expression && ts.isStringLiteral(ref.expression)) {
+        const specifier = ref.expression.text;
+        if (node.isTypeOnly) {
+          extra.typeOnly.push({ loc: locOf(sf, node, extra.root), specifier, kind: "cjs-require", names: [] });
+        } else if (specifierMatches(specifier, wanted)) {
+          imports.push({
+            loc: locOf(sf, node, extra.root),
+            specifier,
+            kind: "cjs-require",
+            names: ["default"],
+          });
+          bindings.push({
+            local: node.name.text,
+            imported: "default",
+            specifier,
+            kind: "cjs-require",
+            loc: locOf(sf, node, extra.root),
+          });
+        }
       }
     }
 

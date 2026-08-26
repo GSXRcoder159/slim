@@ -1,7 +1,7 @@
 import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type ts from "typescript";
-import type { ImportKind, SourceLoc } from "../envelope/types.ts";
+import type { ImportKind, ImportSite, SourceLoc } from "../envelope/types.ts";
 import { resolvePackageFamily } from "./family.ts";
 
 export interface Binding {
@@ -45,6 +45,7 @@ export interface CollectExtra {
   localHops: LocalHop[];
   programCtx: ProgramCtx | null;
   root: string;
+  typeOnly: ImportSite[];
 }
 
 export function scriptKind(ts: typeof import("typescript"), file: string): ts.ScriptKind {

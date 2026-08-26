@@ -226,9 +226,9 @@ Scan is an inventory, not a closed envelope. It does **not** score CVE boosts or
 
 Per third-party package name:
 
-- **Sites** come from include/ignore-filtered source. Relative, absolute, URL, builtin, and `file:`/`workspace:` deps are omitted.
+- **Sites** come from include/ignore-filtered source and count **runtime** import/export declarations only. `import type`, `export type`, and type-only named bindings are `typeOnlySites`, not `importSites`. Relative, absolute, URL, builtin, and `file:`/`workspace:` deps are omitted.
 - **Version** is lockfile/`node_modules` exact, or `unknown` with `range-only` / `malformed` / `unavailable` — never a stripped `^` range pretending to be exact.
-- **Verdict** `candidate` vs `review` is a ranking heuristic (known-large / few sites). `refuse` is the refuse table. `unused` is declared with no import. Scan never emits `slim`.
-- **Size provenance** is `measured` (unpacked), `estimated` (known min table / gzip guess), or `unknown`.
+- **Verdict** `candidate` vs `review` is a ranking heuristic (known-large / few **runtime** sites). `refuse` is the refuse table. `unused` is declared with no runtime import (including type-only-only). Scan never emits `slim`.
+- **Size provenance** is `measured` (complete unpacked walk), `estimated` (known min table), `partial` (walk hit a cap, unreadable entry, or omitted file), or `unknown`. `gzipBytes` is always a 0.36 guess of `minBytes`.
 
 Human output lists unused and undeclared rows. `inspect` / `replace` close an envelope; scan does not.

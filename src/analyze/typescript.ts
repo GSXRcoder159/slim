@@ -88,6 +88,7 @@ export function analyzePackage(
     localHops: [],
     programCtx,
     root: project.root,
+    typeOnly: [],
   };
 
   for (const file of walked) {
@@ -207,13 +208,14 @@ export function analyzePackage(
   return env;
 }
 
-export function collectImportSpecifiers(
+export function collectPackageSpecifiers(
   project: Project,
   opts: { include?: string[]; ignore?: string[] } = {},
-): Map<string, ImportSite[]> {
+): { runtime: Map<string, ImportSite[]>; typeOnly: Map<string, ImportSite[]> } {
   const ts = loadTargetTypescript(project.root);
   const files = filterSourceFiles(walkSourceFiles(project.root), project.root, opts);
-  const map = new Map<string, ImportSite[]>();
+  const runtime = new Map<string, ImportSite[]>();
+  const typeOnly = new Map<string, ImportSite[]>();
   for (const file of files) {
     const text = readFileSync(file, "utf8");
     const sf = ts.createSourceFile(
@@ -225,23 +227,41 @@ export function collectImportSpecifiers(
     );
     const dummy: Binding[] = [];
     const imports: ImportSite[] = [];
-    collectImports(ts, sf, dummy, imports, null, {
+    const extra: CollectExtra = {
       localPending: [],
       pkgLinks: [],
       localHops: [],
       programCtx: null,
       root: project.root,
-    });
-    for (const imp of imports) {
-      const resolved = resolvePackageImports(imp.specifier, project.packageJson.imports) ?? imp.specifier;
-      const parsed = parseSpecifier(resolved);
-      if (!parsed) continue;
-      const list = map.get(parsed.name) ?? [];
-      list.push(imp);
-      map.set(parsed.name, list);
-    }
+      typeOnly: [],
+    };
+    collectImports(ts, sf, dummy, imports, null, extra);
+    addSpecifierSites(runtime, imports, project.packageJson.imports);
+    addSpecifierSites(typeOnly, extra.typeOnly, project.packageJson.imports);
   }
-  return map;
+  return { runtime, typeOnly };
+}
+
+export function collectImportSpecifiers(
+  project: Project,
+  opts: { include?: string[]; ignore?: string[] } = {},
+): Map<string, ImportSite[]> {
+  return collectPackageSpecifiers(project, opts).runtime;
+}
+
+function addSpecifierSites(
+  map: Map<string, ImportSite[]>,
+  sites: ImportSite[],
+  importMap: unknown,
+): void {
+  for (const imp of sites) {
+    const resolved = resolvePackageImports(imp.specifier, importMap) ?? imp.specifier;
+    const parsed = parseSpecifier(resolved);
+    if (!parsed) continue;
+    const list = map.get(parsed.name) ?? [];
+    list.push(imp);
+    map.set(parsed.name, list);
+  }
 }
 
 function detectEnv(project: Project, files: string[]): Envelope["env"] {

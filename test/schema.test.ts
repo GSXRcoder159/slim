@@ -87,6 +87,7 @@ test("docs/scan.schema.json matches ScanReport required fields", () => {
     "sizeState",
     "slimmable",
     "subpaths",
+    "typeOnlySites",
     "verdict",
     "version",
     "versionReason",

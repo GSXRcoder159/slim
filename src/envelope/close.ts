@@ -28,7 +28,11 @@ export function closeEnvelope(env: Envelope, opts?: { allowUnknown?: boolean }):
   let ready = true;
   let reason = "static envelope closed";
 
-  if (hardUnknowns.length) {
+  if (env.imports.length === 0 && env.symbols.length === 0) {
+    confidence = "open";
+    ready = false;
+    reason = "no runtime import sites observed";
+  } else if (hardUnknowns.length) {
     confidence = "open";
     ready = false;
     reason = hardUnknowns.map((u) => u.detail).join("; ");

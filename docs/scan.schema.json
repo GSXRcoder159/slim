@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://unpkg.com/slim/docs/scan.schema.json",
   "title": "Slim scan --json report",
-  "description": "One JSON document on stdout. Scan is an inventory and ranking heuristic, not a closed envelope. schemaVersion 1.",
+  "description": "One JSON document on stdout. Scan is an inventory and ranking heuristic, not a closed envelope. schemaVersion 2. importSites are runtime-only; typeOnlySites are type-only import/export declarations. sizeProvenance describes unpacked minBytes (gzipBytes is always a 0.36 estimate). partial means the directory walk hit a cap, unreadable entry, or omitted file.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "lockfile", "rows"],
   "properties": {
-    "schemaVersion": { "type": "integer", "const": 1 },
+    "schemaVersion": { "type": "integer", "const": 2 },
     "lockfile": { "type": ["string", "null"], "enum": ["npm", "pnpm", "yarn", "bun", null] },
     "rows": {
       "type": "array",
@@ -23,6 +23,7 @@
         "family",
         "subpaths",
         "importSites",
+        "typeOnlySites",
         "version",
         "versionState",
         "versionReason",
@@ -41,6 +42,7 @@
         "family": { "type": "string" },
         "subpaths": { "type": "array", "items": { "type": "string" } },
         "importSites": { "type": "integer", "minimum": 0 },
+        "typeOnlySites": { "type": "integer", "minimum": 0 },
         "version": { "type": "string" },
         "versionState": { "type": "string", "enum": ["exact", "range-only", "malformed", "unavailable"] },
         "versionReason": { "type": "string" },
@@ -53,7 +55,7 @@
         "slimmable": { "type": "number" },
         "minBytes": { "type": ["integer", "null"] },
         "gzipBytes": { "type": ["integer", "null"] },
-        "sizeProvenance": { "type": "string", "enum": ["measured", "estimated", "unknown"] },
+        "sizeProvenance": { "type": "string", "enum": ["measured", "estimated", "unknown", "partial"] },
         "sizeState": {
           "type": "string",
           "enum": ["measured", "estimated", "unknown", "refused", "review"]

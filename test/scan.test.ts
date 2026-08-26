@@ -610,5 +610,193 @@ test("scanning this repository emits zero relative, absolute, or builtin rows", 
   }
 });
 
+test("import type is not a runtime import site; declared package is unused", () => {
+  const root = mini({
+    "src/app.ts": `import type { Dictionary } from "lodash";\nexport type T = Dictionary<string>;\n`,
+  });
+  const map = collectImportSpecifiers(loadProject(root));
+  assert.equal(map.has("lodash"), false);
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "lodash");
+  assert.ok(row);
+  assert.equal(row!.importSites, 0);
+  assert.equal(row!.typeOnlySites, 1);
+  assert.equal(row!.relation, "declared-unused");
+  assert.equal(row!.verdict, "unused");
+  assert.match(row!.note, /type-only/);
+  const human = formatScanHuman(report);
+  assert.match(human, /type-only/);
+  assert.match(human, /estimated|measured|unknown|partial/);
+});
+
+test("undeclared type-only package has no scan row", () => {
+  const root = mini({
+    "src/app.ts": `import type { Foo } from "ghost-types";\nexport type T = Foo;\n`,
+  });
+  const report = scanProject(root);
+  assert.equal(
+    report.rows.some((r) => r.name === "ghost-types"),
+    false,
+  );
+});
+
+test("mixed type and runtime named imports keep only the runtime portion", () => {
+  const root = mini({
+    "src/app.ts": `import { type Dictionary, get } from "lodash";\nexport const a = get({}, "x");\nexport type T = Dictionary<string>;\n`,
+  });
+  const map = collectImportSpecifiers(loadProject(root));
+  const sites = map.get("lodash") ?? [];
+  assert.equal(sites.length, 1);
+  assert.deepEqual(sites[0]!.names, ["get"]);
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "lodash");
+  assert.ok(row);
+  assert.equal(row!.importSites, 1);
+  assert.equal(row!.typeOnlySites, 1);
+  assert.equal(row!.relation, "declared-imported");
+  assert.notEqual(row!.verdict, "unused");
+  const human = formatScanHuman(report);
+  assert.match(human, /types/);
+  assert.ok(human.split("\n").some((line) => line.includes("lodash") && /\b1\b/.test(line)));
+});
+
+test("export type from a package is not a runtime site", () => {
+  const root = mini({
+    "src/app.ts": `export type { Dictionary } from "lodash";\n`,
+  });
+  const map = collectImportSpecifiers(loadProject(root));
+  assert.equal(map.has("lodash"), false);
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "lodash");
+  assert.ok(row);
+  assert.equal(row!.importSites, 0);
+  assert.ok(row!.typeOnlySites >= 1);
+  assert.equal(row!.verdict, "unused");
+});
+
+test("mixed export { type X, y } keeps only the runtime export", () => {
+  const root = mini({
+    "src/app.ts": `export { type Dictionary, get } from "lodash";\n`,
+  });
+  const map = collectImportSpecifiers(loadProject(root));
+  const sites = map.get("lodash") ?? [];
+  assert.equal(sites.length, 1);
+  assert.deepEqual(sites[0]!.names, ["get"]);
+});
+
+test("import type namespace is not a runtime site", () => {
+  const root = mini({
+    "src/app.ts": `import type * as _ from "lodash";\nexport type T = _.Dictionary<string>;\n`,
+  });
+  assert.equal(collectImportSpecifiers(loadProject(root)).has("lodash"), false);
+});
+
+test("typeof import() type query is not a runtime site", () => {
+  const root = mini({
+    "src/app.ts": `export type T = import("lodash").Dictionary<string>;\n`,
+  });
+  assert.equal(collectImportSpecifiers(loadProject(root)).has("lodash"), false);
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "lodash");
+  assert.ok(row);
+  assert.equal(row!.importSites, 0);
+  assert.equal(row!.verdict, "unused");
+});
+
+test("import equals require is a runtime CJS site; import type equals is not", () => {
+  const runtime = mini({
+    "src/app.ts": `import lodash = require("lodash");\nexport const a = lodash.get({}, "x");\n`,
+  });
+  const runtimeSites = collectImportSpecifiers(loadProject(runtime)).get("lodash") ?? [];
+  assert.equal(runtimeSites.length, 1);
+  assert.equal(runtimeSites[0]!.kind, "cjs-require");
+
+  const typeOnly = mini({
+    "src/app.ts": `import type lodash = require("lodash");\nexport type T = typeof lodash;\n`,
+  });
+  assert.equal(collectImportSpecifiers(loadProject(typeOnly)).has("lodash"), false);
+});
+
+test("CJS require remains a runtime import site", () => {
+  const root = mini({
+    "src/app.ts": `const lodash = require("lodash");\nexport const a = lodash.get({}, "x");\n`,
+  });
+  const sites = collectImportSpecifiers(loadProject(root)).get("lodash") ?? [];
+  assert.equal(sites.length, 1);
+  assert.equal(sites[0]!.kind, "cjs-require");
+});
+
+test("scan JSON schemaVersion is 2 and rows include typeOnlySites", () => {
+  const root = mini({
+    "src/app.ts": `import { get } from "lodash";\nexport const a = get({}, "x");\n`,
+  });
+  const report = scanProject(root);
+  assert.equal(report.schemaVersion, 2);
+  const row = report.rows.find((r) => r.name === "lodash");
+  assert.ok(row);
+  assert.equal(typeof row!.typeOnlySites, "number");
+  const human = formatScanHuman(report);
+  assert.match(human, /estimated|measured|unknown|partial/);
+});
+
+test("scan --json on a project without TypeScript emits one error document", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-scan-nots-"));
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "nots", type: "module" }));
+  writeFileSync(join(root, "src.ts"), `export const n = 1;\n`);
+  const r = spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", join(ROOT, "src/main.ts"), "scan", "--json", root],
+    { encoding: "utf8", timeout: 30_000, env: { ...process.env, CI: "1" } },
+  );
+  assert.notEqual(r.status, 0);
+  const stdout = r.stdout ?? "";
+  assert.equal(stdout.trimStart().startsWith("{"), true, stdout);
+  const doc = JSON.parse(stdout) as { ok?: boolean; schemaVersion?: number; error?: string };
+  assert.equal(doc.ok, false);
+  assert.equal(doc.schemaVersion, 1);
+  assert.equal(typeof doc.error, "string");
+  assert.equal(stdout.trim().split("\n").filter((l) => l.startsWith("{") || l.startsWith("}")).length >= 1, true);
+});
+
+test("scan reports partial provenance when the installed tree is unreadable", () => {
+  const root = mini(
+    { "src/app.ts": `import x from "tiny-lib";\nexport const a = x;\n` },
+    { dependencies: { "tiny-lib": "^1.0.0" } },
+  );
+  const nm = join(root, "node_modules", "tiny-lib");
+  mkdirSync(nm, { recursive: true });
+  writeFileSync(join(nm, "package.json"), JSON.stringify({ name: "tiny-lib", version: "1.0.0" }));
+  writeFileSync(join(nm, "index.js"), "export default 1;\n");
+  symlinkSync(join(nm, "missing-target"), join(nm, "broken"));
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "tiny-lib");
+  assert.ok(row);
+  assert.equal(row!.sizeProvenance, "partial");
+  assert.equal(row!.sizeState, "review");
+  assert.match(formatScanHuman(report), /partial/);
+});
+
+test("scan sizeState does not copy ranking review over a complete measurement", () => {
+  const imports = Array.from(
+    { length: 12 },
+    (_, i) => `import x${i} from "tiny-lib";\nexport const a${i} = x${i};\n`,
+  ).join("");
+  const root = mini(
+    { "src/app.ts": imports },
+    { dependencies: { "tiny-lib": "^1.0.0" } },
+  );
+  const nm = join(root, "node_modules", "tiny-lib");
+  mkdirSync(nm, { recursive: true });
+  writeFileSync(join(nm, "package.json"), JSON.stringify({ name: "tiny-lib", version: "1.0.0" }));
+  writeFileSync(join(nm, "index.js"), "export default 1;\n");
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "tiny-lib");
+  assert.ok(row);
+  assert.ok(row!.importSites > 8);
+  assert.equal(row!.verdict, "review");
+  assert.equal(row!.sizeProvenance, "measured");
+  assert.equal(row!.sizeState, "measured");
+});
+
 void fileURLToPath;
 void existsSync;
