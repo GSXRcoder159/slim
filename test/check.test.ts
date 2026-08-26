@@ -267,13 +267,17 @@ test("slim-bloat.yml runs the bloat action, not scan --json", () => {
   assert.match(yml, /SLIM_REQUIRE_DIST/);
 });
 
-test("slim-upstream.yml keeps weekly cron and runs upstream --pr", () => {
+test("slim-upstream.yml keeps weekly cron and runs the compiled action", () => {
   const yml = readFileSync(join(REPO_ROOT, ".github/workflows/slim-upstream.yml"), "utf8");
   assert.match(yml, /cron:\s*"0 8 \* \* 1"/);
-  assert.match(yml, /upstream --pr/);
+  assert.match(yml, /uses:\s*\.\/action\/upstream/);
   assert.match(yml, /contents:\s*write/);
   assert.match(yml, /pull-requests:\s*write/);
   assert.match(yml, /npm run build/);
+  assert.match(yml, /SLIM_REQUIRE_DIST/);
+  assert.match(yml, /upload-artifact/);
+  assert.match(yml, /if:\s*failure\(\)/);
+  assert.equal(/node dist\/main\.js upstream --pr/.test(yml), false);
 });
 
 test("ci.yml checks golden fixture without inspect overwrite", () => {

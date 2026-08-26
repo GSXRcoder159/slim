@@ -2,21 +2,48 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://unpkg.com/slim/docs/upstream.schema.json",
   "title": "Slim upstream --json report",
-  "description": "One JSON document on stdout for success and non-success. schemaVersion 1.",
+  "description": "One JSON document on stdout for success and non-success. schemaVersion 1. Unconsulted sources use status success with detail 'not required' and are ignored when folding fail-closed.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "ok", "exit", "status", "findings"],
+  "required": ["schemaVersion", "ok", "exit", "status", "conclusion", "sources", "findings"],
   "properties": {
     "schemaVersion": { "type": "integer", "const": 1 },
     "ok": { "type": "boolean" },
     "exit": { "type": "integer", "enum": [0, 1, 2, 3, 4] },
     "status": { "type": "string", "enum": ["ok", "fail", "usage", "refused", "env"] },
+    "conclusion": {
+      "type": "string",
+      "enum": ["exposed", "not-exposed", "unmapped", "routine-release", "source-unavailable", "oracle-unavailable"]
+    },
+    "error": { "type": "string" },
+    "sources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["osv", "npm", "oracle", "github"],
+      "properties": {
+        "osv": { "$ref": "#/$defs/source" },
+        "npm": { "$ref": "#/$defs/source" },
+        "oracle": { "$ref": "#/$defs/source" },
+        "github": { "$ref": "#/$defs/source" }
+      }
+    },
     "findings": {
       "type": "array",
       "items": {
         "type": "object",
         "additionalProperties": true,
-        "required": ["package", "pinned", "latest", "id", "exposure"],
+        "required": [
+          "package",
+          "pinned",
+          "latest",
+          "id",
+          "exposure",
+          "affectedRange",
+          "usedSymbols",
+          "mappedEvidence",
+          "upstreamChange",
+          "unmappedReason"
+        ],
         "properties": {
           "package": { "type": "string" },
           "pinned": { "type": "string" },
@@ -24,8 +51,24 @@
           "id": { "type": "string" },
           "summary": { "type": ["string", "null"] },
           "details": { "type": ["string", "null"] },
-          "exposure": { "type": "string" }
+          "exposure": { "type": "string", "enum": ["exposed", "unmapped", "not-exposed"] },
+          "affectedRange": { "type": "string" },
+          "usedSymbols": { "type": "array", "items": { "type": "string" } },
+          "mappedEvidence": { "type": "string" },
+          "upstreamChange": { "type": "string" },
+          "unmappedReason": { "type": ["string", "null"] }
         }
+      }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "detail"],
+      "properties": {
+        "status": { "type": "string", "enum": ["success", "unavailable", "malformed", "stale"] },
+        "detail": { "type": "string" }
       }
     }
   }

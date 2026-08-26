@@ -65,16 +65,18 @@ Example:  slim check
 slim watch — see if upstream advisories/releases touch your slice
 
 Usage:
-  slim watch [pkg]
-  slim upstream [pkg]          (alias)
+  slim watch
+  slim upstream                (alias)
 
-      --pr               Open a PR if a slice is exposed or uncertain
+      --pr               Open a PR if a slice is exposed or unmapped
       --json             One schema-valid document on stdout (docs/upstream.schema.json)
-      --write-workflow   Write .github/workflows/slim-watch.yml and exit
-      --fail-on <mode>   slice-exposed (default) | any-advisory | never
 
-Not a SaaS. Uses osv.dev, GitHub Advisory, npm registry from this machine.
-Example:  slim watch --write-workflow
+Not a SaaS. Queries osv.dev and the npm registry from this machine.
+OSV/npm outage, malformed response, timeout, or stale version → exit 4.
+Never prints "slice not exposed" when a source could not be determined.
+Unmapped advisories fail closed with a human-review artifact; no automatic rewrite.
+Exposed slices regenerate only after oracle fuzz, standing tests, and hardening tests pass.
+Example:  slim watch --json
 ------------------------------------------------------------------------
 slim doctor — check Node, git, gh, slices, and the watch workflow
 

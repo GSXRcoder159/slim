@@ -1,4 +1,6 @@
-# Written by: slim watch --write-workflow
+# Consumer example: weekly watch using the published CLI.
+# This repository's dogfood workflow is .github/workflows/slim-upstream.yml
+# (build dist, SLIM_REQUIRE_DIST, ./action/upstream).
 name: slim-watch
 on:
   schedule:
@@ -18,3 +20,9 @@ jobs:
       - run: npx --yes slim@1 watch --pr
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slim-upstream-diagnostics
+          if-no-files-found: ignore
+          path: .slim/

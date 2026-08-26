@@ -1,15 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCli } from "../src/cli.ts";
-import { EXIT_FAIL, EXIT_OK, SlimExit } from "../src/exit.ts";
-import { ENVELOPE_VERSION, emptyHyrum, type Envelope } from "../src/envelope/types.ts";
+import { EXIT_ENV, EXIT_FAIL, EXIT_OK, SlimExit } from "../src/exit.ts";
+import { ENVELOPE_VERSION, emptyHyrum, hashEnvelope, type Envelope } from "../src/envelope/types.ts";
 import type { FuzzReport } from "../src/fuzz/run.ts";
 import { sliceExposure } from "../src/upstream/slice.ts";
 import { runUpstream, type UpstreamDeps } from "../src/upstream.ts";
 import type { OsvVuln } from "../src/upstream/osv.ts";
+import { sourceErr, sourceOk } from "../src/upstream/status.ts";
 
 test("CWE-1321 with get in envelope is exposed", () => {
   const exp = sliceExposure(
@@ -21,7 +22,9 @@ test("CWE-1321 with get in envelope is exposed", () => {
     },
     ["get", "debounce"],
   );
-  assert.equal(exp, "exposed");
+  assert.equal(exp.exposure, "exposed");
+  assert.match(exp.mappedEvidence, /get|pollution|CWE-1321/i);
+  assert.equal(exp.unmappedReason, null);
 });
 
 test("unmapped advisory fail-closed", () => {
@@ -33,7 +36,8 @@ test("unmapped advisory fail-closed", () => {
     },
     ["get"],
   );
-  assert.equal(exp, "unmapped");
+  assert.equal(exp.exposure, "unmapped");
+  assert.ok(exp.unmappedReason);
 });
 
 const CWE_1321: OsvVuln = {
@@ -103,6 +107,8 @@ function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: strin
   const pkg = opts?.pkg ?? "lodash";
   const symbols = opts?.symbols ?? ["get", "set"];
   const version = opts?.version ?? "4.17.21";
+  const env = minimalEnvelope(pkg, symbols, version);
+  const hash = hashEnvelope(env);
   const root = mkdtempSync(join(tmpdir(), "slim-up-"));
   writeFileSync(
     join(root, "package.json"),
@@ -116,7 +122,7 @@ function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: strin
     JSON.stringify(
       {
         replacements: {
-          [pkg]: { version, envelopeHash: "h", symbols, module: moduleRel },
+          [pkg]: { version, envelopeHash: hash, symbols, module: moduleRel },
         },
       },
       null,
@@ -124,9 +130,11 @@ function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: strin
     ),
   );
   writeFileSync(join(root, moduleRel), "export function get() {}\nexport function set(o: unknown) { return o; }\n");
+  writeFileSync(join(root, ".slim", pkg, "envelope.json"), JSON.stringify(env, null, 2));
+  writeFileSync(join(root, ".slim", pkg, "evidence.json"), JSON.stringify({ envelopeHash: hash }));
   writeFileSync(
-    join(root, ".slim", pkg, "envelope.json"),
-    JSON.stringify(minimalEnvelope(pkg, symbols, version), null, 2),
+    join(root, "src", "slim", `${pkg.replace(/\//g, "-")}.test.ts`),
+    `import { test } from "node:test";\ntest("standing", () => {});\n`,
   );
   if (opts?.slimJson) {
     writeFileSync(
@@ -144,8 +152,9 @@ function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: strin
 
 function baseDeps(over: Partial<UpstreamDeps> & { cwd: string }): UpstreamDeps {
   return {
-    npmLatest: async () => ({ version: "4.17.21" }),
-    queryOsv: async () => [],
+    npmLatest: async () => sourceOk({ version: "4.17.21" }),
+    queryOsv: async () => sourceOk([]),
+    githubStatus: () => sourceOk(true),
     assembleCatalogModule: () =>
       "export function get(o: unknown, _p?: unknown, d?: unknown) { return d; }\nexport function set(o: unknown) { return o; }\n",
     runFuzz: async () => okFuzz(),
@@ -165,6 +174,8 @@ function baseDeps(over: Partial<UpstreamDeps> & { cwd: string }): UpstreamDeps {
       source: "export function get() { return undefined; }\n",
       promptHash: "h",
     }),
+    runStandingTests: () => {},
+    runHardenedTests: () => {},
     ...over,
   };
 }
@@ -174,7 +185,7 @@ test("exposed CWE-1321 get/set invokes catalog regenerate", async () => {
   let assembled = 0;
   const deps = baseDeps({
     cwd: root,
-    queryOsv: async () => [CWE_1321],
+    queryOsv: async () => sourceOk([CWE_1321]),
     assembleCatalogModule: (env) => {
       assembled += 1;
       assert.ok(env.symbols.some((s) => s.exportName === "get" || s.exportName === "set"));
@@ -188,12 +199,13 @@ test("exposed CWE-1321 get/set invokes catalog regenerate", async () => {
   assert.ok(assembled > 0, "assembleCatalogModule should run for exposed CWE-1321 get/set");
 });
 
-test("unmapped advisory is fail-closed and invokes regenerate", async () => {
-  const { root } = writeFixture({ symbols: ["get"] });
+test("unmapped advisory is fail-closed and does not regenerate", async () => {
+  const { root, moduleRel } = writeFixture({ symbols: ["get"] });
+  const before = readFileSync(join(root, moduleRel), "utf8");
   let assembled = 0;
   const deps = baseDeps({
     cwd: root,
-    queryOsv: async () => [UNMAPPED],
+    queryOsv: async () => sourceOk([UNMAPPED]),
     assembleCatalogModule: () => {
       assembled += 1;
       return "export function get(o: unknown, _p?: unknown, d?: unknown) { return d; }\n";
@@ -204,9 +216,13 @@ test("unmapped advisory is fail-closed and invokes regenerate", async () => {
     (err: unknown) =>
       err instanceof SlimExit &&
       err.code === EXIT_FAIL &&
-      /exposed|unmapped/i.test(err.message),
+      /unmapped/i.test(err.message),
   );
-  assert.ok(assembled > 0, "unmapped advisory should still regenerate the slice");
+  assert.equal(assembled, 0, "unmapped advisory must not regenerate");
+  assert.equal(readFileSync(join(root, moduleRel), "utf8"), before);
+  assert.ok(existsSync(join(root, ".slim", "UPSTREAM.md")));
+  const review = readFileSync(join(root, ".slim", "UPSTREAM.md"), "utf8");
+  assert.match(review, /did not write an automatic fix/i);
 });
 
 test("routine release (newer version, zero vulns) is fail-open", async () => {
@@ -215,8 +231,8 @@ test("routine release (newer version, zero vulns) is fail-open", async () => {
   let prs = 0;
   const deps = baseDeps({
     cwd: root,
-    npmLatest: async () => ({ version: "4.17.22" }),
-    queryOsv: async () => [],
+    npmLatest: async () => sourceOk({ version: "4.17.22" }),
+    queryOsv: async () => sourceOk([]),
     assembleCatalogModule: () => {
       assembled += 1;
       return "export function get() {}\n";
@@ -239,7 +255,7 @@ test("--pr title is slim: upstream slice fix for <id>", async () => {
   let branch = "";
   const deps = baseDeps({
     cwd: root,
-    queryOsv: async () => [CWE_1321],
+    queryOsv: async () => sourceOk([CWE_1321]),
     createPullRequest: async (opts) => {
       title = opts.title;
       body = opts.body;
@@ -265,7 +281,7 @@ test("catalog disagreement is a Slim bug and does not LLM-patch", async () => {
   let llm = 0;
   const deps = baseDeps({
     cwd: root,
-    queryOsv: async () => [CWE_1321],
+    queryOsv: async () => sourceOk([CWE_1321]),
     runFuzz: async () => ({
       ...okFuzz(),
       disagreements: [{ symbol: "get", args: ["a"], reason: "return mismatch" }],
@@ -296,7 +312,7 @@ test("PR body includes fuzz evidence stats from this run", async () => {
   let body = "";
   const deps = baseDeps({
     cwd: root,
-    queryOsv: async () => [CWE_1321],
+    queryOsv: async () => sourceOk([CWE_1321]),
     runFuzz: async () => ({
       cases: 42,
       comparisons: 99,
@@ -325,34 +341,87 @@ test("PR body includes fuzz evidence stats from this run", async () => {
   assert.match(body, /regenerated the replacement and fuzzed/i);
 });
 
-test("PR body says fuzz skipped when no installable oracle", async () => {
-  const { root } = writeFixture();
-  let body = "";
+test("no installable oracle leaves the tree unchanged", async () => {
+  const { root, moduleRel } = writeFixture();
+  const before = readFileSync(join(root, moduleRel), "utf8");
+  let prs = 0;
   const deps = baseDeps({
     cwd: root,
-    queryOsv: async () => [CWE_1321],
+    queryOsv: async () => sourceOk([CWE_1321]),
     loadOracle: async () => null,
     installUpstream: async () => null,
-    createPullRequest: async (opts) => {
-      body = opts.body;
+    createPullRequest: async () => {
+      prs += 1;
       return { url: null, local: true };
     },
   });
   await assert.rejects(
     () => runUpstream(parseCli(["upstream", "--pr"]), deps),
-    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+    (err: unknown) =>
+      err instanceof SlimExit &&
+      err.code === EXIT_FAIL &&
+      /verification unavailable/i.test(err.message),
   );
-  const evidence = readFileSync(join(root, ".slim", "lodash", "evidence.md"), "utf8");
-  assert.match(evidence, /fuzz skipped: no installable oracle/);
-  assert.match(body, /fuzz skipped: no installable oracle/);
-  assert.equal(/regenerated the replacement and fuzzed/i.test(body), false);
+  assert.equal(readFileSync(join(root, moduleRel), "utf8"), before);
+  assert.equal(existsSync(join(root, ".slim", "lodash", "evidence.md")), false);
+  assert.equal(existsSync(join(root, ".slim", "UPSTREAM.md")), false);
+  assert.equal(prs, 0);
+});
+
+test("missing oracle for one exposed package blocks every rewrite", async () => {
+  const { root, moduleRel } = writeFixture();
+  const before = readFileSync(join(root, moduleRel), "utf8");
+  const env2 = minimalEnvelope("underscore", ["get", "set"], "1.13.1");
+  const hash2 = hashEnvelope(env2);
+  mkdirSync(join(root, ".slim", "underscore"), { recursive: true });
+  writeFileSync(join(root, "src/slim/underscore.ts"), "export function get() {}\nexport function set(o: unknown) { return o; }\n");
+  writeFileSync(
+    join(root, "src/slim/underscore.test.ts"),
+    `import { test } from "node:test";\ntest("standing", () => {});\n`,
+  );
+  writeFileSync(join(root, ".slim/underscore/envelope.json"), JSON.stringify(env2, null, 2));
+  writeFileSync(join(root, ".slim/underscore/evidence.json"), JSON.stringify({ envelopeHash: hash2 }));
+  const man = JSON.parse(readFileSync(join(root, ".slim/manifest.json"), "utf8")) as {
+    replacements: Record<string, { version: string; envelopeHash: string; symbols: string[]; module: string }>;
+  };
+  man.replacements.underscore = {
+    version: "1.13.1",
+    envelopeHash: hash2,
+    symbols: ["get", "set"],
+    module: "src/slim/underscore.ts",
+  };
+  writeFileSync(join(root, ".slim/manifest.json"), JSON.stringify(man, null, 2));
+  const before2 = readFileSync(join(root, "src/slim/underscore.ts"), "utf8");
+  let assembled = 0;
+  const deps = baseDeps({
+    cwd: root,
+    queryOsv: async () => sourceOk([CWE_1321]),
+    loadOracle: async (pkg) =>
+      pkg === "lodash"
+        ? { fns: { get() {}, set(o: unknown) { return o; } }, kind: "new" as const }
+        : null,
+    assembleCatalogModule: () => {
+      assembled += 1;
+      return "export function get() { return; }\nexport function set(o: unknown) { return o; }\n";
+    },
+  });
+  await assert.rejects(
+    () => runUpstream(parseCli(["upstream"]), deps),
+    (err: unknown) =>
+      err instanceof SlimExit &&
+      err.code === EXIT_FAIL &&
+      /verification unavailable/i.test(err.message),
+  );
+  assert.equal(assembled, 0, "must not regenerate any package when one oracle is missing");
+  assert.equal(readFileSync(join(root, moduleRel), "utf8"), before);
+  assert.equal(readFileSync(join(root, "src/slim/underscore.ts"), "utf8"), before2);
 });
 
 test("proto disagreement vs new/patched oracle is a Slim bug", async () => {
   const { root } = writeFixture();
   const deps = baseDeps({
     cwd: root,
-    queryOsv: async () => [CWE_1321],
+    queryOsv: async () => sourceOk([CWE_1321]),
     loadOracle: async () => ({
       fns: { get() {}, set(o: unknown) { return o; } },
       kind: "new",
@@ -372,7 +441,7 @@ test("proto disagreement vs old/pinned oracle is dropped", async () => {
   const { root } = writeFixture();
   const deps = baseDeps({
     cwd: root,
-    queryOsv: async () => [CWE_1321],
+    queryOsv: async () => sourceOk([CWE_1321]),
     loadOracle: async () => ({
       fns: { get() {}, set(o: unknown) { return o; } },
       kind: "old",
@@ -391,14 +460,22 @@ test("proto disagreement vs old/pinned oracle is dropped", async () => {
 
 test("successful regen+fuzz bumps manifest and slim.json pin to latest", async () => {
   const { root } = writeFixture({ slimJson: true });
+  let standing = 0;
+  let hardened = 0;
   const deps = baseDeps({
     cwd: root,
-    npmLatest: async () => ({ version: "4.17.22" }),
-    queryOsv: async (_name, version) => (version === "4.17.21" ? [CWE_1321] : []),
+    npmLatest: async () => sourceOk({ version: "4.17.22" }),
+    queryOsv: async (_name, version) => sourceOk(version === "4.17.21" ? [CWE_1321] : []),
     loadOracle: async () => ({
       fns: { get() {}, set(o: unknown) { return o; } },
       kind: "new",
     }),
+    runStandingTests: () => {
+      standing += 1;
+    },
+    runHardenedTests: () => {
+      hardened += 1;
+    },
   });
   await assert.rejects(
     () => runUpstream(parseCli(["upstream"]), deps),
@@ -412,4 +489,146 @@ test("successful regen+fuzz bumps manifest and slim.json pin to latest", async (
     replacements: Record<string, { version: string }>;
   };
   assert.equal(slim.replacements.lodash?.version, "4.17.22");
+  assert.ok(standing > 0, "standing tests must run after emit");
+  assert.ok(hardened > 0, "hardened tests must run after emit");
+  assert.ok(existsSync(join(root, "src/slim/lodash.hardened.test.ts")));
+});
+
+async function capture(fn: () => Promise<number>): Promise<{ code: number; stdout: string; stderr: string }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const so = process.stdout.write.bind(process.stdout);
+  const se = process.stderr.write.bind(process.stderr);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    out.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    err.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const code = await fn();
+    return { code, stdout: out.join(""), stderr: err.join("") };
+  } catch (e) {
+    if (e instanceof SlimExit) {
+      return { code: e.code, stdout: out.join(""), stderr: err.join("") + e.message };
+    }
+    throw e;
+  } finally {
+    process.stdout.write = so;
+    process.stderr.write = se;
+  }
+}
+
+test("OSV outage never prints slice not exposed", async () => {
+  const { root } = writeFixture();
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream"]),
+      baseDeps({
+        cwd: root,
+        queryOsv: async () => sourceErr("unavailable", "HTTP 503"),
+      }),
+    ),
+  );
+  assert.equal(code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+});
+
+test("npm outage with empty OSV never prints slice not exposed", async () => {
+  const { root } = writeFixture();
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => sourceErr("unavailable", "HTTP 503"),
+        queryOsv: async () => sourceOk([]),
+      }),
+    ),
+  );
+  assert.equal(code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+});
+
+test("all sources down is EXIT_ENV", async () => {
+  const { root } = writeFixture();
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => sourceErr("unavailable", "timeout: aborted"),
+        queryOsv: async () => sourceErr("malformed", "osv.dev response is not JSON"),
+      }),
+    ),
+  );
+  assert.equal(code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+});
+
+test("npm latest older than pin is stale and never slice not exposed", async () => {
+  const { root } = writeFixture();
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => sourceOk({ version: "4.17.0" }),
+        queryOsv: async () => sourceOk([]),
+      }),
+    ),
+  );
+  assert.equal(code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+});
+
+test("successful empty advisory set may print slice not exposed", async () => {
+  const { root } = writeFixture();
+  const { code, stdout } = await capture(() =>
+    runUpstream(parseCli(["upstream"]), baseDeps({ cwd: root })),
+  );
+  assert.equal(code, EXIT_OK);
+  assert.match(stdout, /slice not exposed/);
+});
+
+test("missing envelope blocks automatic action", async () => {
+  const { root } = writeFixture();
+  rmSync(join(root, ".slim", "lodash", "envelope.json"));
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(parseCli(["upstream"]), baseDeps({ cwd: root })),
+  );
+  assert.equal(code, EXIT_FAIL);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  assert.match(stderr, /missing envelope/i);
+});
+
+test("hash mismatch blocks automatic action", async () => {
+  const { root } = writeFixture();
+  writeFileSync(join(root, ".slim", "lodash", "evidence.json"), JSON.stringify({ envelopeHash: "nope" }));
+  await assert.rejects(
+    () => runUpstream(parseCli(["upstream"]), baseDeps({ cwd: root })),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /envelopeHash/i.test(err.message),
+  );
+});
+
+test("missing standing tests block automatic action", async () => {
+  const { root } = writeFixture();
+  rmSync(join(root, "src", "slim", "lodash.test.ts"));
+  await assert.rejects(
+    () => runUpstream(parseCli(["upstream"]), baseDeps({ cwd: root })),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /standing/i.test(err.message),
+  );
+});
+
+test("schema-incompatible envelope blocks automatic action", async () => {
+  const { root } = writeFixture();
+  const env = JSON.parse(readFileSync(join(root, ".slim", "lodash", "envelope.json"), "utf8")) as { schemaVersion: number };
+  env.schemaVersion = 0;
+  writeFileSync(join(root, ".slim", "lodash", "envelope.json"), JSON.stringify(env));
+  await assert.rejects(
+    () => runUpstream(parseCli(["upstream"]), baseDeps({ cwd: root })),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /schema-incompatible/i.test(err.message),
+  );
 });

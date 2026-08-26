@@ -10,6 +10,8 @@ import { loadConfig } from "../src/config.ts";
 import { EXIT_FAIL, EXIT_OK, EXIT_USAGE, SlimExit } from "../src/exit.ts";
 import { existsSync, symlinkSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { ENVELOPE_VERSION, emptyHyrum, hashEnvelope } from "../src/envelope/types.ts";
+import { sourceOk } from "../src/upstream/status.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -157,8 +159,8 @@ test("upstream --json with no manifest is one document", async () => {
   const { code, stdout, stderr } = await capture(() =>
     runUpstream(parseCli(["upstream", "--json"]), {
       cwd: root,
-      npmLatest: async () => ({ version: "1.0.0" }),
-      queryOsv: async () => [],
+      npmLatest: async () => sourceOk({ version: "1.0.0" }),
+      queryOsv: async () => sourceOk([]),
     }),
   );
   assert.equal(code, EXIT_OK);
@@ -176,40 +178,61 @@ test("upstream --json failure is one document with findings, human on stderr", a
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "up", type: "module" }));
   mkdirSync(join(root, ".slim", "lodash"), { recursive: true });
   mkdirSync(join(root, "src", "slim"), { recursive: true });
+  const env = {
+    schemaVersion: ENVELOPE_VERSION,
+    package: { name: "lodash", version: "4.17.21", family: "lodash", subpath: "" },
+    env: ["node"],
+    imports: [],
+    symbols: [
+      {
+        exportName: "get",
+        packages: [],
+        callSites: [],
+        resultMembers: [],
+        hyrum: emptyHyrum(),
+        coverage: { callSitesStatic: 1, callSitesTraced: 0 },
+      },
+    ],
+    unknowns: [],
+    traces: [],
+    closure: {
+      confidence: "closed" as const,
+      readyToGenerate: true,
+      staticCallSiteIds: [],
+      tracedCallSiteIds: [],
+      untracedCallSiteIds: [],
+      reason: "test",
+    },
+    slimmable: { score: 80, verdict: "slim" as const, blockers: [], reasons: [] },
+    clock: false,
+    cryptoRandom: false,
+  };
+  const hash = hashEnvelope(env);
   writeFileSync(
     join(root, ".slim", "manifest.json"),
     JSON.stringify({
       replacements: {
-        lodash: { version: "4.17.21", envelopeHash: "h", symbols: ["get"], module: "src/slim/lodash.ts" },
+        lodash: { version: "4.17.21", envelopeHash: hash, symbols: ["get"], module: "src/slim/lodash.ts" },
       },
     }),
   );
   writeFileSync(join(root, "src", "slim", "lodash.ts"), "export function get() {}\n");
+  writeFileSync(join(root, ".slim", "lodash", "envelope.json"), JSON.stringify(env));
+  writeFileSync(join(root, ".slim", "lodash", "evidence.json"), JSON.stringify({ envelopeHash: hash }));
+  writeFileSync(join(root, "src", "slim", "lodash.test.ts"), `import { test } from "node:test";\ntest("standing", () => {});\n`);
   const { runUpstream } = await import("../src/upstream.ts");
   const { code, stdout, stderr } = await capture(async () => {
     try {
       return await runUpstream(parseCli(["upstream", "--json"]), {
         cwd: root,
-        npmLatest: async () => ({ version: "4.17.21" }),
-        queryOsv: async () => [
-          { id: "GHSA-unmapped", summary: "vague", details: "See advisory." },
-        ],
-        assembleCatalogModule: () => "export function get() {}\n",
-        runFuzz: async () => ({
-          cases: 1,
-          comparisons: 1,
-          timerCases: 0,
-          disagreements: [],
-          tracesReplayed: 0,
-          wallMs: 1,
-          seed: 1,
-          allowFlaky: false,
-        }),
+        npmLatest: async () => sourceOk({ version: "4.17.21" }),
+        queryOsv: async () =>
+          sourceOk([{ id: "GHSA-unmapped", summary: "vague", details: "See advisory." }]),
+        assembleCatalogModule: () => {
+          throw new Error("unmapped must not regenerate");
+        },
         createPullRequest: async () => ({ url: null, local: true }),
-        installUpstream: async () => null,
-        loadOracle: async () => ({ fns: { get() {} }, kind: "old" as const }),
         llmConfigFromEnv: () => null,
-        generateWithLlm: async () => ({ source: "export function get() {}\n", promptHash: "h" }),
       });
     } catch (err) {
       if (err instanceof SlimExit) return err.code;
@@ -224,6 +247,12 @@ test("upstream --json failure is one document with findings, human on stderr", a
   assert.equal(doc.status, "fail");
   assert.ok(Array.isArray(doc.findings));
   assert.equal((doc.findings as { exposure: string }[])[0]?.exposure, "unmapped");
+  assert.equal(doc.conclusion, "unmapped");
+  assert.ok(doc.sources && typeof doc.sources === "object");
+  const finding = (doc.findings as { unmappedReason: string | null; affectedRange: string; mappedEvidence: string })[0]!;
+  assert.ok(finding.unmappedReason);
+  assert.equal(typeof finding.affectedRange, "string");
+  assert.equal(typeof finding.mappedEvidence, "string");
 });
 
 test("doctor --json includes ok, exit, and status", async () => {

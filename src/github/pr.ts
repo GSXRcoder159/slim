@@ -2,6 +2,7 @@ import { execFileSync, type ExecFileSyncOptions } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../exit.ts";
+import { sourceErr, sourceOk, type SourceResult } from "../upstream/status.ts";
 
 export interface PrResult {
   url: string | null;
@@ -102,6 +103,35 @@ function detectBaseBranch(execFile: ExecFileFn, root: string): string {
 
 function gitToken(env: NodeJS.ProcessEnv): string | undefined {
   return env.GITHUB_TOKEN || env.GH_TOKEN || undefined;
+}
+
+export function probeGithubAvailability(root: string, deps: PrDeps = {}): SourceResult<true> {
+  const execFile = deps.execFile ?? defaultExecFile;
+  const env = deps.env ?? process.env;
+  const hasGh = deps.hasGh ?? (() => detectHasGh(execFile));
+  try {
+    gitOut(execFile, root, ["rev-parse", "--is-inside-work-tree"]);
+  } catch (err) {
+    return sourceErr("unavailable", `not a git repository: ${errText(err)}`);
+  }
+  let origin: string;
+  try {
+    origin = gitOut(execFile, root, ["remote", "get-url", "origin"]);
+  } catch (err) {
+    return sourceErr("unavailable", `no origin remote: ${errText(err)}`);
+  }
+  try {
+    parseGithubOwnerRepo(origin);
+  } catch (err) {
+    return sourceErr("malformed", err instanceof Error ? err.message : String(err));
+  }
+  if (!hasGh() && !gitToken(env)) {
+    return sourceErr(
+      "unavailable",
+      "GitHub CLI (gh) is not on PATH and GITHUB_TOKEN is not set",
+    );
+  }
+  return sourceOk(true);
 }
 
 function gitOut(execFile: ExecFileFn, root: string, args: readonly string[]): string {

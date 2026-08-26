@@ -8,6 +8,8 @@ on:
 jobs:
   upstream:
     runs-on: ubuntu-latest
+    env:
+      SLIM_REQUIRE_DIST: "1"
     permissions:
       contents: write
       pull-requests: write
@@ -18,6 +20,15 @@ jobs:
           node-version: "22.18"
       - run: npm ci
       - run: npm run build
-      - run: node dist/main.js upstream --pr
+      - uses: ./action/upstream
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: slim-upstream-diagnostics
+          if-no-files-found: ignore
+          path: |
+            .slim/
+            .slim/UPSTREAM.md

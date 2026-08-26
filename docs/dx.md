@@ -141,16 +141,14 @@ Empty replacements / no manifest → exit 0 (so adding the Action to a repo that
 
 JSON `{ schemaVersion, ok, exit, status, packages[] }` includes per-package `drift`, `standing`, and `residualRisk` from evidence. Human mode prints the same status and residual risk.
 
-### `slim watch [pkg]`  (alias `slim upstream`)
+### `slim watch`  (alias `slim upstream`)
 
 ```
-    --pr                Open a PR if a slice is exposed or uncertain
+    --pr                Open a PR if a slice is exposed or unmapped
     --json              One schema-valid document on stdout (docs/upstream.schema.json)
-    --write-workflow    Write .github/workflows/slim-watch.yml and exit
-    --fail-on <mode>    slice-exposed (default) | any-advisory | never
 ```
 
-See §9. Network: OSV, GitHub GraphQL/REST if `GITHUB_TOKEN`/`gh`, npm registry. Any source failing → warning on stderr, continue with the others; if **all** fail → exit 4.
+Network: OSV `POST /v1/query` and npm registry packument. GitHub is probed only with `--pr` (CLI or `GITHUB_TOKEN`). Oracle install is probed only when regenerating an exposed slice. Any consulted OSV/npm/GitHub status of unavailable, malformed, or stale → exit 4 and never prints `slice not exposed.` Missing/corrupt envelope, evidence, module, or standing tests → exit 1; no synthetic closed envelope. Unmapped advisories write `.slim/UPSTREAM.md` for human review and do not rewrite the slice. Exposed slices regenerate only after catalog/LLM validation, oracle fuzz, standing tests, and hardening tests; no installable oracle leaves the tree unchanged (exit 1, `oracle-unavailable`). GitHub Advisory GraphQL, `querybatch`, `--fail-on`, and `--write-workflow` are not v1.
 
 ### `slim doctor`
 
@@ -336,7 +334,7 @@ Default: comment, exit 0. Input `fail: true` → exit 1.
 
 ### Watch workflow (immune system)
 
-Written by `slim watch --write-workflow`. See §9.
+This repository dogfoods `.github/workflows/slim-upstream.yml` (compiled CLI, `SLIM_REQUIRE_DIST`, `./action/upstream`). Consumer template: `docs/examples/slim-watch.yml`. See §9.
 
 ---
 
@@ -376,7 +374,7 @@ Slim never phones home. Watch uses public APIs from the machine that runs it (yo
 
 There is no daemon.
 
-1. **Default:** GitHub Action, weekly. `slim watch --write-workflow` writes it.
+1. **Default:** GitHub Action, weekly. Copy `docs/examples/slim-watch.yml` or use `uses: slim-js/slim/action/upstream` after a dist build.
 2. **Laptop:** `slim watch` whenever. cron `0 9 * * 1 slim watch` if they insist.
 3. `doctor` warns if slices exist and the workflow file is missing.
 
@@ -405,13 +403,14 @@ jobs:
 
 Local cron is documented, not installed.
 
-### Sources (best-effort, in this order)
+### Sources (fail-closed)
 
-1. **OSV** `POST https://api.osv.dev/v1/querybatch` — `{ package: { name, ecosystem: "npm" }, version }` per slimmed pkg. Also query without version to see later vulns.
-2. **GitHub Advisory** — `gh api graphql` if `gh`/`GITHUB_TOKEN`, else skip with a notice. OSV already mirrors GHSA; this is for permalinks and `references`.
-3. **npm registry** `GET https://registry.npmjs.org/<pkg>` — versions published after the sliced `version`. Used for *release* diffs, not as a vuln DB.
+1. **OSV** `POST https://api.osv.dev/v1/query` — `{ package: { name, ecosystem: "npm" }, version }` for the pinned version and, when npm reports a newer latest, that version too. Empty `vulns` is success, not “not exposed” by itself.
+2. **npm registry** `GET https://registry.npmjs.org/<pkg>` — latest version and published versions. Used for routine-release notes and stale/pin checks, not as a vuln DB.
+3. **Oracle install** — temp-install latest/patched, else the project pin. Required before any automatic rewrite.
+4. **GitHub availability** — origin + `gh`/`GITHUB_TOKEN`, only when `--pr`. Not a GHSA advisory client.
 
-No NVD key. No Slim servers.
+GitHub Advisory GraphQL and OSV `querybatch` are later-scope; OSV already mirrors GHSA ids. No NVD key. No Slim servers.
 
 ### Meta each slice stores (`*.meta.json`)
 

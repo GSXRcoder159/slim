@@ -174,7 +174,7 @@ test("command result schemas exist with required fields", () => {
   const upstream = JSON.parse(readFileSync(join(ROOT, "docs/upstream.schema.json"), "utf8")) as {
     required: string[];
   };
-  assert.deepEqual(upstream.required.sort(), ["exit", "findings", "ok", "schemaVersion", "status"].sort());
+  assert.deepEqual(upstream.required.sort(), ["conclusion", "exit", "findings", "ok", "schemaVersion", "sources", "status"].sort());
 });
 
 test("friday walkthrough documents --no-install", () => {
