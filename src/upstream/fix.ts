@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
@@ -15,10 +15,11 @@ import { llmConfigFromEnv, generateWithLlm, type LlmConfig } from "../generate/l
 import { loadPublicApi } from "../generate/public-api.ts";
 import { assertValidGenerated } from "../generate/validate.ts";
 import { writeEvidence } from "../evidence/report.ts";
-import { emitStandingTests } from "../evidence/emit-tests.ts";
+import { emitHardenedGetSetTest, emitStandingTests } from "../evidence/emit-tests.ts";
 import { runFuzz, type FuzzReport } from "../fuzz/run.ts";
 import { loadTargetTypescript } from "../project.ts";
-import { runHardenedTests, runStandingTests, standingTestPaths } from "../check.ts";
+import { runHardenedTests, runStandingTests } from "../check.ts";
+import { standingTestPaths } from "../evidence/paths.ts";
 import { MutationTxn } from "../rewrite/transaction.ts";
 import { detectRunner } from "../trace/runners.ts";
 import type { OsvVuln } from "./osv.ts";
@@ -313,10 +314,10 @@ export async function applyUpstreamFix(
       moduleSpecifier: toRelativeSpecifier(standingAbs, moduleAbs),
     });
     txn.prepareWrite(hardenedAbs);
-    emitHardenedGetSetTest({ root: opts.root, moduleRel: opts.rec.module });
+    emitHardenedGetSetTest({ root: opts.root, moduleRel: opts.rec.module, runner: testRunner });
 
-    standing(opts.root, opts.pkg, opts.config.outDir);
-    hardened(opts.root, opts.rec.module);
+    standing(opts.root, opts.pkg, opts.config.outDir, undefined, Boolean(opts.args.json));
+    hardened(opts.root, opts.rec.module, undefined, Boolean(opts.args.json));
 
     txn.commit();
     return {
@@ -386,45 +387,7 @@ export function assertHardenedGetSet(fns: Record<string, Function>): void {
   }
 }
 
-export function emitHardenedGetSetTest(opts: { root: string; moduleRel: string }): string {
-  const absMod = join(opts.root, opts.moduleRel);
-  const dir = dirname(absMod);
-  const base = absMod.replace(/\.(ts|js|mjs|cjs)$/, "");
-  const file = `${base}.hardened.test.ts`;
-  mkdirSync(dir, { recursive: true });
-  const spec = `./${absMod.slice(dir.length + 1)}`;
-  writeFileSync(
-    file,
-    `import { test } from "node:test";
-import assert from "node:assert/strict";
-import * as slim from ${JSON.stringify(spec)};
-
-test("hardened get/set ignore __proto__ and do not pollute Object.prototype", () => {
-  const get = (slim as { get?: Function }).get;
-  const set = (slim as { set?: Function }).set;
-  if (typeof get !== "function" && typeof set !== "function") return;
-  const proto = Object.prototype as { polluted?: unknown };
-  const before = Object.prototype.hasOwnProperty("polluted");
-  delete proto.polluted;
-  try {
-    if (typeof set === "function") {
-      set({}, "__proto__.polluted", true);
-      set({}, ["__proto__", "polluted"], true);
-    }
-    if (typeof get === "function") {
-      get({ a: 1 }, "__proto__.polluted");
-    }
-    assert.equal(Object.prototype.hasOwnProperty("polluted"), before);
-    assert.equal(proto.polluted, undefined);
-    assert.equal(({} as { polluted?: unknown }).polluted, undefined);
-  } finally {
-    delete proto.polluted;
-  }
-});
-`,
-  );
-  return file;
-}
+export { emitHardenedGetSetTest } from "../evidence/emit-tests.ts";
 
 export async function installUpstreamInTemp(name: string, version: string): Promise<string | null> {
   const spec = `${name}@${version}`;

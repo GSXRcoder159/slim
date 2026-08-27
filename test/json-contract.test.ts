@@ -129,6 +129,48 @@ test("check --json failure is still one document", async () => {
   assert.equal((doc.packages as { standing: string }[])[0]?.standing, "fail");
 });
 
+test("check --json missing evidence is one fail document", async () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-json-noev-"));
+  const env = minimalEnvelope("lodash", ["get"]);
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "noev", type: "module" }));
+  writeFileSync(
+    join(root, "slim.json"),
+    JSON.stringify({
+      outDir: "src/slim",
+      replacements: {
+        lodash: { version: "4.17.21", envelope: ".slim/lodash/envelope.json", module: "src/slim/lodash.ts" },
+      },
+    }),
+  );
+  mkdirSync(join(root, ".slim", "lodash"), { recursive: true });
+  mkdirSync(join(root, "src", "slim"), { recursive: true });
+  writeFileSync(join(root, ".slim", "lodash", "envelope.json"), JSON.stringify(env));
+  writeFileSync(join(root, ".slim", "manifest.json"), JSON.stringify(minimalManifest(env)));
+  writeFileSync(join(root, "src", "slim", "lodash.ts"), "export function get() { return 1; }\n");
+  writeFileSync(
+    join(root, "src", "slim", "lodash.test.ts"),
+    `import { test } from "node:test";\ntest("ok", () => {});\n`,
+  );
+  writeFileSync(
+    join(root, "src", "slim", "lodash.hardened.test.ts"),
+    `import { test } from "node:test";\ntest("ok", () => {});\n`,
+  );
+  writeFileSync(join(root, "src", "index.ts"), "export const n = 1;\n");
+  linkTypescript(root);
+  const { code, stdout } = await capture(async () => {
+    try {
+      return await runCheck(parseCli(["check", "--json"]), { cwd: root });
+    } catch (err) {
+      if (err instanceof SlimExit) return err.code;
+      throw err;
+    }
+  });
+  assert.equal(code, EXIT_FAIL);
+  const doc = oneJson(stdout);
+  assert.equal(doc.ok, false);
+  assert.ok((doc.packages as { drift: { kind: string }[] }[])[0]?.drift.some((d) => d.kind === "evidence"));
+});
+
 test("malformed slim.json throws SlimExit", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-bad-cfg-"));
   writeFileSync(join(root, "package.json"), "{}");
@@ -235,6 +277,7 @@ test("upstream --json failure is one document with findings, human on stderr", a
   writeFileSync(join(root, ".slim", "lodash", "envelope.json"), JSON.stringify(env));
   writeFileSync(join(root, ".slim", "lodash", "evidence.json"), JSON.stringify(minimalEvidence(env)));
   writeFileSync(join(root, "src", "slim", "lodash.test.ts"), `import { test } from "node:test";\ntest("standing", () => {});\n`);
+  writeFileSync(join(root, "src", "slim", "lodash.hardened.test.ts"), `import { test } from "node:test";\ntest("hardened", () => {});\n`);
   const { runUpstream } = await import("../src/upstream.ts");
   const { code, stdout, stderr } = await capture(async () => {
     try {

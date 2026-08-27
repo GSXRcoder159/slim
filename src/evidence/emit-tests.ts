@@ -1,8 +1,9 @@
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import type { ArgShape, Envelope, SlimValue, TraceEvent } from "../envelope/types.ts";
 import { emptyHyrum } from "../envelope/types.ts";
 import { STANDING_RUNTIME } from "./standing-equal.ts";
+import { hardeningTestPaths } from "./paths.ts";
 
 export function emitStandingTests(opts: {
   root: string;
@@ -314,3 +315,55 @@ function createStandingClock(): {
   };
 }
 `;
+
+export function emitHardenedGetSetTest(opts: {
+  root: string;
+  moduleRel: string;
+  runner?: "node:test" | "vitest";
+}): string {
+  const absMod = join(opts.root, opts.moduleRel);
+  const { tsAbs } = hardeningTestPaths(opts.root, opts.moduleRel);
+  mkdirSync(dirname(tsAbs), { recursive: true });
+  const spec = `./${absMod.slice(dirname(absMod).length + 1)}`;
+  const vitest = opts.runner === "vitest";
+  const header = vitest
+    ? `import { test, expect } from "vitest";
+import * as slim from ${JSON.stringify(spec)};`
+    : `import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as slim from ${JSON.stringify(spec)};`;
+  const checks = vitest
+    ? `    expect(Object.prototype.hasOwnProperty("polluted")).toBe(before);
+    expect(proto.polluted).toBeUndefined();
+    expect(({} as { polluted?: unknown }).polluted).toBeUndefined();`
+    : `    assert.equal(Object.prototype.hasOwnProperty("polluted"), before);
+    assert.equal(proto.polluted, undefined);
+    assert.equal(({} as { polluted?: unknown }).polluted, undefined);`;
+  writeFileSync(
+    tsAbs,
+    `${header}
+
+test("hardened get/set ignore __proto__ and do not pollute Object.prototype", () => {
+  const get = (slim as { get?: Function }).get;
+  const set = (slim as { set?: Function }).set;
+  if (typeof get !== "function" && typeof set !== "function") return;
+  const proto = Object.prototype as { polluted?: unknown };
+  const before = Object.prototype.hasOwnProperty("polluted");
+  delete proto.polluted;
+  try {
+    if (typeof set === "function") {
+      set({}, "__proto__.polluted", true);
+      set({}, ["__proto__", "polluted"], true);
+    }
+    if (typeof get === "function") {
+      get({ a: 1 }, "__proto__.polluted");
+    }
+${checks}
+  } finally {
+    delete proto.polluted;
+  }
+});
+`,
+  );
+  return tsAbs;
+}

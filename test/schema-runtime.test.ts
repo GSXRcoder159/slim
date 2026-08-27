@@ -171,4 +171,18 @@ test("golden envelope and evidence validate", () => {
   assert.equal(validateNamed("manifest", man), null);
 });
 
+test("hash-only evidence fails schema; generation is required", () => {
+  const hash = "a".repeat(64);
+  assert.equal(
+    validateNamed("evidence", { schemaVersion: 1, envelopeHash: hash })?.kind,
+    "missing-field",
+  );
+  const full = JSON.parse(
+    readFileSync(join(DOCS, "../fixtures/lodash-get-debounce/.slim/lodash/evidence.json"), "utf8"),
+  ) as { generation?: unknown };
+  assert.ok(full.generation);
+  const { generation: _g, ...rest } = full;
+  assert.equal(validateNamed("evidence", rest)?.kind, "missing-field");
+});
+
 

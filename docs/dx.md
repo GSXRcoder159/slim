@@ -130,13 +130,14 @@ CI. No network. No generation.
 For each recorded slice (or one pkg):
 
 1. Re-analyze call sites. Fail on added symbols, new call shapes (arity, literals, options), new result members, new import forms, new env tags, or new unknowns — even when the symbol name is unchanged.
-2. Fail on missing/malformed envelopes, envelope hash mismatch vs evidence/manifest, version mismatch, or missing slice exports.
-3. Run `scripts.slim:evidence` if set, else `src/slim/<pkg>.test.ts` via `node --test`. Missing standing tests fail. If `<slice>.hardened.test.ts` exists, run it too.
-4. Optional `testCommand`.
+2. Fail on missing/malformed envelopes, missing/malformed evidence (including hash-only stubs), missing `.slim/manifest.json`, envelope hash mismatch vs evidence/manifest, version mismatch, or missing slice exports.
+3. Run `scripts.slim:evidence` if set, else `src/slim/<pkg>.test.ts` via `node --test`. Missing standing tests fail. Missing `<slice>.hardened.test.ts` fails. Child test output is inherited in human mode and copied to stderr under `--json` so stdout stays one JSON document.
+4. Fail if the slice, standing tests, or hardening tests import the original package.
+5. Optional `testCommand`.
 
 Empty replacements / no manifest → exit 0 (so adding the Action to a repo that has not slimmed yet is free). `--update-envelope` is not a flag; drift always fails.
 
-JSON `{ schemaVersion, ok, exit, status, packages[] }` includes per-package `drift`, `standing`, and `residualRisk` from evidence. Human mode prints the same status and residual risk.
+JSON `{ schemaVersion, ok, exit, status, packages[] }` includes per-package `drift`, `standing`, and `residualRisk` from evidence. Human mode prints the same status and residual risk. Missing evidence is never treated as empty residual risk.
 
 ### `slim watch`  (alias `slim upstream`)
 
@@ -289,7 +290,7 @@ jobs:
       - uses: slim-hq/slim/action/check@v1
 ```
 
-`action/check/action.yml` requires Node >= 22.18 and runs `action/run.mjs check`. Fails the PR on envelope drift, missing standing tests, or a failing standing/hardening suite. No recorded replacements → pass.
+`action/check/action.yml` requires Node >= 22.18 and runs `action/run.mjs check`. Fails the PR on envelope drift, missing evidence, missing standing/hardening tests, or a failing standing/hardening suite. No recorded replacements → pass.
 
 ### `slim-bloat` (optional, PRs that add fat deps)
 

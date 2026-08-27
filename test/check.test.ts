@@ -8,7 +8,11 @@ import { fileURLToPath } from "node:url";
 import { parseCli } from "../src/cli.ts";
 import { runCheck, runStandingTests, type CheckSpawn } from "../src/check.ts";
 import { EXIT_FAIL, EXIT_OK, SlimExit } from "../src/exit.ts";
-import { minimalEnvelope, minimalEvidence } from "./helpers/documents.ts";
+import { hashEnvelope } from "../src/envelope/types.ts";
+import { validateNamed } from "../src/schema/documents.ts";
+import { emitHardenedGetSetTest } from "../src/evidence/emit-tests.ts";
+import { replacementStateIssues } from "../src/upstream/state.ts";
+import { minimalEnvelope, minimalEvidence, minimalManifest } from "./helpers/documents.ts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -23,6 +27,45 @@ function writeEnvelope(root: string, pkg: string, exportNames: string[]) {
   const dir = join(root, ".slim", pkg);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "envelope.json"), JSON.stringify(minimalEnvelope(pkg, exportNames)));
+}
+
+function completeFiles(extra: Record<string, string> = {}): Record<string, string> {
+  const env = minimalEnvelope("lodash", ["get"]);
+  return {
+    "src/slim/lodash.ts": "export function get() { return 1; }\n",
+    "src/slim/lodash.test.ts": `import { test } from "node:test";\ntest("standing", () => {});\n`,
+    "src/slim/lodash.hardened.test.ts": `import { test } from "node:test";\ntest("hardened", () => {});\n`,
+    ".slim/lodash/evidence.json": JSON.stringify(minimalEvidence(env)),
+    ".slim/manifest.json": JSON.stringify(minimalManifest(env)),
+    ...extra,
+  };
+}
+
+async function capture(fn: () => Promise<number>): Promise<{ code: number; stdout: string; stderr: string }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const so = process.stdout.write.bind(process.stdout);
+  const se = process.stderr.write.bind(process.stderr);
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    out.push(String(chunk));
+    return true;
+  }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    err.push(String(chunk));
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    const code = await fn();
+    return { code, stdout: out.join(""), stderr: err.join("") };
+  } catch (e) {
+    if (e instanceof SlimExit) {
+      return { code: e.code, stdout: out.join(""), stderr: err.join("") };
+    }
+    throw e;
+  } finally {
+    process.stdout.write = so;
+    process.stderr.write = se;
+  }
 }
 
 function fixture(opts: {
@@ -318,4 +361,163 @@ test("action.yml files invoke action/run.mjs and require Node 22.18", () => {
     assert.match(yml, /split\('\.'\)\[1\]/);
     assert.match(yml, /-lt 18/);
   }
+});
+
+test("missing evidence fails check even when standing tests pass", async () => {
+  const files = completeFiles({ "ok.js": "process.exit(0);\n" });
+  delete files[".slim/lodash/evidence.json"];
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files,
+  });
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  await assert.rejects(
+    () => runCheck(parseCli(["check"]), { cwd: root, spawn }),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+  );
+});
+
+test("hash-only evidence is rejected", async () => {
+  const env = minimalEnvelope("lodash", ["get"]);
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: completeFiles({
+      "ok.js": "process.exit(0);\n",
+      ".slim/lodash/evidence.json": JSON.stringify({
+        schemaVersion: 1,
+        envelopeHash: hashEnvelope(env),
+      }),
+    }),
+  });
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  await assert.rejects(
+    () => runCheck(parseCli(["check"]), { cwd: root, spawn }),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+  );
+});
+
+test("missing manifest fails when replacements are recorded", async () => {
+  const files = completeFiles({ "ok.js": "process.exit(0);\n" });
+  delete files[".slim/manifest.json"];
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files,
+  });
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  await assert.rejects(
+    () => runCheck(parseCli(["check"]), { cwd: root, spawn }),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+  );
+});
+
+test("missing hardening tests fail check", async () => {
+  const files = completeFiles({ "ok.js": "process.exit(0);\n" });
+  delete files["src/slim/lodash.hardened.test.ts"];
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files,
+  });
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  await assert.rejects(
+    () => runCheck(parseCli(["check"]), { cwd: root, spawn }),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+  );
+});
+
+test("standing test that imports the original package fails check", async () => {
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: completeFiles({
+      "ok.js": "process.exit(0);\n",
+      "src/slim/lodash.test.ts": `import { get } from "lodash";\nimport { test } from "node:test";\ntest("nope", () => { get; });\n`,
+    }),
+  });
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  await assert.rejects(
+    () => runCheck(parseCli(["check"]), { cwd: root, spawn }),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL,
+  );
+});
+
+test("human and JSON modes agree on exit for missing evidence", async () => {
+  const files = completeFiles({ "ok.js": "process.exit(0);\n" });
+  delete files[".slim/lodash/evidence.json"];
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files,
+  });
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  const human = await capture(() => runCheck(parseCli(["check"]), { cwd: root, spawn }));
+  const machine = await capture(() => runCheck(parseCli(["check", "--json"]), { cwd: root, spawn }));
+  assert.equal(human.code, EXIT_FAIL);
+  assert.equal(machine.code, human.code);
+  const doc = JSON.parse(machine.stdout) as { ok: boolean; exit: number; packages: { drift: { kind: string }[] }[] };
+  assert.equal(doc.ok, false);
+  assert.equal(doc.exit, EXIT_FAIL);
+  assert.ok(doc.packages[0]?.drift.some((d) => d.kind === "evidence"));
+});
+
+test("check --json keeps standing-test stdout off the JSON document", async () => {
+  const root = fixture({
+    files: completeFiles({
+      "noisy.js": "console.log('TAP noise { not json'); process.exit(0);\n",
+    }),
+    scripts: { "slim:evidence": "node noisy.js" },
+  });
+  const { code, stdout, stderr } = await capture(() =>
+    runCheck(parseCli(["check", "--json"]), { cwd: root }),
+  );
+  assert.equal(code, EXIT_OK, stderr + stdout);
+  const doc = JSON.parse(stdout) as { schemaVersion: number; ok: boolean };
+  assert.equal(doc.schemaVersion, 1);
+  assert.equal(doc.ok, true);
+  assert.equal(validateNamed("check", doc), null);
+  assert.match(stderr, /TAP noise/);
+  assert.doesNotMatch(stdout, /TAP noise/);
+});
+
+test("malformed evidence --json is still one check document", async () => {
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: completeFiles({
+      "ok.js": "process.exit(0);\n",
+      ".slim/lodash/evidence.json": "{",
+    }),
+  });
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  const { code, stdout } = await capture(() => runCheck(parseCli(["check", "--json"]), { cwd: root, spawn }));
+  assert.equal(code, EXIT_FAIL);
+  const doc = JSON.parse(stdout) as { ok: boolean; packages: { drift: { kind: string }[] }[] };
+  assert.equal(doc.ok, false);
+  assert.equal(validateNamed("check", doc), null);
+  assert.ok(doc.packages[0]?.drift.some((d) => d.kind === "evidence"));
+});
+
+test("replacementStateIssues reports missing evidence and hardening", () => {
+  const root = fixture({});
+  const env = minimalEnvelope("lodash", ["get"]);
+  const rec = minimalManifest(env).replacements.lodash;
+  const state = replacementStateIssues(root, "lodash", rec, "src/slim", "src/slim/lodash.ts");
+  assert.ok(state.drift.some((d) => d.kind === "evidence"));
+  assert.ok(state.drift.some((d) => d.kind === "hardening"));
+});
+
+test("emitHardenedGetSetTest writes a sibling hardening file", () => {
+  const root = fixture({
+    files: { "src/slim/lodash.ts": "export function get() { return 1; }\n" },
+  });
+  const file = emitHardenedGetSetTest({ root, moduleRel: "src/slim/lodash.ts" });
+  assert.ok(existsSync(file));
+  assert.match(readFileSync(file, "utf8"), /__proto__/);
+  assert.match(readFileSync(file, "utf8"), /node:test/);
+});
+
+test("emitHardenedGetSetTest vitest flavor imports vitest", () => {
+  const root = fixture({
+    files: { "src/slim/ms.ts": "export default function ms() { return 1; }\n" },
+  });
+  const file = emitHardenedGetSetTest({ root, moduleRel: "src/slim/ms.ts", runner: "vitest" });
+  const body = readFileSync(file, "utf8");
+  assert.match(body, /from "vitest"/);
+  assert.doesNotMatch(body, /node:test/);
 });

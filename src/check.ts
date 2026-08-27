@@ -1,23 +1,40 @@
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_FAIL, EXIT_OK, SlimExit } from "./exit.ts";
 import { loadProject, loadTargetTypescript } from "./project.ts";
 import { loadConfig } from "./config.ts";
 import { analyzePackage } from "./analyze/index.ts";
+import { specifierMatches, wantedSpecifiers } from "./analyze/reexports.ts";
 import { withLocalBinPath } from "./replace.ts";
 import { JSON_SCHEMA_VERSION, statusFromExit, writeJson } from "./json.ts";
 import { assertDocument, readDocument } from "./schema/documents.ts";
 import { diffEnvelope, type EnvelopeDrift } from "./envelope/drift.ts";
-import { hashEnvelope, type Envelope } from "./envelope/types.ts";
+import type { Envelope } from "./envelope/types.ts";
 import { checkContracts } from "./generate/exports.ts";
+import { detectRunner } from "./trace/runners.ts";
+import {
+  evidenceScript,
+  hardeningTestPaths,
+  hasStandingTests,
+  standingTestPaths,
+} from "./evidence/paths.ts";
+import {
+  replacementStateIssues,
+  type ReplacementRecord,
+} from "./upstream/state.ts";
+
+export { evidenceScript, hardeningTestPaths, standingTestPaths } from "./evidence/paths.ts";
 
 export type CheckSpawn = (
   command: string,
   args?: readonly string[],
   options?: SpawnSyncOptions,
-) => Pick<SpawnSyncReturns<string | Buffer>, "status">;
+) => Pick<SpawnSyncReturns<string | Buffer>, "status"> & {
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
+};
 
 export interface RunCheckOpts {
   cwd?: string;
@@ -46,45 +63,33 @@ function resolveEnvelopePath(root: string, pkg: string, configured?: string): st
   return isAbsolute(raw) ? raw : join(root, raw);
 }
 
+function childText(chunk: string | Buffer | null | undefined): string {
+  if (chunk == null) return "";
+  return typeof chunk === "string" ? chunk : chunk.toString("utf8");
+}
+
 function spawnChecked(
   spawn: CheckSpawn,
   command: string,
   args: string[],
   root: string,
   failMessage: string,
+  json: boolean,
 ): void {
   const r = spawn(command, args, {
     cwd: root,
     encoding: "utf8",
-    stdio: "inherit",
+    stdio: json ? ["ignore", "pipe", "pipe"] : "inherit",
     env: withLocalBinPath(root),
   });
+  if (json) {
+    const out = childText(r.stdout);
+    const err = childText(r.stderr);
+    if (out) process.stderr.write(out);
+    if (err) process.stderr.write(err);
+  }
   if (r.status !== 0) {
     throw new SlimExit(EXIT_FAIL, failMessage);
-  }
-}
-
-export function standingTestPaths(
-  root: string,
-  pkg: string,
-  outDir: string,
-): { tsRel: string; jsRel: string; tsAbs: string; jsAbs: string } {
-  const stem = `${pkg.replace(/\//g, "-")}.test`;
-  const tsRel = join(outDir, `${stem}.ts`);
-  const jsRel = join(outDir, `${stem}.js`);
-  return { tsRel, jsRel, tsAbs: join(root, tsRel), jsAbs: join(root, jsRel) };
-}
-
-export function evidenceScript(root: string): string | null {
-  const pkgPath = join(root, "package.json");
-  if (!existsSync(pkgPath)) return null;
-  try {
-    const json = JSON.parse(readFileSync(pkgPath, "utf8")) as {
-      scripts?: Record<string, string>;
-    };
-    return json.scripts?.["slim:evidence"]?.trim() || null;
-  } catch {
-    return null;
   }
 }
 
@@ -93,17 +98,12 @@ export function runStandingTests(
   pkg: string,
   outDir: string,
   spawn: CheckSpawn = spawnSync,
+  json = false,
 ): void {
   const evidence = evidenceScript(root);
   if (evidence) {
     const parts = evidence.split(/\s+/).filter(Boolean);
-    spawnChecked(
-      spawn,
-      parts[0]!,
-      parts.slice(1),
-      root,
-      `standing tests failed for ${pkg}`,
-    );
+    spawnChecked(spawn, parts[0]!, parts.slice(1), root, `standing tests failed for ${pkg}`, json);
     return;
   }
   const { tsRel, jsRel, tsAbs, jsAbs } = standingTestPaths(root, pkg, outDir);
@@ -114,17 +114,12 @@ export function runStandingTests(
       ["--experimental-strip-types", "--test", tsRel],
       root,
       `standing tests failed for ${pkg}`,
+      json,
     );
     return;
   }
   if (existsSync(jsAbs)) {
-    spawnChecked(
-      spawn,
-      process.execPath,
-      ["--test", jsRel],
-      root,
-      `standing tests failed for ${pkg}`,
-    );
+    spawnChecked(spawn, process.execPath, ["--test", jsRel], root, `standing tests failed for ${pkg}`, json);
   }
 }
 
@@ -132,25 +127,32 @@ export function runHardenedTests(
   root: string,
   moduleRel: string | undefined,
   spawn: CheckSpawn = spawnSync,
+  json = false,
 ): void {
   if (!moduleRel) return;
-  const base = moduleRel.replace(/\.(ts|js|mjs|cjs)$/, "");
-  const tsRel = `${base}.hardened.test.ts`;
-  const jsRel = `${base}.hardened.test.js`;
-  const tsAbs = join(root, tsRel);
-  const jsAbs = join(root, jsRel);
+  const { tsRel, jsRel, tsAbs, jsAbs } = hardeningTestPaths(root, moduleRel);
+  const vitest = detectRunner(root).kind === "vitest";
   if (existsSync(tsAbs)) {
-    spawnChecked(
-      spawn,
-      process.execPath,
-      ["--experimental-strip-types", "--test", tsRel],
-      root,
-      `hardening tests failed for ${moduleRel}`,
-    );
+    if (vitest) {
+      spawnChecked(spawn, "vitest", ["run", tsRel], root, `hardening tests failed for ${moduleRel}`, json);
+    } else {
+      spawnChecked(
+        spawn,
+        process.execPath,
+        ["--experimental-strip-types", "--test", tsRel],
+        root,
+        `hardening tests failed for ${moduleRel}`,
+        json,
+      );
+    }
     return;
   }
   if (existsSync(jsAbs)) {
-    spawnChecked(spawn, process.execPath, ["--test", jsRel], root, `hardening tests failed for ${moduleRel}`);
+    if (vitest) {
+      spawnChecked(spawn, "vitest", ["run", jsRel], root, `hardening tests failed for ${moduleRel}`, json);
+    } else {
+      spawnChecked(spawn, process.execPath, ["--test", jsRel], root, `hardening tests failed for ${moduleRel}`, json);
+    }
   }
 }
 
@@ -158,56 +160,99 @@ export function runConfiguredTestCommand(
   root: string,
   testCommand: string | null,
   spawn: CheckSpawn = spawnSync,
+  json = false,
 ): void {
   const cmd = testCommand?.trim() || null;
   if (!cmd) return;
   const parts = cmd.split(/\s+/).filter(Boolean);
-  const r = spawn(parts[0]!, parts.slice(1), {
-    cwd: root,
-    encoding: "utf8",
-    stdio: "inherit",
-    env: withLocalBinPath(root),
-  });
-  if (r.status !== 0) {
-    throw new SlimExit(EXIT_FAIL, `testCommand failed: tests exited ${r.status ?? "signal"}`);
-  }
-}
-
-function residualRiskFor(root: string, pkg: string): string[] {
-  const p = join(root, ".slim", pkg, "evidence.json");
-  if (!existsSync(p)) return [];
-  const json = readDocument("evidence", p, "evidence.json") as { residualRisk?: unknown };
-  return Array.isArray(json.residualRisk) ? json.residualRisk.map(String) : [];
+  spawnChecked(
+    spawn,
+    parts[0]!,
+    parts.slice(1),
+    root,
+    `testCommand failed: tests exited`,
+    json,
+  );
 }
 
 function readEnvelope(path: string): Envelope {
   return readDocument("envelope", path, `envelope ${path}`) as Envelope;
 }
 
-function hashMismatches(root: string, pkg: string, saved: Envelope): EnvelopeDrift[] {
-  const drift: EnvelopeDrift[] = [];
-  let expected: string;
-  try {
-    expected = hashEnvelope(saved);
-  } catch {
-    return drift;
-  }
-  const evidencePath = join(root, ".slim", pkg, "evidence.json");
-  if (existsSync(evidencePath)) {
-    const ev = readDocument("evidence", evidencePath) as { envelopeHash?: string };
-    if (ev.envelopeHash && ev.envelopeHash !== expected) {
-      drift.push({ kind: "hash", detail: "evidence.json envelopeHash does not match envelope" });
-    }
-  }
+function loadManifestRecords(
+  root: string,
+): { recs: Record<string, ReplacementRecord>; error: SlimExit | null; missing: boolean } {
   const manPath = join(root, ".slim", "manifest.json");
-  if (existsSync(manPath)) {
-    const man = readDocument("manifest", manPath) as {
-      replacements?: Record<string, { envelopeHash?: string; version?: string }>;
+  if (!existsSync(manPath)) return { recs: {}, error: null, missing: true };
+  try {
+    const json = readDocument("manifest", manPath, ".slim/manifest.json") as {
+      replacements?: Record<string, ReplacementRecord>;
     };
-    const rec = man.replacements?.[pkg];
-    if (rec?.envelopeHash && rec.envelopeHash !== expected) {
-      drift.push({ kind: "hash", detail: "manifest envelopeHash does not match envelope" });
-    }
+    return { recs: json.replacements ?? {}, error: null, missing: false };
+  } catch (err) {
+    const fatal = err instanceof SlimExit ? err : new SlimExit(EXIT_FAIL, `malformed manifest ${manPath}`);
+    return { recs: {}, error: fatal, missing: false };
+  }
+}
+
+function originalPackageImports(root: string, files: string[], pkg: string): EnvelopeDrift[] {
+  const wanted = wantedSpecifiers(pkg);
+  const ts = loadTargetTypescript(root);
+  const drift: EnvelopeDrift[] = [];
+  for (const file of files) {
+    if (!existsSync(file)) continue;
+    const text = readFileSync(file, "utf8");
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    const visit = (node: import("typescript").Node): void => {
+      if (ts.isImportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
+        const spec = node.moduleSpecifier.text;
+        const clause = node.importClause;
+        const typeOnly =
+          Boolean(clause?.isTypeOnly) ||
+          (clause?.namedBindings &&
+            ts.isNamedImports(clause.namedBindings) &&
+            !clause.name &&
+            clause.namedBindings.elements.every((el) => el.isTypeOnly));
+        if (!typeOnly && specifierMatches(spec, wanted) && !spec.startsWith(".") && !spec.startsWith("/")) {
+          drift.push({
+            kind: "import",
+            detail: `${relative(root, file)} imports original package ${spec}`,
+          });
+        }
+      } else if (
+        ts.isExportDeclaration(node) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteral(node.moduleSpecifier)
+      ) {
+        const spec = node.moduleSpecifier.text;
+        if (
+          !node.isTypeOnly &&
+          specifierMatches(spec, wanted) &&
+          !spec.startsWith(".") &&
+          !spec.startsWith("/")
+        ) {
+          drift.push({
+            kind: "import",
+            detail: `${relative(root, file)} re-exports original package ${spec}`,
+          });
+        }
+      } else if (ts.isCallExpression(node)) {
+        const expr = node.expression;
+        const isRequire = ts.isIdentifier(expr) && expr.text === "require";
+        const isImport = expr.kind === ts.SyntaxKind.ImportKeyword;
+        if ((isRequire || isImport) && node.arguments[0] && ts.isStringLiteral(node.arguments[0])) {
+          const spec = node.arguments[0].text;
+          if (specifierMatches(spec, wanted) && !spec.startsWith(".") && !spec.startsWith("/")) {
+            drift.push({
+              kind: "import",
+              detail: `${relative(root, file)} loads original package ${spec}`,
+            });
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
   }
   return drift;
 }
@@ -231,14 +276,31 @@ function missingExports(root: string, moduleRel: string | undefined, saved: Enve
   }
 }
 
+function uniqDrift(items: EnvelopeDrift[]): EnvelopeDrift[] {
+  const seen = new Set<string>();
+  const out: EnvelopeDrift[] = [];
+  for (const d of items) {
+    const key = `${d.kind}\0${d.detail}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(d);
+  }
+  return out;
+}
+
+function emitDiag(args: CliArgs, line: string): void {
+  process.stderr.write(line.endsWith("\n") ? line : `${line}\n`);
+}
+
 export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<number> {
   const project = loadProject(opts.cwd);
   const spawn = opts.spawn ?? spawnSync;
+  const json = Boolean(args.json);
   const config = loadConfig(project.root);
   let names = Object.keys(config.replacements);
+  const man = loadManifestRecords(project.root);
   if (!names.length) {
-    const man = join(project.root, ".slim", "manifest.json");
-    if (!existsSync(man)) {
+    if (man.missing) {
       const empty: CheckReport = {
         schemaVersion: JSON_SCHEMA_VERSION,
         ok: true,
@@ -246,35 +308,49 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
         status: "ok",
         packages: [],
       };
-      if (args.json) {
+      if (json) {
         assertDocument("check", empty);
         writeJson(empty);
-      }
-      else process.stdout.write("no Slim replacements recorded. Run slim replace <pkg> first.\n");
+      } else process.stdout.write("no Slim replacements recorded. Run slim replace <pkg> first.\n");
       return EXIT_OK;
     }
-    const json = readDocument("manifest", man, ".slim/manifest.json") as {
-      replacements?: Record<string, unknown>;
-    };
-    names.push(...Object.keys(json.replacements ?? {}));
+    if (man.error) {
+      if (!json) throw man.error;
+    } else {
+      names.push(...Object.keys(man.recs));
+    }
   }
   if (args.pkg) {
-    if (!names.includes(args.pkg)) {
+    if (!names.includes(args.pkg) && !(args.pkg in man.recs)) {
       throw new SlimExit(EXIT_FAIL, `no Slim replacement recorded for ${args.pkg}`);
     }
     names = [args.pkg];
   }
   const packages: CheckPackageResult[] = [];
   let failed = false;
+  if (man.error) {
+    emitDiag(args, man.error.message);
+    failed = true;
+    if (!json) throw man.error;
+  }
   for (const pkg of names) {
     const envPath = resolveEnvelopePath(project.root, pkg, config.replacements[pkg]?.envelope);
-    const residualRisk = residualRiskFor(project.root, pkg);
+    const rec = man.recs[pkg];
+    const state = replacementStateIssues(
+      project.root,
+      pkg,
+      rec,
+      config.outDir,
+      config.replacements[pkg]?.module,
+    );
+    if (state.fatal && !json) throw state.fatal;
+    const residualRisk = state.residualRisk;
     if (!existsSync(envPath)) {
-      process.stderr.write(`missing envelope ${envPath}\n`);
+      emitDiag(args, `missing envelope ${envPath}`);
       packages.push({
         pkg,
         ok: false,
-        drift: [{ kind: "envelope", detail: `missing envelope ${envPath}` }],
+        drift: uniqDrift(state.drift),
         unknowns: [],
         standing: "missing",
         residualRisk,
@@ -284,29 +360,29 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
     }
     let saved: Envelope;
     try {
-      saved = readEnvelope(envPath);
+      saved = state.envelope ?? readEnvelope(envPath);
     } catch (err) {
       const msg = err instanceof SlimExit ? err.message : `malformed envelope ${envPath}`;
-      process.stderr.write(`${msg}\n`);
+      emitDiag(args, msg);
       packages.push({
         pkg,
         ok: false,
-        drift: [{ kind: "envelope", detail: msg }],
+        drift: uniqDrift([{ kind: "envelope", detail: msg }, ...state.drift]),
         unknowns: [],
         standing: "missing",
         residualRisk,
       });
       failed = true;
-      if (!args.json && err instanceof SlimExit) throw err;
+      if (!json && err instanceof SlimExit) throw err;
       continue;
     }
     if (saved.schemaVersion != null && saved.schemaVersion !== 1) {
       const detail = `envelope schemaVersion ${String(saved.schemaVersion)} is not 1`;
-      process.stderr.write(`${pkg}: ${detail}\n`);
+      emitDiag(args, `${pkg}: ${detail}`);
       packages.push({
         pkg,
         ok: false,
-        drift: [{ kind: "envelope", detail }],
+        drift: uniqDrift([{ kind: "envelope", detail }, ...state.drift]),
         unknowns: [],
         standing: "missing",
         residualRisk,
@@ -314,16 +390,26 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
       failed = true;
       continue;
     }
+    const moduleRel = rec?.module ?? config.replacements[pkg]?.module;
     const now = analyzePackage(project, pkg, {
       allowUnknown: args.allowUnknown,
       include: config.include,
       ignore: config.ignore,
     });
-    const drift = [
+    const scanFiles = [
+      moduleRel ? join(project.root, moduleRel) : "",
+      standingTestPaths(project.root, pkg, config.outDir).tsAbs,
+      standingTestPaths(project.root, pkg, config.outDir).jsAbs,
+      ...(moduleRel
+        ? [hardeningTestPaths(project.root, moduleRel).tsAbs, hardeningTestPaths(project.root, moduleRel).jsAbs]
+        : []),
+    ].filter(Boolean);
+    const drift = uniqDrift([
+      ...state.drift,
       ...diffEnvelope(saved, now),
-      ...hashMismatches(project.root, pkg, saved),
-      ...missingExports(project.root, config.replacements[pkg]?.module, saved),
-    ];
+      ...missingExports(project.root, moduleRel, saved),
+      ...originalPackageImports(project.root, scanFiles, pkg),
+    ]);
     const configuredVersion = config.replacements[pkg]?.version;
     if (configuredVersion && saved.package?.version && configuredVersion !== saved.package.version) {
       drift.push({
@@ -333,11 +419,12 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
     }
     const extraUnknowns = now.unknowns.filter((u) => !saved.unknowns?.some((s) => s.kind === u.kind && s.id === u.id));
     if (drift.length) {
-      process.stderr.write(
-        `${pkg}: envelope drifted (${drift.map((d) => d.detail).join("; ")}). re-run slim replace ${pkg}\n`,
+      emitDiag(
+        args,
+        `${pkg}: envelope drifted (${drift.map((d) => d.detail).join("; ")}). re-run slim replace ${pkg}`,
       );
       failed = true;
-    } else if (!args.json) {
+    } else if (!json) {
       const namesList = (saved.symbols ?? []).map((s) => s.exportName).join(", ");
       process.stdout.write(`${pkg}: envelope unchanged (${namesList})\n`);
       if (residualRisk.length) {
@@ -345,21 +432,19 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
       }
     }
     let standing: CheckPackageResult["standing"] = "pass";
-    const evidence = evidenceScript(project.root);
-    const paths = standingTestPaths(project.root, pkg, config.outDir);
-    const hasStanding = Boolean(evidence) || existsSync(paths.tsAbs) || existsSync(paths.jsAbs);
+    const hasStanding = hasStandingTests(project.root, pkg, config.outDir);
     if (!hasStanding) {
       standing = "missing";
-      process.stderr.write(`${pkg}: missing standing tests\n`);
+      emitDiag(args, `${pkg}: missing standing tests`);
       failed = true;
     } else {
       try {
-        runStandingTests(project.root, pkg, config.outDir, spawn);
-        runHardenedTests(project.root, config.replacements[pkg]?.module, spawn);
+        runStandingTests(project.root, pkg, config.outDir, spawn, json);
+        runHardenedTests(project.root, moduleRel, spawn, json);
       } catch (err) {
         standing = "fail";
         failed = true;
-        if (!args.json) throw err;
+        if (!json) throw err;
       }
     }
     const ok = drift.length === 0 && extraUnknowns.length === 0 && standing === "pass";
@@ -373,12 +458,26 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
       residualRisk,
     });
   }
-  if (!names.length) return EXIT_OK;
+  if (!names.length) {
+    if (json) {
+      const report: CheckReport = {
+        schemaVersion: JSON_SCHEMA_VERSION,
+        ok: !failed,
+        exit: failed ? EXIT_FAIL : EXIT_OK,
+        status: statusFromExit(failed ? EXIT_FAIL : EXIT_OK),
+        packages,
+      };
+      assertDocument("check", report);
+      writeJson(report);
+    }
+    if (failed) throw new SlimExit(EXIT_FAIL, "slim check failed", { skipJson: json });
+    return EXIT_OK;
+  }
   try {
-    runConfiguredTestCommand(project.root, config.testCommand, spawn);
+    runConfiguredTestCommand(project.root, config.testCommand, spawn, json);
   } catch (err) {
     failed = true;
-    if (!args.json) throw err;
+    if (!json) throw err;
   }
   const exit = failed ? EXIT_FAIL : EXIT_OK;
   const report: CheckReport = {
@@ -388,10 +487,10 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
     status: statusFromExit(exit),
     packages,
   };
-  if (args.json) {
+  if (json) {
     assertDocument("check", report);
     writeJson(report);
   }
-  if (failed) throw new SlimExit(EXIT_FAIL, "slim check failed", { skipJson: args.json });
+  if (failed) throw new SlimExit(EXIT_FAIL, "slim check failed", { skipJson: json });
   return EXIT_OK;
 }

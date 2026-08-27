@@ -58,9 +58,10 @@ Usage:
 
       --json             One schema-valid document on stdout (docs/check.schema.json)
 
-No network. Fails on semantic envelope drift, missing standing tests,
-malformed envelopes, or a failing standing/hardening suite. Prefers
-scripts.slim:evidence. Empty replacements exit 0.
+No network. Fails on semantic envelope drift, missing or malformed
+evidence, missing standing/hardening tests, malformed envelopes, or a
+failing standing/hardening suite. Prefers scripts.slim:evidence.
+Empty replacements exit 0.
 Example:  slim check
 ------------------------------------------------------------------------
 slim watch — see if upstream advisories/releases touch your slice

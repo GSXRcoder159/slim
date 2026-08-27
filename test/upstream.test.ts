@@ -125,6 +125,10 @@ function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: strin
     join(root, "src", "slim", `${pkg.replace(/\//g, "-")}.test.ts`),
     `import { test } from "node:test";\ntest("standing", () => {});\n`,
   );
+  writeFileSync(
+    join(root, "src", "slim", `${pkg.replace(/\//g, "-")}.hardened.test.ts`),
+    `import { test } from "node:test";\ntest("hardened", () => {});\n`,
+  );
   if (opts?.slimJson) {
     writeFileSync(
       join(root, "slim.json"),
@@ -367,6 +371,10 @@ test("missing oracle for one exposed package blocks every rewrite", async () => 
   writeFileSync(
     join(root, "src/slim/underscore.test.ts"),
     `import { test } from "node:test";\ntest("standing", () => {});\n`,
+  );
+  writeFileSync(
+    join(root, "src/slim/underscore.hardened.test.ts"),
+    `import { test } from "node:test";\ntest("hardened", () => {});\n`,
   );
   writeFileSync(join(root, ".slim/underscore/envelope.json"), JSON.stringify(env2, null, 2));
   writeFileSync(join(root, ".slim/underscore/evidence.json"), JSON.stringify(minimalEvidence(env2)));

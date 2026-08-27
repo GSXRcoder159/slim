@@ -17,7 +17,8 @@
     "fuzz",
     "coverageHoles",
     "residualRisk",
-    "revert"
+    "revert",
+    "generation"
   ],
   "properties": {
     "schemaVersion": { "type": "integer", "const": 1 },

@@ -185,6 +185,7 @@ test("evidence, manifest, inventory, and receipt schemas are versioned", () => {
   };
   assert.equal(evidence.properties.schemaVersion.const, 1);
   assert.ok(evidence.required.includes("schemaVersion"));
+  assert.ok(evidence.required.includes("generation"));
   const man = JSON.parse(readFileSync(join(ROOT, "docs/manifest.schema.json"), "utf8")) as {
     required: string[];
   };

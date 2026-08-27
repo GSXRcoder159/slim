@@ -74,6 +74,13 @@ export function minimalEvidence(env: Envelope, over: Partial<EvidenceJson> = {})
       lockfile: "npm",
       installCommand: "npm install",
     },
+    generation: {
+      kind: "catalog",
+      catalogIds: [`${env.package.name}.get`],
+      attempts: 1,
+      specSource: "catalog",
+      counterexamples: [],
+    },
     ...over,
   };
 }

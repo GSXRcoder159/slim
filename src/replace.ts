@@ -28,7 +28,7 @@ import { rewriteSpecifiers as spliceSpecifiers } from "./rewrite/splice.ts";
 import { removeDependencyKey } from "./rewrite/packagejson.ts";
 import { installCommandFor, refreshLockfile, shouldRefreshLockfile } from "./rewrite/lockfile.ts";
 import { writeEvidence } from "./evidence/report.ts";
-import { emitStandingTests } from "./evidence/emit-tests.ts";
+import { emitHardenedGetSetTest, emitStandingTests } from "./evidence/emit-tests.ts";
 import { maybeCreatePullRequest, prBodyFromEvidence } from "./github/pr.ts";
 import { detectRunner } from "./trace/runners.ts";
 import { runTraces, withLocalBinPath, writeTracesMeta } from "./trace/run.ts";
@@ -375,6 +375,13 @@ export async function runReplace(args: CliArgs): Promise<number> {
       traces: env.traces,
       runner: testRunner,
       moduleSpecifier: modSpec,
+    });
+    const hardenedAbs = slimPath.replace(/\.(ts|js|mjs|cjs)$/, ".hardened.test.ts");
+    txn.prepareWrite(hardenedAbs);
+    emitHardenedGetSetTest({
+      root: project.root,
+      moduleRel: relative(project.root, slimPath),
+      runner: testRunner,
     });
     injectFail("after-standing");
 
