@@ -86,18 +86,32 @@ test("packed replace --llm via mocked OpenAI completes the pipeline", { timeout:
     const out = await runSlim(slimJs, replaceLlmArgs(), dest, {
       OPENAI_API_KEY: "sk-test-openai",
       SLIM_LLM_BASE_URL: `http://127.0.0.1:${mock.port}/`,
-      SLIM_LLM_MODEL: "gpt-4.1",
+      SLIM_LLM_MODEL: "gpt-5.6-sol",
     });
     assert.equal(out.status, 0, `${out.stdout}\n${out.stderr}`);
     assert.ok(mock.requests.length >= 1);
     assert.match(String(mock.headerSnapshots[0]?.authorization), /Bearer sk-test-openai/);
+    const body = JSON.parse(mock.requests[0]!) as {
+      input?: unknown;
+      instructions?: string;
+      max_output_tokens?: number;
+      store?: boolean;
+      messages?: unknown;
+      max_tokens?: number;
+    };
+    assert.equal(typeof body.input, "string");
+    assert.ok(body.instructions);
+    assert.equal(body.max_output_tokens, 8192);
+    assert.equal(body.store, false);
+    assert.equal(body.messages, undefined);
+    assert.equal(body.max_tokens, undefined);
     assertCleanRoomBody(mock.requests[0]!);
     const evidence = readJson(join(dest, ".slim/tiny-add/evidence.json")) as {
       generation?: { kind?: string; provider?: string; model?: string };
     };
     assert.equal(evidence.generation?.kind, "llm");
     assert.equal(evidence.generation?.provider, "openai");
-    assert.equal(evidence.generation?.model, "gpt-4.1");
+    assert.equal(evidence.generation?.model, "gpt-5.6-sol");
     const pkg = readJson(join(dest, "package.json")) as { dependencies?: Record<string, string> };
     assert.equal(pkg.dependencies?.["tiny-add"], undefined);
   } finally {

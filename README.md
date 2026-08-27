@@ -69,10 +69,13 @@ Zero runtime dependencies. Slim's own `package.json` `dependencies` is `{}`.
 Catalog covers the Friday path with no API key. For unknown slimmable packages:
 
 ```
-ANTHROPIC_API_KEY=…           # or OPENAI_API_KEY
-SLIM_LLM_MODEL=…              # optional
-SLIM_LLM_BASE_URL=…           # optional
+OPENAI_API_KEY=…              # default when both keys are set
+ANTHROPIC_API_KEY=…           # used when OPENAI_API_KEY is unset, or SLIM_LLM_BASE_URL is Anthropic
+SLIM_LLM_MODEL=…              # optional; OpenAI default gpt-5.6-sol, Anthropic default claude-sonnet-4-5
+SLIM_LLM_BASE_URL=…           # optional; a URL containing "anthropic" selects Anthropic
 ```
+
+OpenAI uses the Responses API (`POST /v1/responses`), not Chat Completions.
 
 The generator receives envelope JSON plus public `.d.ts` / README **only**, and only from the target package root (or `@types/<pkg>`). Traversal, absolute paths, and escaping symlinks in `types` / `typings` / `exports` / README are refused before any provider call. Original `.js`, source maps, and package tests are a guard-rail error. If no `.d.ts` or README exists, the prompt and evidence record that as an explicit limitation (envelope call sites only; no invented overloads).
 

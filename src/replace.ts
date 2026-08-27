@@ -129,7 +129,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
   } else if (args.templateOnly || (!llm && catalog.missing.length)) {
     throw new SlimExit(
       EXIT_REFUSED,
-      `no catalog for ${catalog.missing.join(", ") || args.pkg} and no LLM key (set ANTHROPIC_API_KEY or OPENAI_API_KEY)`,
+      `no catalog for ${catalog.missing.join(", ") || args.pkg} and no LLM key (set OPENAI_API_KEY or ANTHROPIC_API_KEY)`,
     );
   } else if (!llm) {
     throw new SlimExit(EXIT_REFUSED, "LLM requested but no API key");

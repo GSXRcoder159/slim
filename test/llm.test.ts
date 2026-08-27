@@ -52,8 +52,8 @@ const anthropic: LlmConfig = {
 };
 
 const openai: LlmConfig = {
-  baseUrl: "https://api.openai.com/v1/chat/completions",
-  model: "gpt-4.1",
+  baseUrl: "https://api.openai.com/v1/responses",
+  model: "gpt-5.6-sol",
   apiKey: "sk-secret-key-xyz",
   kind: "openai",
 };
@@ -90,8 +90,40 @@ test("llmConfigFromEnv reads OpenAI", () => {
   } as NodeJS.ProcessEnv);
   assert.ok(c);
   assert.equal(c!.kind, "openai");
-  assert.equal(c!.model, "gpt-4.1");
-  assert.equal(c!.baseUrl, "https://api.openai.com/v1/chat/completions");
+  assert.equal(c!.model, "gpt-5.6-sol");
+  assert.equal(c!.baseUrl, "https://api.openai.com/v1/responses");
+});
+
+test("llmConfigFromEnv prefers OpenAI when both keys are set", () => {
+  const c = llmConfigFromEnv({
+    ANTHROPIC_API_KEY: "sk-anthropic",
+    OPENAI_API_KEY: "sk-openai",
+  } as NodeJS.ProcessEnv);
+  assert.ok(c);
+  assert.equal(c!.kind, "openai");
+  assert.equal(c!.apiKey, "sk-openai");
+  assert.equal(c!.model, "gpt-5.6-sol");
+});
+
+test("llmConfigFromEnv uses Anthropic when OpenAI is unset", () => {
+  const c = llmConfigFromEnv({
+    ANTHROPIC_API_KEY: "sk-anthropic",
+  } as NodeJS.ProcessEnv);
+  assert.ok(c);
+  assert.equal(c!.kind, "anthropic");
+  assert.equal(c!.apiKey, "sk-anthropic");
+  assert.equal(c!.baseUrl, "https://api.anthropic.com/v1/messages");
+});
+
+test("llmConfigFromEnv uses Anthropic when the base URL is Anthropic", () => {
+  const c = llmConfigFromEnv({
+    ANTHROPIC_API_KEY: "sk-anthropic",
+    OPENAI_API_KEY: "sk-openai",
+    SLIM_LLM_BASE_URL: "https://api.anthropic.com/v1/messages",
+  } as NodeJS.ProcessEnv);
+  assert.ok(c);
+  assert.equal(c!.kind, "anthropic");
+  assert.equal(c!.apiKey, "sk-anthropic");
 });
 
 test("llmConfigFromEnv returns null without a key", () => {
@@ -106,8 +138,8 @@ test("llmConfigFromEnv returns null without a key", () => {
   );
   assert.equal(
     llmConfigFromEnv({
-      SLIM_LLM_BASE_URL: "https://api.openai.com/v1/chat/completions",
-      SLIM_LLM_MODEL: "gpt-4.1",
+      SLIM_LLM_BASE_URL: "https://api.openai.com/v1/responses",
+      SLIM_LLM_MODEL: "gpt-5.6-sol",
     } as NodeJS.ProcessEnv),
     null,
   );
@@ -169,7 +201,13 @@ test("OpenAI request contract", async () => {
     init = i ?? {};
     return new Response(
       JSON.stringify({
-        choices: [{ message: { content: "export function ms() { return 1; }\n" } }],
+        output: [
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "export function ms() { return 1; }\n" }],
+          },
+        ],
       }),
       { status: 200 },
     );
@@ -181,15 +219,22 @@ test("OpenAI request contract", async () => {
   assert.ok(init.signal);
   const body = JSON.parse(String(init.body)) as {
     model: string;
-    max_tokens: number;
-    temperature: number;
-    messages: Array<{ role: string }>;
+    instructions?: string;
+    input?: unknown;
+    max_output_tokens?: number;
+    store?: boolean;
+    messages?: unknown;
+    max_tokens?: number;
+    temperature?: number;
   };
-  assert.equal(body.model, "gpt-4.1");
-  assert.equal(body.temperature, 0);
-  assert.equal(body.max_tokens, 8192);
-  assert.equal(body.messages[0]?.role, "system");
-  assert.equal(body.messages[1]?.role, "user");
+  assert.equal(body.model, "gpt-5.6-sol");
+  assert.equal(body.max_output_tokens, 8192);
+  assert.equal(body.store, false);
+  assert.ok(body.instructions);
+  assert.equal(typeof body.input, "string");
+  assert.equal(body.messages, undefined);
+  assert.equal(body.max_tokens, undefined);
+  assert.equal(body.temperature, undefined);
   assertCleanRoomBody(init);
   assert.match(String(init.body), /index\.d\.ts/);
 });
@@ -266,7 +311,12 @@ test("empty and prose-only responses are EXIT_FAIL", async () => {
   const prose: typeof fetch = async () =>
     new Response(
       JSON.stringify({
-        choices: [{ message: { content: "Sure, here is some advice. You should export a function." } }],
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "Sure, here is some advice. You should export a function." }],
+          },
+        ],
       }),
       { status: 200 },
     );

@@ -11,30 +11,30 @@ export interface LlmConfig {
   kind: "anthropic" | "openai";
 }
 
-const FETCH_MS = 60_000;
+const FETCH_MS = 120_000;
 const MAX_TOKENS = 8192;
 
 export function llmConfigFromEnv(env = process.env): LlmConfig | null {
   const anthropic = env.ANTHROPIC_API_KEY;
   const openai = env.OPENAI_API_KEY;
+  const hinted = env.SLIM_LLM_BASE_URL ?? "";
+  const kind: "anthropic" | "openai" = hinted.includes("anthropic")
+    ? "anthropic"
+    : openai || hinted.includes("openai")
+      ? "openai"
+      : anthropic
+        ? "anthropic"
+        : "openai";
+  const apiKey = (kind === "anthropic" ? anthropic : openai) || env.SLIM_LLM_API_KEY || "";
   const base =
     env.SLIM_LLM_BASE_URL ||
-    (anthropic
+    (kind === "anthropic"
       ? "https://api.anthropic.com/v1/messages"
-      : openai
-        ? "https://api.openai.com/v1/chat/completions"
-        : "");
+      : "https://api.openai.com/v1/responses");
   const model =
-    env.SLIM_LLM_MODEL ||
-    (anthropic ? "claude-sonnet-4-5" : openai ? "gpt-4.1" : "");
-  const apiKey = anthropic || openai || env.SLIM_LLM_API_KEY || "";
+    env.SLIM_LLM_MODEL || (kind === "anthropic" ? "claude-sonnet-4-5" : "gpt-5.6-sol");
   if (!apiKey || !base || !model) return null;
-  return {
-    baseUrl: base,
-    model,
-    apiKey,
-    kind: anthropic || base.includes("anthropic") ? "anthropic" : "openai",
-  };
+  return { baseUrl: base, model, apiKey, kind };
 }
 
 export async function generateWithLlm(
@@ -87,14 +87,31 @@ async function completeOpenAi(
     authorization: `Bearer ${cfg.apiKey}`,
   }, {
     model: cfg.model,
-    temperature: 0,
-    max_tokens: MAX_TOKENS,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-  }) as { choices?: Array<{ message?: { content?: string } }> };
-  return json.choices?.[0]?.message?.content ?? "";
+    instructions: system,
+    input: user,
+    max_output_tokens: MAX_TOKENS,
+    store: false,
+  });
+  return openAiOutputText(json);
+}
+
+function openAiOutputText(json: unknown): string {
+  if (!json || typeof json !== "object") return "";
+  const rec = json as Record<string, unknown>;
+  if (typeof rec.output_text === "string" && rec.output_text.trim()) return rec.output_text;
+  if (!Array.isArray(rec.output)) return "";
+  const parts: string[] = [];
+  for (const item of rec.output) {
+    if (!item || typeof item !== "object") continue;
+    const entry = item as { type?: string; content?: unknown };
+    if (entry.type !== "message" || !Array.isArray(entry.content)) continue;
+    for (const part of entry.content) {
+      if (!part || typeof part !== "object") continue;
+      const content = part as { type?: string; text?: string };
+      if (content.type === "output_text" && typeof content.text === "string") parts.push(content.text);
+    }
+  }
+  return parts.join("\n");
 }
 
 async function postJson(

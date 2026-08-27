@@ -15,7 +15,7 @@ import { hermeticPmEnv } from "../../src/rewrite/lockfile.ts";
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 const ADD_SRC = `export function add(a: number, b: number): number {
-  return Number(a) + Number(b);
+  return a + b;
 }
 `;
 
@@ -149,7 +149,7 @@ export function writeTinyAddFixture(
   );
   writeFileSync(
     join(dest, "vendor/tiny-add/index.js"),
-    `export function add(a, b) {\n  return Number(a) + Number(b);\n}\n/* ${"pad".repeat(8_000)} */\n`,
+    `export function add(a, b) {\n  return a + b;\n}\n/* ${"pad".repeat(8_000)} */\n`,
   );
   writeFileSync(join(dest, "vendor/tiny-add/index.d.ts"), "export function add(a: number, b: number): number;\n");
   writeFileSync(join(dest, "SENTINEL.d.ts"), "export const SENTINEL_PUBLIC_SPEC_ESCAPE = 1;\n");
@@ -205,7 +205,15 @@ export function startLlmMock(kind: "anthropic" | "openai", source: string): Prom
       const payload =
         kind === "anthropic"
           ? { content: [{ text: source }] }
-          : { choices: [{ message: { content: source } }] };
+          : {
+              output: [
+                {
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: source }],
+                },
+              ],
+            };
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(payload));
     });
