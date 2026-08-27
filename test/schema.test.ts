@@ -174,8 +174,18 @@ test("command result schemas exist with required fields", () => {
   }
   const upstream = JSON.parse(readFileSync(join(ROOT, "docs/upstream.schema.json"), "utf8")) as {
     required: string[];
+    properties: { conclusion: { enum: string[] }; action: { enum: string[] } };
   };
-  assert.deepEqual(upstream.required.sort(), ["conclusion", "exit", "findings", "ok", "schemaVersion", "sources", "status"].sort());
+  assert.deepEqual(
+    upstream.required.sort(),
+    ["action", "conclusion", "exit", "findings", "ok", "regeneration", "schemaVersion", "sources", "status"].sort(),
+  );
+  for (const c of ["incomplete-state", "no-replacements", "exposed", "not-exposed", "unmapped"]) {
+    assert.ok(upstream.properties.conclusion.enum.includes(c), c);
+  }
+  for (const a of ["none", "blocked", "review", "regenerated"]) {
+    assert.ok(upstream.properties.action.enum.includes(a), a);
+  }
 });
 
 test("evidence, manifest, inventory, and receipt schemas are versioned", () => {

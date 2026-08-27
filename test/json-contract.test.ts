@@ -217,25 +217,106 @@ test("docs/help-commands check has --json and not --update-envelope", () => {
   assert.ok(section.split("\n").length <= 40, `check help is ${section.split("\n").length} lines`);
 });
 
-test("upstream --json with no manifest is one document", async () => {
+test("docs/help-commands watch documents incomplete state and no replacements", () => {
+  const text = readFileSync(join(ROOT, "docs/help-commands.txt"), "utf8");
+  const start = text.indexOf("slim watch —");
+  const end = text.indexOf("--------", start + 10);
+  const section = text.slice(start, end === -1 ? undefined : end);
+  assert.match(section, /no replacements/);
+  assert.match(section, /malformed replacement state/);
+  assert.ok(section.split("\n").length <= 40, `watch help is ${section.split("\n").length} lines`);
+});
+
+test("upstream --json with no manifest is incomplete-state, not not-exposed", async () => {
   const root = mkdtempSync(join(tmpdir(), "slim-json-up-"));
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "empty", type: "module" }));
   const { runUpstream } = await import("../src/upstream.ts");
+  let npm = 0;
+  let osv = 0;
+  const { code, stdout, stderr } = await capture(async () => {
+    try {
+      return await runUpstream(parseCli(["upstream", "--json"]), {
+        cwd: root,
+        npmLatest: async () => {
+          npm += 1;
+          return sourceOk({ version: "1.0.0" });
+        },
+        queryOsv: async () => {
+          osv += 1;
+          return sourceOk([]);
+        },
+      });
+    } catch (err) {
+      if (err instanceof SlimExit) return err.code;
+      throw err;
+    }
+  });
+  assert.equal(code, EXIT_FAIL);
+  assert.equal(npm, 0, "must not query npm when the manifest is missing");
+  assert.equal(osv, 0, "must not query OSV when the manifest is missing");
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  const doc = oneJson(stdout);
+  assert.equal(doc.schemaVersion, 1);
+  assert.equal(doc.ok, false);
+  assert.equal(doc.exit, EXIT_FAIL);
+  assert.equal(doc.status, "fail");
+  assert.equal(doc.conclusion, "incomplete-state");
+  assert.equal(doc.action, "blocked");
+  assert.ok(Array.isArray(doc.findings));
+  assert.ok(Array.isArray(doc.regeneration));
+});
+
+test("upstream --json empty replacements is no-replacements", async () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-json-up-empty-"));
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "empty", type: "module" }));
+  mkdirSync(join(root, ".slim"), { recursive: true });
+  writeFileSync(join(root, ".slim", "manifest.json"), JSON.stringify({ schemaVersion: 1, replacements: {} }));
+  const { runUpstream } = await import("../src/upstream.ts");
+  let npm = 0;
   const { code, stdout, stderr } = await capture(() =>
     runUpstream(parseCli(["upstream", "--json"]), {
       cwd: root,
-      npmLatest: async () => sourceOk({ version: "1.0.0" }),
+      npmLatest: async () => {
+        npm += 1;
+        return sourceOk({ version: "1.0.0" });
+      },
       queryOsv: async () => sourceOk([]),
     }),
   );
   assert.equal(code, EXIT_OK);
-  assert.equal(stderr.trim(), "");
+  assert.equal(npm, 0);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
   const doc = oneJson(stdout);
-  assert.equal(doc.schemaVersion, 1);
+  assert.equal(doc.conclusion, "no-replacements");
+  assert.equal(doc.action, "none");
   assert.equal(doc.ok, true);
-  assert.equal(doc.exit, 0);
-  assert.equal(doc.status, "ok");
-  assert.ok(Array.isArray(doc.findings));
+  assert.ok(Array.isArray(doc.regeneration));
+});
+
+test("upstream --json malformed manifest is an upstream document", async () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-json-up-bad-"));
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "bad", type: "module" }));
+  mkdirSync(join(root, ".slim"), { recursive: true });
+  writeFileSync(join(root, ".slim", "manifest.json"), "{");
+  const { runUpstream } = await import("../src/upstream.ts");
+  const { code, stdout, stderr } = await capture(async () => {
+    try {
+      return await runUpstream(parseCli(["upstream", "--json"]), {
+        cwd: root,
+        npmLatest: async () => sourceOk({ version: "1.0.0" }),
+        queryOsv: async () => sourceOk([]),
+      });
+    } catch (err) {
+      if (err instanceof SlimExit) return err.code;
+      throw err;
+    }
+  });
+  assert.equal(code, EXIT_FAIL);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  const doc = oneJson(stdout);
+  assert.equal(doc.conclusion, "incomplete-state");
+  assert.equal(doc.action, "blocked");
+  assert.equal(typeof doc.error, "string");
 });
 
 test("upstream --json failure is one document with findings, human on stderr", async () => {
@@ -306,6 +387,8 @@ test("upstream --json failure is one document with findings, human on stderr", a
   assert.ok(Array.isArray(doc.findings));
   assert.equal((doc.findings as { exposure: string }[])[0]?.exposure, "unmapped");
   assert.equal(doc.conclusion, "unmapped");
+  assert.equal(doc.action, "review");
+  assert.ok(Array.isArray(doc.regeneration));
   assert.ok(doc.sources && typeof doc.sources === "object");
   const finding = (doc.findings as { unmappedReason: string | null; affectedRange: string; mappedEvidence: string })[0]!;
   assert.ok(finding.unmappedReason);

@@ -441,7 +441,7 @@ export function shouldRunMergeGate(opts: { dryRun: boolean }): boolean {
   return !opts.dryRun;
 }
 
-export function runMergeGate(root: string, testCommand: string | null): void {
+export function runMergeGate(root: string, testCommand: string | null, json = false): void {
   let cmd = testCommand?.trim() || null;
   if (!cmd) {
     try {
@@ -458,9 +458,13 @@ export function runMergeGate(root: string, testCommand: string | null): void {
   const r = spawnSync(parts[0]!, parts.slice(1), {
     cwd: root,
     encoding: "utf8",
-    stdio: "inherit",
+    stdio: json ? ["ignore", "pipe", "pipe"] : "inherit",
     env: withLocalBinPath(root),
   });
+  if (json) {
+    if (r.stdout) process.stderr.write(r.stdout);
+    if (r.stderr) process.stderr.write(r.stderr);
+  }
   if (r.status !== 0) {
     throw new SlimExit(EXIT_FAIL, `merge gate failed: tests exited ${r.status ?? "signal"}`);
   }

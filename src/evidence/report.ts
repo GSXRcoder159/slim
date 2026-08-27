@@ -65,7 +65,7 @@ export function writeEvidence(opts: {
   bundle?: BundleDelta | null;
   revert: RevertPlan;
   generation?: Partial<GenerationEvidence>;
-}): { mdPath: string; jsonPath: string } {
+}): { mdPath: string; jsonPath: string; residualRisk: string[] } {
   const dir = join(opts.root, ".slim", opts.env.package.name);
   mkdirSync(dir, { recursive: true });
   const hash = hashEnvelope(opts.env);
@@ -99,7 +99,7 @@ export function writeEvidence(opts: {
   const jsonPath = join(dir, "evidence.json");
   writeFileSync(mdPath, md);
   writeFileSync(jsonPath, JSON.stringify(json, null, 2) + "\n");
-  return { mdPath, jsonPath };
+  return { mdPath, jsonPath, residualRisk: residual };
 }
 
 function completeGeneration(

@@ -76,8 +76,10 @@ Usage:
 Not a SaaS. Queries osv.dev and the npm registry from this machine.
 OSV/npm outage, malformed response, timeout, or stale version → exit 4.
 Never prints "slice not exposed" when a source could not be determined.
+Missing or malformed replacement state → exit 1, not a vulnerability conclusion.
+Empty replacements print "no replacements" (exit 0).
 Unmapped advisories fail closed with a human-review artifact; no automatic rewrite.
-Exposed slices regenerate only after oracle fuzz, standing tests, and hardening tests pass.
+Exposed slices regenerate all-or-nothing after oracle fuzz, standing, hardening, and merge gates.
 Example:  slim watch --json
 ------------------------------------------------------------------------
 slim doctor — check Node, git, gh, slices, and the watch workflow

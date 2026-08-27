@@ -26,6 +26,8 @@ import {
   type SourceResult,
   type SourceStatus,
 } from "./upstream/status.ts";
+import { MutationTxn } from "./rewrite/transaction.ts";
+import { runMergeGate } from "./replace.ts";
 
 export type { UpstreamDeps, UpstreamFinding, UpstreamOracle } from "./upstream/fix.ts";
 export { applyUpstreamFix } from "./upstream/fix.ts";
@@ -36,7 +38,11 @@ export type UpstreamConclusion =
   | "unmapped"
   | "routine-release"
   | "source-unavailable"
-  | "oracle-unavailable";
+  | "oracle-unavailable"
+  | "incomplete-state"
+  | "no-replacements";
+
+export type UpstreamAction = "none" | "blocked" | "review" | "regenerated";
 
 export interface SourceReport {
   status: SourceStatus;
@@ -47,14 +53,27 @@ interface Manifest {
   replacements: Record<string, ReplacementRecord>;
 }
 
+interface RegenerationRow {
+  package: string;
+  regenerated: boolean;
+  usedCatalog: boolean;
+  fuzzed: boolean;
+  oracleKind: "new" | "old" | null;
+  oracleVersion: string | null;
+  residualRisk: string[];
+  fuzz?: { cases: number; comparisons: number; timerCases: number };
+}
+
 interface UpstreamReport {
   schemaVersion: typeof JSON_SCHEMA_VERSION;
   ok: boolean;
   exit: number;
   status: ReturnType<typeof statusFromExit>;
   conclusion: UpstreamConclusion;
+  action: UpstreamAction;
   sources: { osv: SourceReport; npm: SourceReport; oracle: SourceReport; github: SourceReport };
   findings: UpstreamFinding[];
+  regeneration: RegenerationRow[];
   error?: string;
 }
 
@@ -67,7 +86,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
   const manPath = join(project.root, ".slim", "manifest.json");
 
   const notRequired = (): SourceReport => sourceNotRequired();
-  let sources = {
+  const sources = {
     osv: notRequired(),
     npm: notRequired(),
     oracle: notRequired(),
@@ -77,24 +96,32 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
   if (!existsSync(manPath)) {
     return finish(
       args,
-      {
-        schemaVersion: JSON_SCHEMA_VERSION,
-        ok: true,
-        exit: EXIT_OK,
-        status: "ok",
-        conclusion: "not-exposed",
-        sources,
-        findings: [],
-      },
-      "no .slim/manifest.json — nothing to watch\n",
+      reportOf("incomplete-state", EXIT_FAIL, sources, [], [], "no .slim/manifest.json"),
+      null,
+      "no .slim/manifest.json — nothing to watch",
     );
   }
+
   let man: Manifest;
-  man = readDocument("manifest", manPath, ".slim/manifest.json") as Manifest;
+  try {
+    man = readDocument("manifest", manPath, ".slim/manifest.json") as Manifest;
+  } catch (err) {
+    const msg = err instanceof SlimExit ? err.message : `malformed .slim/manifest.json`;
+    return finish(args, reportOf("incomplete-state", EXIT_FAIL, sources, [], [], msg), null, msg);
+  }
 
   const names = Object.keys(man.replacements ?? {});
-  for (const name of names) {
-    assertReplacementState(project.root, name, man.replacements[name]!, config.outDir);
+  if (!names.length) {
+    return finish(args, reportOf("no-replacements", EXIT_OK, sources, [], []), "no replacements.\n");
+  }
+
+  try {
+    for (const name of names) {
+      assertReplacementState(project.root, name, man.replacements[name]!, config.outDir);
+    }
+  } catch (err) {
+    const msg = err instanceof SlimExit ? err.message : `incomplete replacement state`;
+    return finish(args, reportOf("incomplete-state", EXIT_FAIL, sources, [], [], msg), null, msg);
   }
 
   if (args.pr) {
@@ -104,7 +131,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
   if (isConsultedFailure(sources.github)) {
     return finish(
       args,
-      reportOf("source-unavailable", EXIT_ENV, sources, [], `github ${sources.github.detail}`),
+      reportOf("source-unavailable", EXIT_ENV, sources, [], [], `github ${sources.github.detail}`),
       null,
       `github ${sources.github.detail}`,
     );
@@ -177,7 +204,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
   ) {
     return finish(
       args,
-      reportOf("source-unavailable", EXIT_ENV, sources, findings, sourceFailDetail(sources)),
+      reportOf("source-unavailable", EXIT_ENV, sources, findings, [], sourceFailDetail(sources)),
       null,
       sourceFailDetail(sources),
     );
@@ -209,16 +236,30 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
     if (!oracleOk) {
       sources.oracle = { status: "unavailable", detail: "fuzz skipped: no installable oracle" };
     } else {
-      for (const job of exposedJobs) {
-        fixResults.push(
-          await applyUpstreamFix(
-            { root: project.root, pkg: job.name, rec: job.rec, findings: job.pkgFindings, args, config },
-            deps,
-          ),
-        );
-      }
-      if (fixResults.some((r) => r.fuzzed)) {
-        sources.oracle = { status: "success", detail: "ok" };
+      const txn = new MutationTxn(project.root);
+      try {
+        for (const job of exposedJobs) {
+          fixResults.push(
+            await applyUpstreamFix(
+              { root: project.root, pkg: job.name, rec: job.rec, findings: job.pkgFindings, args, config },
+              deps,
+              txn,
+            ),
+          );
+        }
+        if (fixResults.some((r) => r.fuzzed)) {
+          sources.oracle = { status: "success", detail: "ok" };
+        }
+        for (const job of exposedJobs) {
+          const rec = man.replacements[job.name]!;
+          assertReplacementState(project.root, job.name, rec, config.outDir);
+        }
+        runMergeGate(project.root, config.testCommand, Boolean(args.json));
+        txn.writeFile(join(project.root, ".slim", "UPSTREAM.md"), prBody(project.root, findings, fixResults));
+        txn.commit();
+      } catch (err) {
+        txn.rollback();
+        throw err;
       }
     }
   }
@@ -248,10 +289,11 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
     msg = "";
   }
 
-  emitHuman(args, findings, routineLines, conclusion, sources);
+  const wroteFix = fixResults.some((r) => r.regenerated);
+  emitHuman(args, findings, routineLines, conclusion, sources, fixResults);
 
-  const review = conclusion === "unmapped" || conclusion === "exposed";
-  if (review) {
+  const review = conclusion === "unmapped" || (conclusion === "exposed" && wroteFix);
+  if (conclusion === "unmapped" && !wroteFix) {
     mkdirSync(join(project.root, ".slim"), { recursive: true });
     writeFileSync(join(project.root, ".slim", "UPSTREAM.md"), prBody(project.root, findings, fixResults));
   }
@@ -269,10 +311,12 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
     });
   }
 
+  const humanOk = conclusion === "not-exposed" ? "slice not exposed.\n" : null;
+
   return finish(
     args,
-    reportOf(conclusion, exit, sources, findings, exit === EXIT_OK ? undefined : msg),
-    conclusion === "not-exposed" ? "slice not exposed.\n" : conclusion === "routine-release" ? null : null,
+    reportOf(conclusion, exit, sources, findings, regenerationOf(fixResults), exit === EXIT_OK ? undefined : msg),
+    humanOk,
     exit === EXIT_OK ? undefined : msg,
   );
 }
@@ -283,6 +327,7 @@ function emitHuman(
   routineLines: string[],
   conclusion: UpstreamConclusion,
   sources: UpstreamReport["sources"],
+  results: ApplyUpstreamFixResult[],
 ): void {
   const write = args.json
     ? (s: string) => process.stderr.write(s)
@@ -299,6 +344,13 @@ function emitHuman(
   }
   if (conclusion === "oracle-unavailable") {
     write(`verification unavailable: ${sources.oracle.detail}\n`);
+  }
+  for (const r of results) {
+    if (r.regenerated && r.fuzz) {
+      write(
+        `${r.pkg}: regenerated ${r.usedCatalog ? "catalog" : "llm"} oracle=${r.oracleKind ?? "none"}@${r.oracleVersion ?? "?"} cases=${r.fuzz.cases} residual=${r.residualRisk.join("; ") || "none"}\n`,
+      );
+    }
   }
 }
 
@@ -319,11 +371,38 @@ function finish(
   return doc.exit;
 }
 
+function actionOf(conclusion: UpstreamConclusion, regeneration: RegenerationRow[]): UpstreamAction {
+  if (conclusion === "unmapped") return "review";
+  if (conclusion === "exposed") return regeneration.some((r) => r.regenerated) ? "regenerated" : "blocked";
+  if (
+    conclusion === "incomplete-state" ||
+    conclusion === "source-unavailable" ||
+    conclusion === "oracle-unavailable"
+  ) {
+    return "blocked";
+  }
+  return "none";
+}
+
+function regenerationOf(results: ApplyUpstreamFixResult[]): RegenerationRow[] {
+  return results.map((r) => ({
+    package: r.pkg,
+    regenerated: r.regenerated,
+    usedCatalog: r.usedCatalog,
+    fuzzed: r.fuzzed,
+    oracleKind: r.oracleKind,
+    oracleVersion: r.oracleVersion,
+    residualRisk: r.residualRisk,
+    ...(r.fuzz ? { fuzz: r.fuzz } : {}),
+  }));
+}
+
 function reportOf(
   conclusion: UpstreamConclusion,
   exit: number,
   sources: UpstreamReport["sources"],
   findings: UpstreamFinding[],
+  regeneration: RegenerationRow[],
   error?: string,
 ): UpstreamReport {
   return {
@@ -332,8 +411,10 @@ function reportOf(
     exit,
     status: statusFromExit(exit),
     conclusion,
+    action: actionOf(conclusion, regeneration),
     sources,
     findings,
+    regeneration,
     ...(error ? { error } : {}),
   };
 }

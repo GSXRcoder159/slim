@@ -5,7 +5,7 @@
   "description": "One JSON document on stdout for success and non-success. schemaVersion 1. Unconsulted sources use status success with detail 'not required' and are ignored when folding fail-closed.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "ok", "exit", "status", "conclusion", "sources", "findings"],
+  "required": ["schemaVersion", "ok", "exit", "status", "conclusion", "action", "sources", "findings", "regeneration"],
   "properties": {
     "schemaVersion": { "type": "integer", "const": 1 },
     "ok": { "type": "boolean" },
@@ -13,8 +13,18 @@
     "status": { "type": "string", "enum": ["ok", "fail", "usage", "refused", "env"] },
     "conclusion": {
       "type": "string",
-      "enum": ["exposed", "not-exposed", "unmapped", "routine-release", "source-unavailable", "oracle-unavailable"]
+      "enum": [
+        "exposed",
+        "not-exposed",
+        "unmapped",
+        "routine-release",
+        "source-unavailable",
+        "oracle-unavailable",
+        "incomplete-state",
+        "no-replacements"
+      ]
     },
+    "action": { "type": "string", "enum": ["none", "blocked", "review", "regenerated"] },
     "error": { "type": "string" },
     "sources": {
       "type": "object",
@@ -59,6 +69,10 @@
           "unmappedReason": { "type": ["string", "null"] }
         }
       }
+    },
+    "regeneration": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/regen" }
     }
   },
   "$defs": {
@@ -69,6 +83,30 @@
       "properties": {
         "status": { "type": "string", "enum": ["success", "unavailable", "malformed", "stale"] },
         "detail": { "type": "string" }
+      }
+    },
+    "regen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package", "regenerated", "usedCatalog", "fuzzed", "oracleKind", "oracleVersion", "residualRisk"],
+      "properties": {
+        "package": { "type": "string" },
+        "regenerated": { "type": "boolean" },
+        "usedCatalog": { "type": "boolean" },
+        "fuzzed": { "type": "boolean" },
+        "oracleKind": { "type": ["string", "null"], "enum": ["new", "old", null] },
+        "oracleVersion": { "type": ["string", "null"] },
+        "residualRisk": { "type": "array", "items": { "type": "string" } },
+        "fuzz": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cases", "comparisons", "timerCases"],
+          "properties": {
+            "cases": { "type": "integer", "minimum": 0 },
+            "comparisons": { "type": "integer", "minimum": 0 },
+            "timerCases": { "type": "integer", "minimum": 0 }
+          }
+        }
       }
     }
   }

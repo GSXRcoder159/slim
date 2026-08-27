@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { hasStandingTests, hardeningTestPaths, standingTestPaths } from "../evidence/paths.ts";
 import type { EnvelopeDrift } from "../envelope/drift.ts";
@@ -23,11 +23,36 @@ export interface ReplacementState {
 interface EvidenceDoc {
   envelopeHash?: string;
   residualRisk?: unknown;
+  package?: { name?: string; version?: string };
   generation?: {
     kind?: string;
     catalogIds?: unknown;
     provider?: string;
   };
+}
+
+function sameSymbolSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((s) => set.has(s));
+}
+
+function slimPin(
+  root: string,
+  pkg: string,
+): { version: string; module: string } | null {
+  const p = join(root, "slim.json");
+  if (!existsSync(p)) return null;
+  try {
+    const slim = JSON.parse(readFileSync(p, "utf8")) as {
+      replacements?: Record<string, { version?: string; module?: string }>;
+    };
+    const rec = slim.replacements?.[pkg];
+    if (!rec?.version || !rec.module) return null;
+    return { version: rec.version, module: rec.module };
+  } catch {
+    return null;
+  }
 }
 
 function push(drift: EnvelopeDrift[], kind: string, detail: string): void {
@@ -92,6 +117,22 @@ export function replacementStateIssues(
   if (rec && hash && rec.envelopeHash !== hash) {
     push(drift, "hash", `manifest envelopeHash does not match envelope for ${pkg}`);
   }
+  if (rec && envelope && rec.version !== envelope.package.version) {
+    push(drift, "version", `manifest version ${rec.version} != envelope ${envelope.package.version}`);
+  }
+  if (rec && envelope) {
+    const envSymbols = envelope.symbols.map((s) => s.exportName);
+    if (!sameSymbolSet(rec.symbols, envSymbols)) {
+      push(drift, "symbol", `manifest symbols do not match envelope for ${pkg}`);
+    }
+  }
+  const pin = slimPin(root, pkg);
+  if (pin && envelope && pin.version !== envelope.package.version) {
+    push(drift, "version", `slim.json version ${pin.version} != envelope ${envelope.package.version}`);
+  }
+  if (pin && rec && pin.module !== rec.module) {
+    push(drift, "exports", `slim.json module ${pin.module} != manifest ${rec.module}`);
+  }
 
   const evidencePath = join(root, ".slim", pkg, "evidence.json");
   if (!existsSync(evidencePath)) {
@@ -101,6 +142,12 @@ export function replacementStateIssues(
       const ev = readDocument("evidence", evidencePath, "evidence.json") as EvidenceDoc;
       if (hash && ev.envelopeHash !== hash) {
         push(drift, "hash", `evidence.json envelopeHash does not match envelope for ${pkg}`);
+      }
+      if (envelope && ev.package?.name && ev.package.name !== envelope.package.name) {
+        push(drift, "evidence", `evidence.json package name mismatch for ${pkg}`);
+      }
+      if (envelope && ev.package?.version && ev.package.version !== envelope.package.version) {
+        push(drift, "version", `evidence.json version ${ev.package.version} != envelope ${envelope.package.version}`);
       }
       residualRisk = Array.isArray(ev.residualRisk) ? ev.residualRisk.map(String) : [];
       drift.push(...generationDrift(ev, pkg));

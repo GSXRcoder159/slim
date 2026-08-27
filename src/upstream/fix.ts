@@ -13,7 +13,8 @@ import { matchCatalog } from "../generate/catalog/index.ts";
 import { slimRoot } from "../generate/guard.ts";
 import { llmConfigFromEnv, generateWithLlm, type LlmConfig } from "../generate/llm.ts";
 import { loadPublicApi } from "../generate/public-api.ts";
-import { assertValidGenerated } from "../generate/validate.ts";
+import { assertValidGenerated, assertSmaller } from "../generate/validate.ts";
+import { checkContracts } from "../generate/exports.ts";
 import { writeEvidence } from "../evidence/report.ts";
 import { emitHardenedGetSetTest, emitStandingTests } from "../evidence/emit-tests.ts";
 import { runFuzz, type FuzzReport } from "../fuzz/run.ts";
@@ -22,6 +23,8 @@ import { runHardenedTests, runStandingTests } from "../check.ts";
 import { standingTestPaths } from "../evidence/paths.ts";
 import { MutationTxn } from "../rewrite/transaction.ts";
 import { detectRunner } from "../trace/runners.ts";
+import { estimatePackageSize } from "../size/estimate.ts";
+import { assertDocument, readDocument } from "../schema/documents.ts";
 import type { OsvVuln } from "./osv.ts";
 import type { NpmLatest } from "./npm.ts";
 import type { CreatePrOpts, PrResult } from "../github/pr.ts";
@@ -105,6 +108,9 @@ export interface ApplyUpstreamFixResult {
   fuzzSkipReason: string | null;
   fuzz: { cases: number; comparisons: number; timerCases: number } | null;
   hardenedTest: string | null;
+  oracleKind: "new" | "old" | null;
+  oracleVersion: string | null;
+  residualRisk: string[];
 }
 
 export async function canFuzzOracle(
@@ -128,6 +134,7 @@ export async function canFuzzOracle(
 export async function applyUpstreamFix(
   opts: ApplyUpstreamFixOpts,
   deps: UpstreamDeps = {},
+  sharedTxn?: MutationTxn,
 ): Promise<ApplyUpstreamFixResult> {
   const env = loadEnvelope(opts.root, opts.pkg);
   const symbols = usedSymbols(env, opts.rec);
@@ -152,27 +159,29 @@ export async function applyUpstreamFix(
     }
     usedCatalog = true;
     assertValidGenerated(ts, source, env);
+    const contracts = checkContracts(ts, source, env);
+    if (!contracts.ok) {
+      throw new SlimExit(EXIT_FAIL, `missing named export: ${contracts.errors.join("; ")}`);
+    }
   } else if (llmCfg) {
     pub = loadPublicApi(opts.root, opts.pkg, env.package.subpath);
     gen = await genLlm(env, pub, advisoryAbstracts(opts.findings), llmCfg);
     source = gen.source;
     assertValidGenerated(ts, source, env);
+    const contracts = checkContracts(ts, source, env);
+    if (!contracts.ok) {
+      throw new SlimExit(EXIT_FAIL, `missing named export: ${contracts.errors.join("; ")}`);
+    }
   }
 
-  const empty: ApplyUpstreamFixResult = {
-    pkg: opts.pkg,
-    regenerated: false,
-    usedCatalog,
-    fuzzed: false,
-    fuzzSkipReason: null,
-    fuzz: null,
-    hardenedTest: null,
-  };
-  if (!source) return empty;
+  if (!source) {
+    throw new SlimExit(EXIT_FAIL, `could not regenerate ${opts.pkg}: no catalog match and no LLM key`);
+  }
 
   let oracleTemp: string | undefined;
   let srcTemp: string | undefined;
-  const txn = new MutationTxn(opts.root);
+  const txn = sharedTxn ?? new MutationTxn(opts.root);
+  const ownsTxn = !sharedTxn;
   try {
     srcTemp = mkdtempSync(join(tmpdir(), "slim-up-src-"));
     const tmpSlim = join(srcTemp, "slim.mjs");
@@ -194,11 +203,11 @@ export async function applyUpstreamFix(
     oracleTemp = oracle?.tempDir;
 
     if (!oracle) {
-      return {
-        ...empty,
-        fuzzSkipReason: "fuzz skipped: no installable oracle",
-      };
+      throw new SlimExit(EXIT_FAIL, "verification unavailable: no installable oracle");
     }
+
+    const originalMin = estimatePackageSize(oracle.tempDir ?? opts.root, opts.pkg).minBytes;
+    assertSmaller(Buffer.byteLength(source), originalMin ?? 0, false);
 
     const budgetMs = opts.args.budgetMs ?? Math.min(opts.config.budgetMs, 5_000);
     const report = await fuzzImpl({
@@ -240,11 +249,11 @@ export async function applyUpstreamFix(
     txn.writeFile(moduleAbs, source);
     txn.prepareWrite(join(pkgSlimDir, "evidence.md"));
     txn.prepareWrite(join(pkgSlimDir, "evidence.json"));
-    writeEvidence({
+    const written = writeEvidence({
       root: opts.root,
       env: envWrite,
       replacementBytes: Buffer.byteLength(source),
-      originalMin: null,
+      originalMin,
       fuzz: {
         cases: report.cases,
         comparisons: report.comparisons,
@@ -287,11 +296,9 @@ export async function applyUpstreamFix(
       },
     });
 
-    txn.prepareWrite(join(pkgSlimDir, "envelope.json"));
-    writeFileSync(
-      join(pkgSlimDir, "envelope.json"),
-      JSON.stringify(envelopeForDisk(envWrite), null, 2) + "\n",
-    );
+    const disk = envelopeForDisk(envWrite);
+    assertDocument("envelope", disk);
+    txn.writeFile(join(pkgSlimDir, "envelope.json"), JSON.stringify(disk, null, 2) + "\n");
 
     const nextHash = hashEnvelope(envWrite);
     updateManifest(opts.root, opts.pkg, opts.rec, {
@@ -319,7 +326,7 @@ export async function applyUpstreamFix(
     standing(opts.root, opts.pkg, opts.config.outDir, undefined, Boolean(opts.args.json));
     hardened(opts.root, opts.rec.module, undefined, Boolean(opts.args.json));
 
-    txn.commit();
+    if (ownsTxn) txn.commit();
     return {
       pkg: opts.pkg,
       regenerated: true,
@@ -332,9 +339,12 @@ export async function applyUpstreamFix(
         timerCases: report.timerCases,
       },
       hardenedTest: hardenedAbs,
+      oracleKind: oracle.kind,
+      oracleVersion: pinTo,
+      residualRisk: written.residualRisk,
     };
   } catch (err) {
-    txn.rollback();
+    if (ownsTxn) txn.rollback();
     throw err;
   } finally {
     if (srcTemp) {
@@ -427,23 +437,7 @@ function usedSymbols(env: Envelope, rec: ManifestReplacement): string[] {
 
 function loadEnvelope(root: string, pkg: string): Envelope {
   const p = join(root, ".slim", pkg, "envelope.json");
-  if (!existsSync(p)) {
-    throw new SlimExit(EXIT_FAIL, `missing envelope ${p}`);
-  }
-  let raw: unknown;
-  try {
-    raw = JSON.parse(readFileSync(p, "utf8"));
-  } catch {
-    throw new SlimExit(EXIT_FAIL, `malformed envelope ${p}`);
-  }
-  if (!raw || typeof raw !== "object") {
-    throw new SlimExit(EXIT_FAIL, `malformed envelope ${p}`);
-  }
-  const env = raw as Envelope;
-  if (!env.package?.name || !Array.isArray(env.symbols) || !env.closure) {
-    throw new SlimExit(EXIT_FAIL, `malformed envelope ${p}`);
-  }
-  return env;
+  return readDocument("envelope", p, `envelope ${p}`) as Envelope;
 }
 
 function loadTs(root: string): typeof import("typescript") {
@@ -542,14 +536,17 @@ function updateManifest(
   const p = join(root, ".slim", "manifest.json");
   if (!existsSync(p)) return;
   const man = JSON.parse(readFileSync(p, "utf8")) as {
+    schemaVersion?: number;
     replacements: Record<string, ManifestReplacement>;
   };
+  man.schemaVersion = 1;
   if (man.replacements?.[pkg]) {
     man.replacements[pkg] = {
       ...man.replacements[pkg],
       envelopeHash: next.envelopeHash,
       ...(next.version ? { version: next.version } : {}),
     };
+    assertDocument("manifest", man);
     txn.writeFile(p, JSON.stringify(man, null, 2) + "\n");
   }
 }
@@ -562,6 +559,7 @@ function bumpSlimJsonPin(root: string, pkg: string, version: string, txn: Mutati
   };
   if (slim.replacements?.[pkg]) {
     slim.replacements[pkg] = { ...slim.replacements[pkg], version };
+    assertDocument("slim", slim);
     txn.writeFile(p, JSON.stringify(slim, null, 2) + "\n");
   }
 }

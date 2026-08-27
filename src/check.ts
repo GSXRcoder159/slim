@@ -410,13 +410,6 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
       ...missingExports(project.root, moduleRel, saved),
       ...originalPackageImports(project.root, scanFiles, pkg),
     ]);
-    const configuredVersion = config.replacements[pkg]?.version;
-    if (configuredVersion && saved.package?.version && configuredVersion !== saved.package.version) {
-      drift.push({
-        kind: "version",
-        detail: `slim.json version ${configuredVersion} != envelope ${saved.package.version}`,
-      });
-    }
     const extraUnknowns = now.unknowns.filter((u) => !saved.unknowns?.some((s) => s.kind === u.kind && s.id === u.id));
     if (drift.length) {
       emitDiag(

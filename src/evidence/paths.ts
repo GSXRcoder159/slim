@@ -1,12 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileBase } from "../rewrite/paths.ts";
 
 export function standingTestPaths(
   root: string,
   pkg: string,
   outDir: string,
 ): { tsRel: string; jsRel: string; tsAbs: string; jsAbs: string } {
-  const stem = `${pkg.replace(/\//g, "-")}.test`;
+  const stem = `${fileBase(pkg)}.test`;
   const tsRel = join(outDir, `${stem}.ts`);
   const jsRel = join(outDir, `${stem}.js`);
   return { tsRel, jsRel, tsAbs: join(root, tsRel), jsAbs: join(root, jsRel) };
