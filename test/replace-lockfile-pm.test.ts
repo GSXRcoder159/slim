@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
+import { applyRevert, type RevertPlan } from "../src/rewrite/revert.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const NODE_BIN = dirname(process.execPath);
@@ -23,15 +24,16 @@ function which(bin: string): boolean {
   return r.status === 0 && Boolean((r.stdout ?? "").trim());
 }
 
-function runSlim(cwd: string, args: string[]) {
+function runSlim(cwd: string, args: string[], extra: NodeJS.ProcessEnv = {}) {
   const dist = join(ROOT, "dist", "main.js");
-  const argv = existsSync(dist)
-    ? [dist, ...args]
-    : ["--experimental-strip-types", join(ROOT, "src/main.ts"), ...args];
+  const argv =
+    existsSync(dist) && !extra.SLIM_INJECT_FAIL
+      ? [dist, ...args]
+      : ["--experimental-strip-types", join(ROOT, "src/main.ts"), ...args];
   return spawnSync(process.execPath, argv, {
     cwd,
     encoding: "utf8",
-    env: pmEnv({ CI: "1" }),
+    env: pmEnv(extra),
     timeout: 180_000,
   });
 }
@@ -112,6 +114,18 @@ function assertMsGone(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void 
   }
 }
 
+function lockfileBytes(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): Buffer {
+  if (kind === "npm") return readFileSync(join(dir, "package-lock.json"));
+  if (kind === "pnpm") return readFileSync(join(dir, "pnpm-lock.yaml"));
+  if (kind === "yarn") return readFileSync(join(dir, "yarn.lock"));
+  if (existsSync(join(dir, "bun.lock"))) return readFileSync(join(dir, "bun.lock"));
+  return readFileSync(join(dir, "bun.lockb"));
+}
+
+function pmBin(kind: "npm" | "pnpm" | "yarn" | "bun"): string {
+  return kind;
+}
+
 function runReplace(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
   const r = runSlim(dir, [
     "replace",
@@ -125,15 +139,67 @@ function runReplace(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
   ]);
   assert.equal(r.status, 0, `${kind}: ${r.stderr}\n${r.stdout}`);
   assertMsGone(dir, kind);
+  const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
+    devDependencies?: Record<string, string>;
+  };
+  assert.ok(pkg.devDependencies?.typescript, `${kind} dropped unrelated typescript`);
+  assert.ok(existsSync(join(dir, "src", "slim", "ms.ts")), `${kind} missing slice`);
+  assert.ok(existsSync(join(dir, "src", "slim", "ms.test.ts")), `${kind} missing standing tests`);
+  const check = runSlim(dir, ["check"]);
+  assert.equal(check.status, 0, `${kind} check: ${check.stderr}\n${check.stdout}`);
+}
+
+function revertAndReinstall(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
+  const evidence = JSON.parse(readFileSync(join(dir, ".slim", "ms", "evidence.json"), "utf8")) as {
+    revert: RevertPlan;
+  };
+  applyRevert(dir, evidence.revert);
+  const inst = spawnSync(pmBin(kind), ["install"], {
+    cwd: dir,
+    encoding: "utf8",
+    env: pmEnv(),
+    timeout: 120_000,
+  });
+  assert.equal(inst.status, 0, `${kind} revert install: ${inst.stderr}`);
+  const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
+    dependencies?: Record<string, string>;
+  };
+  assert.equal(pkg.dependencies?.ms, "2.1.3", `${kind} revert did not restore ms`);
+}
+
+function installKind(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
+  const inst = spawnSync(pmBin(kind), ["install"], {
+    cwd: dir,
+    encoding: "utf8",
+    env: pmEnv(),
+    timeout: 120_000,
+  });
+  assert.equal(inst.status, 0, `${kind} install: ${inst.stderr}\n${inst.stdout}`);
+}
+
+function runReplaceRollback(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
+  const beforePkg = readFileSync(join(dir, "package.json"));
+  const beforeLock = lockfileBytes(dir, kind);
+  const r = runSlim(
+    dir,
+    ["replace", "ms", "--no-pr", "--no-trace", "--budget-ms", "800", "--workers", "1"],
+    { SLIM_INJECT_FAIL: "after-lockfile" },
+  );
+  assert.notEqual(r.status, 0, `${kind} inject should fail`);
+  assert.match(r.stderr, /injected failure: after-lockfile/);
+  assert.deepEqual(readFileSync(join(dir, "package.json")), beforePkg, `${kind} package.json`);
+  assert.deepEqual(lockfileBytes(dir, kind), beforeLock, `${kind} lockfile`);
+  assert.equal(existsSync(join(dir, "src", "slim", "ms.ts")), false, `${kind} leftover slice`);
+  assert.equal(existsSync(join(dir, ".slim", "ms", "evidence.json")), false, `${kind} leftover evidence`);
 }
 
 test("npm lockfile replace removes ms from package-lock.json", { timeout: 180_000 }, () => {
   const dir = mkdtempSync(join(tmpdir(), "slim-pm-npm-"));
   writeApp(dir);
-  const inst = spawnSync("npm", ["install"], { cwd: dir, encoding: "utf8", env: pmEnv(), timeout: 120_000 });
-  assert.equal(inst.status, 0, inst.stderr);
+  installKind(dir, "npm");
   assert.ok(existsSync(join(dir, "package-lock.json")));
   runReplace(dir, "npm");
+  revertAndReinstall(dir, "npm");
 });
 
 test("pnpm lockfile replace removes ms from pnpm-lock.yaml", { timeout: 180_000 }, () => {
@@ -141,10 +207,10 @@ test("pnpm lockfile replace removes ms from pnpm-lock.yaml", { timeout: 180_000 
   if (!which("pnpm")) throw new Error("pnpm is required for Phase 8 lockfile receipts");
   const dir = mkdtempSync(join(tmpdir(), "slim-pm-pnpm-"));
   writeApp(dir);
-  const inst = spawnSync("pnpm", ["install"], { cwd: dir, encoding: "utf8", env: pmEnv(), timeout: 120_000 });
-  assert.equal(inst.status, 0, inst.stderr);
+  installKind(dir, "pnpm");
   assert.ok(existsSync(join(dir, "pnpm-lock.yaml")));
   runReplace(dir, "pnpm");
+  revertAndReinstall(dir, "pnpm");
 });
 
 test("yarn lockfile replace removes ms from yarn.lock", { timeout: 180_000 }, () => {
@@ -152,10 +218,10 @@ test("yarn lockfile replace removes ms from yarn.lock", { timeout: 180_000 }, ()
   if (!which("yarn")) throw new Error("yarn is required for Phase 8 lockfile receipts");
   const dir = mkdtempSync(join(tmpdir(), "slim-pm-yarn-"));
   writeApp(dir);
-  const inst = spawnSync("yarn", ["install"], { cwd: dir, encoding: "utf8", env: pmEnv(), timeout: 120_000 });
-  assert.equal(inst.status, 0, inst.stderr);
+  installKind(dir, "yarn");
   assert.ok(existsSync(join(dir, "yarn.lock")));
   runReplace(dir, "yarn");
+  revertAndReinstall(dir, "yarn");
 });
 
 test("bun lockfile replace removes ms from bun.lock", { timeout: 180_000 }, () => {
@@ -164,8 +230,43 @@ test("bun lockfile replace removes ms from bun.lock", { timeout: 180_000 }, () =
   }
   const dir = mkdtempSync(join(tmpdir(), "slim-pm-bun-"));
   writeApp(dir);
-  const inst = spawnSync("bun", ["install"], { cwd: dir, encoding: "utf8", env: pmEnv(), timeout: 120_000 });
-  assert.equal(inst.status, 0, inst.stderr);
+  installKind(dir, "bun");
   assert.ok(existsSync(join(dir, "bun.lock")) || existsSync(join(dir, "bun.lockb")), "missing bun lockfile");
   runReplace(dir, "bun");
+  revertAndReinstall(dir, "bun");
+});
+
+test("npm lockfile refresh failure rolls back package.json and lockfile", { timeout: 180_000 }, () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-pm-npm-rb-"));
+  writeApp(dir);
+  installKind(dir, "npm");
+  runReplaceRollback(dir, "npm");
+});
+
+test("pnpm lockfile refresh failure rolls back package.json and lockfile", { timeout: 180_000 }, () => {
+  if (!which("pnpm")) prepareCorepack("pnpm@9.15.9");
+  if (!which("pnpm")) throw new Error("pnpm is required for Phase 8 lockfile receipts");
+  const dir = mkdtempSync(join(tmpdir(), "slim-pm-pnpm-rb-"));
+  writeApp(dir);
+  installKind(dir, "pnpm");
+  runReplaceRollback(dir, "pnpm");
+});
+
+test("yarn lockfile refresh failure rolls back package.json and lockfile", { timeout: 180_000 }, () => {
+  prepareCorepack("yarn@1.22.22");
+  if (!which("yarn")) throw new Error("yarn is required for Phase 8 lockfile receipts");
+  const dir = mkdtempSync(join(tmpdir(), "slim-pm-yarn-rb-"));
+  writeApp(dir);
+  installKind(dir, "yarn");
+  runReplaceRollback(dir, "yarn");
+});
+
+test("bun lockfile refresh failure rolls back package.json and lockfile", { timeout: 180_000 }, () => {
+  if (!which("bun")) {
+    throw new Error("bun is required for Phase 8 lockfile receipts. Install bun (CI: oven-sh/setup-bun).");
+  }
+  const dir = mkdtempSync(join(tmpdir(), "slim-pm-bun-rb-"));
+  writeApp(dir);
+  installKind(dir, "bun");
+  runReplaceRollback(dir, "bun");
 });

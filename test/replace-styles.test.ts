@@ -5,22 +5,25 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 function runSlim(cwd: string, args: string[]) {
-  const env: NodeJS.ProcessEnv = { ...process.env, CI: "1" };
-  delete env.NODE_TEST_CONTEXT;
-  delete env.NODE_CHANNEL_FD;
   return spawnSync(
     process.execPath,
     ["--experimental-strip-types", join(ROOT, "src/main.ts"), ...args],
-    { cwd, encoding: "utf8", env, timeout: 180_000 },
+    { cwd, encoding: "utf8", env: hermeticPmEnv(), timeout: 180_000 },
   );
 }
 
 function npmInstall(cwd: string): void {
-  const r = spawnSync("npm", ["install", "--ignore-scripts"], { cwd, encoding: "utf8", timeout: 120_000 });
+  const r = spawnSync("npm", ["install", "--ignore-scripts"], {
+    cwd,
+    encoding: "utf8",
+    env: hermeticPmEnv(),
+    timeout: 120_000,
+  });
   assert.equal(r.status, 0, r.stderr);
 }
 

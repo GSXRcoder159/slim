@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TMP = tmpdir();
 
@@ -24,10 +26,12 @@ function run(
   extraEnv: NodeJS.ProcessEnv = {},
   timeoutMs = 180_000,
 ): { status: number; stdout: string; stderr: string } {
-  const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv, CI: "1" };
-  delete env.NODE_TEST_CONTEXT;
-  delete env.NODE_CHANNEL_FD;
-  const r = spawnSync(bin, args, { cwd, encoding: "utf8", env, timeout: timeoutMs });
+  const r = spawnSync(bin, args, {
+    cwd,
+    encoding: "utf8",
+    env: hermeticPmEnv({ ...extraEnv }),
+    timeout: timeoutMs,
+  });
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
@@ -44,6 +48,7 @@ function packTarball(): { dir: string; tarball: string } {
       cwd: ROOT,
       encoding: "utf8",
       timeout: 60_000,
+      env: hermeticPmEnv(),
     },
   ).trim();
   return { dir, tarball: join(dir, tgz.split("\n").pop() ?? tgz) };
@@ -73,7 +78,7 @@ function slimJs(cwd: string): string {
 function installSlim(cwd: string, tarball: string, ignoreScripts = false): void {
   const args = ["install", tarball];
   if (ignoreScripts) args.push("--ignore-scripts");
-  execFileSync("npm", args, { cwd, encoding: "utf8", timeout: 120_000 });
+  execFileSync("npm", args, { cwd, encoding: "utf8", timeout: 120_000, env: hermeticPmEnv() });
 }
 
 test("packed consumer: doctor scan inspect traced lodash replace check evidence", { timeout: 300_000 }, () => {

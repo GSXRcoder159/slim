@@ -1,15 +1,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readlinkSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { EXIT_FAIL, EXIT_USAGE, SlimExit } from "../src/exit.ts";
 import { MutationTxn } from "../src/rewrite/transaction.ts";
 
 function tmp(): string {
@@ -108,4 +114,74 @@ test("prepareWrite creates parent directories", () => {
   writeFileSync(f, "ok");
   assert.equal(readFileSync(f, "utf8"), "ok");
   rmSync(root, { recursive: true, force: true });
+});
+
+test("rollback restores an internal symlink as the same link target", () => {
+  const root = tmp();
+  const real = join(root, "real.txt");
+  const link = join(root, "link.txt");
+  writeFileSync(real, "orig");
+  symlinkSync("real.txt", link);
+  const txn = new MutationTxn(root);
+  txn.writeFile(link, "mutated");
+  assert.equal(readFileSync(real, "utf8"), "mutated");
+  txn.rollback();
+  assert.equal(lstatSync(link).isSymbolicLink(), true);
+  assert.equal(readlinkSync(link), "real.txt");
+  assert.equal(readFileSync(real, "utf8"), "orig");
+});
+
+test("rollback restores a dangling symlink instead of leaving a regular file", () => {
+  const root = tmp();
+  const link = join(root, "link.txt");
+  symlinkSync("gone.txt", link);
+  const txn = new MutationTxn(root);
+  txn.snapshot(link);
+  rmSync(link);
+  writeFileSync(link, "now a file");
+  txn.rollback();
+  assert.equal(lstatSync(link).isSymbolicLink(), true);
+  assert.equal(readlinkSync(link), "gone.txt");
+});
+
+test("write through an escaping symlink is refused and leaves both sides unchanged", () => {
+  const root = tmp();
+  const outside = mkdtempSync(join(tmpdir(), "slim-txn-out-"));
+  const secret = join(outside, "secret.txt");
+  writeFileSync(secret, "keep");
+  const link = join(root, "link.txt");
+  symlinkSync(secret, link);
+  const txn = new MutationTxn(root);
+  assert.throws(
+    () => txn.writeFile(link, "hacked"),
+    (e: unknown) => e instanceof SlimExit && e.code === EXIT_USAGE && /escapes the project/i.test(e.message),
+  );
+  assert.equal(lstatSync(link).isSymbolicLink(), true);
+  assert.equal(readFileSync(secret, "utf8"), "keep");
+  rmSync(outside, { recursive: true, force: true });
+});
+
+test("rollback restores execute bits on posix", { skip: process.platform === "win32" }, () => {
+  const root = tmp();
+  const f = join(root, "run.sh");
+  writeFileSync(f, "#!/bin/sh\n");
+  chmodSync(f, 0o755);
+  const before = lstatSync(f).mode & 0o777;
+  const txn = new MutationTxn(root);
+  txn.writeFile(f, "#!/bin/sh\necho x\n");
+  txn.rollback();
+  assert.equal(lstatSync(f).mode & 0o777, before);
+});
+
+test("write to a fifo is refused before mutation", { skip: process.platform === "win32" }, () => {
+  const root = tmp();
+  const fifo = join(root, "pipe");
+  const mk = spawnSync("mkfifo", [fifo], { encoding: "utf8" });
+  if (mk.status !== 0) throw new Error(`mkfifo failed: ${mk.stderr}`);
+  const txn = new MutationTxn(root);
+  assert.throws(
+    () => txn.writeFile(fifo, "nope"),
+    (e: unknown) => e instanceof SlimExit && e.code === EXIT_FAIL && /special file/i.test(e.message),
+  );
+  assert.equal(lstatSync(fifo).isFIFO(), true);
 });

@@ -97,3 +97,22 @@ test("shouldRefreshLockfile still skips keep-original and no-install", () => {
   assert.equal(shouldRefreshLockfile({ keepOriginal: false, noInstall: true }), false);
   assert.equal(shouldRefreshLockfile({ keepOriginal: true, noInstall: false }), false);
 });
+
+test("refreshLockfile frozen restore does not rewrite the lockfile", () => {
+  const calls: Array<{ file: string; args: string[]; env?: NodeJS.ProcessEnv }> = [];
+  refreshLockfile(project("npm"), { frozen: true }, (file, args, opts) => {
+    calls.push({
+      file: String(file),
+      args: args as string[],
+      env: (opts as { env?: NodeJS.ProcessEnv }).env,
+    });
+    return Buffer.from("");
+  });
+  assert.deepEqual(calls[0]!.args, ["ci", "--ignore-scripts"]);
+  assert.equal(calls[0]!.env?.npm_config_frozen_lockfile, "true");
+  refreshLockfile(project("pnpm"), { frozen: true }, (file, args) => {
+    calls.push({ file: String(file), args: args as string[] });
+    return Buffer.from("");
+  });
+  assert.ok(calls[1]!.args.includes("--frozen-lockfile"));
+});

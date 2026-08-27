@@ -4,26 +4,27 @@ import {
   chmodSync,
   cpSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   rmSync,
-  statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join, relative } from "node:path";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { applyRevert, type RevertPlan } from "../src/rewrite/revert.ts";
+import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 function runSlim(cwd: string, args: string[], extraEnv: NodeJS.ProcessEnv = {}) {
-  const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv, CI: "1" };
-  delete env.NODE_TEST_CONTEXT;
-  delete env.NODE_CHANNEL_FD;
+  const env = hermeticPmEnv({ ...extraEnv });
   return spawnSync(
     process.execPath,
     ["--experimental-strip-types", join(ROOT, "src/main.ts"), ...args],
@@ -51,9 +52,11 @@ function snapshotTree(root: string): Record<string, string> {
     for (const name of readdirSync(dir)) {
       if (name === "node_modules" || name === ".git") continue;
       const p = join(dir, name);
-      const st = statSync(p);
-      if (st.isDirectory()) walk(p);
-      else if (st.isFile()) out[relative(root, p).replace(/\\/g, "/")] = readFileSync(p, "utf8");
+      const st = lstatSync(p);
+      const rel = relative(root, p).replace(/\\/g, "/");
+      if (st.isSymbolicLink()) out[rel] = `symlink:${readlinkSync(p)}`;
+      else if (st.isDirectory()) walk(p);
+      else if (st.isFile()) out[rel] = readFileSync(p, "utf8");
     }
   };
   walk(root);
@@ -64,6 +67,7 @@ function npmInstall(cwd: string): void {
   const r = spawnSync("npm", ["install", "--ignore-scripts"], {
     cwd,
     encoding: "utf8",
+    env: hermeticPmEnv(),
     timeout: 120_000,
   });
   assert.equal(r.status, 0, r.stderr);
@@ -292,10 +296,100 @@ test("no tmp.mjs remains under the project after replace", { timeout: 180_000 },
     for (const name of readdirSync(dir)) {
       if (name === "node_modules") continue;
       const p = join(dir, name);
-      if (statSync(p).isDirectory()) walk(p);
+      if (lstatSync(p).isDirectory()) walk(p);
       else if (name.endsWith(".tmp.mjs")) leftovers.push(p);
     }
   };
   walk(dest);
   assert.deepEqual(leftovers, []);
+});
+
+test("dry-run leaves git status and file kinds unchanged", { timeout: 180_000 }, () => {
+  const dest = mkdtempSync(join(tmpdir(), "slim-dry-git-"));
+  copyMs(dest);
+  npmInstall(dest);
+  execFileSync("git", ["init", "--template=", "-b", "main"], { cwd: dest, encoding: "utf8" });
+  execFileSync("git", ["config", "user.email", "slim@test"], { cwd: dest, encoding: "utf8" });
+  execFileSync("git", ["config", "user.name", "slim"], { cwd: dest, encoding: "utf8" });
+  execFileSync("git", ["add", "-A"], { cwd: dest, encoding: "utf8" });
+  execFileSync("git", ["commit", "-m", "init", "--no-verify"], { cwd: dest, encoding: "utf8" });
+  const before = snapshotTree(dest);
+  const porcelain = execFileSync("git", ["status", "--porcelain"], { cwd: dest, encoding: "utf8" });
+  const r = runSlim(dest, ["replace", "ms", "--dry-run", "--no-pr", "--budget-ms", "800"]);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.deepEqual(snapshotTree(dest), before);
+  assert.equal(execFileSync("git", ["status", "--porcelain"], { cwd: dest, encoding: "utf8" }), porcelain);
+});
+
+test("escaping source symlink refuses replace without mutating the target", { timeout: 180_000 }, () => {
+  const dest = mkdtempSync(join(tmpdir(), "slim-esc-"));
+  const outside = mkdtempSync(join(tmpdir(), "slim-esc-out-"));
+  copyMs(dest);
+  const secret = join(outside, "secret.ts");
+  writeFileSync(secret, 'import ms from "ms";\nexport const n = ms("1h");\n');
+  symlinkSync(secret, join(dest, "src", "leak.ts"));
+  npmInstall(dest);
+  const before = snapshotTree(dest);
+  const secretBefore = readFileSync(secret, "utf8");
+  const r = runSlim(dest, [
+    "replace",
+    "ms",
+    "--no-pr",
+    "--no-trace",
+    "--no-install",
+    "--budget-ms",
+    "800",
+    "--workers",
+    "1",
+  ]);
+  assert.notEqual(r.status, 0, "escaping symlink must refuse");
+  assert.match(`${r.stderr}${r.stdout}`, /unsafe write|escapes the project/i);
+  assert.deepEqual(snapshotTree(dest), before);
+  assert.equal(readFileSync(secret, "utf8"), secretBefore);
+  assert.equal(lstatSync(join(dest, "src", "leak.ts")).isSymbolicLink(), true);
+});
+
+test("injected failure after each mutation step restores the project", { timeout: 600_000 }, () => {
+  const steps = [
+    "after-slice",
+    "after-rewrites",
+    "after-lockfile",
+    "after-evidence",
+    "after-standing",
+    "after-manifest",
+  ];
+  for (const step of steps) {
+    const dest = mkdtempSync(join(tmpdir(), `slim-inj-${step}-`));
+    copyMs(dest);
+    npmInstall(dest);
+    const before = snapshotTree(dest);
+    const r = runSlim(
+      dest,
+      [
+        "replace",
+        "ms",
+        "--no-pr",
+        "--no-trace",
+        "--no-install",
+        "--budget-ms",
+        "800",
+        "--workers",
+        "1",
+      ],
+      { SLIM_INJECT_FAIL: step },
+    );
+    assert.notEqual(r.status, 0, step);
+    assert.match(r.stderr, new RegExp(`injected failure: ${step}`));
+    assert.deepEqual(snapshotTree(dest), before, step);
+    assert.equal(existsSync(join(dest, "src", "slim", "ms.ts")), false, step);
+  }
+});
+
+test("qualification leaves no package-manager store or tarball in the Slim checkout", () => {
+  assert.equal(existsSync(join(ROOT, ".pnpm-store")), false);
+  assert.equal(existsSync(join(ROOT, "node_modules", ".pnpm-store")), false);
+  assert.equal(
+    readdirSync(ROOT).some((f) => f.endsWith(".tgz")),
+    false,
+  );
 });

@@ -23,8 +23,8 @@ import { assertValidGenerated, assertSmaller } from "./generate/validate.ts";
 import { loadPublicApi, type PublicApiSpec } from "./generate/public-api.ts";
 import { runFuzz, type FuzzReport } from "./fuzz/run.ts";
 import { repairLoop } from "./generate/repair.ts";
-import { rewriteProjectImports } from "./rewrite/splice.ts";
-import { rewritePackageJson } from "./rewrite/packagejson.ts";
+import { rewriteSpecifiers as spliceSpecifiers } from "./rewrite/splice.ts";
+import { removeDependencyKey } from "./rewrite/packagejson.ts";
 import { installCommandFor, refreshLockfile, shouldRefreshLockfile } from "./rewrite/lockfile.ts";
 import { writeEvidence } from "./evidence/report.ts";
 import { emitStandingTests } from "./evidence/emit-tests.ts";
@@ -43,6 +43,13 @@ import { emitCjsSource, isCjsConsumer } from "./rewrite/cjs-emit.ts";
 import type { RevertPlan } from "./rewrite/revert.ts";
 
 export { withLocalBinPath, writeTracesMeta };
+
+/** ponytail: qualification inject; not a public flag */
+function injectFail(step: string): void {
+  if (process.env.SLIM_INJECT_FAIL === step) {
+    throw new SlimExit(EXIT_FAIL, `injected failure: ${step}`);
+  }
+}
 
 export async function runReplace(args: CliArgs): Promise<number> {
   if (!args.pkg) throw new SlimExit(EXIT_USAGE, "usage: slim replace <pkg>");
@@ -232,9 +239,16 @@ export async function runReplace(args: CliArgs): Promise<number> {
   }).filter((f) => {
     if (f === slimPath || f.endsWith(".tmp.mjs")) return false;
     if (f === outAbs || f.startsWith(outAbs + sep)) return false;
-    if (!isSafeToRewrite(project.root, f)) return false;
     return true;
   });
+  for (const f of files) {
+    if (!isSafeToRewrite(project.root, f)) {
+      throw new SlimExit(
+        EXIT_USAGE,
+        `unsafe write: ${relative(project.root, f).replace(/\\/g, "/")} escapes the project or is a special file`,
+      );
+    }
+  }
   const needsCjs = files.some((f) => isCjsConsumer(f, pkgType));
   const cjsPath = needsCjs ? join(outAbs, `${fileBase(env.package.name)}.cjs`) : null;
   const standingTestRel = relative(
@@ -250,16 +264,18 @@ export async function runReplace(args: CliArgs): Promise<number> {
     if (cjsPath) {
       txn.writeFile(cjsPath, emitCjsSource(ts, source, cjsPath));
     }
+    injectFail("after-slice");
 
     const changed: string[] = [];
     const rewrites: RevertPlan["rewrites"] = [];
     for (const file of files) {
       const dest = needsCjs && isCjsConsumer(file, pkgType) && cjsPath ? cjsPath : slimPath;
       const rel = toRelativeSpecifier(file, dest);
-      txn.snapshot(file);
-      const did = rewriteProjectImports(project.root, [file], fromSpecs, rel);
-      if (did.length) {
-        changed.push(...did);
+      const src = readFileSync(file, "utf8");
+      const next = spliceSpecifiers(ts, src, file, fromSpecs, rel);
+      if (next.changed) {
+        txn.writeFile(file, next.text);
+        changed.push(file);
         const orig = env.imports.find((i) => join(project.root, i.loc.file) === file)?.specifier;
         rewrites.push({
           file: relative(project.root, file).replace(/\\/g, "/"),
@@ -268,10 +284,20 @@ export async function runReplace(args: CliArgs): Promise<number> {
         });
       }
     }
+    injectFail("after-rewrites");
 
     txn.snapshot(project.packageJsonPath);
     if (!args.keepOriginal) {
-      for (const name of removeNames) rewritePackageJson(project.packageJsonPath, name);
+      let pkgText = readFileSync(project.packageJsonPath, "utf8");
+      let removed = false;
+      for (const name of removeNames) {
+        const next = removeDependencyKey(pkgText, name);
+        if (next.removed) {
+          pkgText = next.text;
+          removed = true;
+        }
+      }
+      if (removed) txn.writeFile(project.packageJsonPath, pkgText);
     }
     const lf = lockfilePath(project.root, project.lockfile);
     if (lf) txn.snapshot(lf);
@@ -279,6 +305,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
       refreshLockfile(project);
       txn.lockfileRefreshed = true;
     }
+    injectFail("after-lockfile");
 
     const holes = coverageHoles(env);
     const revert: RevertPlan = {
@@ -332,6 +359,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
             counterexamples: genExamples,
           },
     });
+    injectFail("after-evidence");
 
     const runner = detectRunner(project.root);
     const testRunner = runner.kind === "vitest" ? "vitest" : "node:test";
@@ -347,6 +375,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
       runner: testRunner,
       moduleSpecifier: modSpec,
     });
+    injectFail("after-standing");
 
     txn.prepareWrite(join(project.root, ".slim", "manifest.json"));
     writeManifest(project.root, env, slimPath);
@@ -358,6 +387,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
     writeFileSync(join(pkgSlimDir, "envelope.json"), JSON.stringify(envelopeForDisk(env), null, 2) + "\n");
     txn.prepareWrite(join(pkgSlimDir, "traces.meta.json"));
     writeTracesMeta(pkgSlimDir);
+    injectFail("after-manifest");
 
     process.stdout.write(
       `wrote ${relative(project.root, slimPath)}  (${replacementBytes} B, hash ${hashEnvelope(env).slice(0, 12)}…)\n`,
@@ -376,7 +406,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
     txn.rollback();
     if (ranInstall) {
       try {
-        refreshLockfile(project, { keepOriginal: false, noInstall: false });
+        refreshLockfile(project, { keepOriginal: false, noInstall: false, frozen: true });
       } catch {
         process.stderr.write("lockfile restored; node_modules may need a manual install\n");
       }

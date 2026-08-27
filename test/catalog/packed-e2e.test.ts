@@ -14,6 +14,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { hermeticPmEnv } from "../../src/rewrite/lockfile.ts";
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TMP = tmpdir();
 
@@ -30,14 +32,9 @@ const CASES: Array<{ dir: string; pkg: string; lodashInput?: boolean }> = [
 ];
 
 function npmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, ...extra, CI: "1" };
-  delete env.NODE_TEST_CONTEXT;
-  delete env.NODE_CHANNEL_FD;
+  const env = hermeticPmEnv({ ...extra, npm_config_update_notifier: "false" });
   delete env.ANTHROPIC_API_KEY;
   delete env.OPENAI_API_KEY;
-  delete env.INIT_CWD;
-  env.npm_config_cache = join(TMP, "slim-npm-cache");
-  env.npm_config_update_notifier = "false";
   return env;
 }
 

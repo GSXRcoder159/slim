@@ -58,17 +58,18 @@ export function installCommandFor(lockfile: Project["lockfile"]): string {
 
 export function refreshLockfile(
   project: Project,
-  opts?: { keepOriginal?: boolean; noInstall?: boolean },
+  opts?: { keepOriginal?: boolean; noInstall?: boolean; frozen?: boolean },
   execFile: ExecFile = execFileSync,
 ): void {
   if (opts && !shouldRefreshLockfile(opts)) return;
   const cwd = project.root;
   const bin = pmBinary(project.lockfile);
   const env = installEnv();
-  const args =
-    bin === "pnpm" && env.npm_config_store_dir
-      ? ["install", "--store-dir", env.npm_config_store_dir]
-      : ["install"];
+  if (opts?.frozen) {
+    env.npm_config_frozen_lockfile = "true";
+    env.YARN_ENABLE_IMMUTABLE_INSTALLS = "true";
+  }
+  const args = frozenInstallArgs(bin, env, Boolean(opts?.frozen));
   try {
     execFile(bin, args, { cwd, encoding: "utf8", stdio: "inherit", env });
   } catch (err) {
@@ -84,4 +85,17 @@ export function refreshLockfile(
     const detail = (stderr || msg).slice(0, 800);
     throw new SlimExit(EXIT_FAIL, `lockfile refresh failed; ${bin} install exited nonzero. ${detail}`);
   }
+}
+
+function frozenInstallArgs(bin: string, env: NodeJS.ProcessEnv, frozen: boolean): string[] {
+  if (bin === "pnpm") {
+    const args = ["install"];
+    if (env.npm_config_store_dir) args.push("--store-dir", env.npm_config_store_dir);
+    if (frozen) args.push("--frozen-lockfile");
+    return args;
+  }
+  if (frozen && bin === "yarn") return ["install", "--frozen-lockfile"];
+  if (frozen && bin === "bun") return ["install", "--frozen-lockfile"];
+  if (frozen && bin === "npm") return ["ci", "--ignore-scripts"];
+  return ["install"];
 }

@@ -1,17 +1,68 @@
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
+  readlinkSync,
+  realpathSync,
   rmdirSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { assertSafeWrite, pathEscapesRoot } from "./paths.ts";
 
-/** Snapshot mutated paths; restore or unlink on rollback. First snapshot wins. */
+type Snap =
+  | { kind: "absent" }
+  | { kind: "file"; bytes: Buffer; mode: number }
+  | { kind: "symlink"; target: string };
+
+function isEnoent(err: unknown): boolean {
+  return Boolean(err && typeof err === "object" && "code" in err && (err as { code: string }).code === "ENOENT");
+}
+
+function unlinkPath(path: string): void {
+  try {
+    lstatSync(path);
+  } catch (err) {
+    if (isEnoent(err)) return;
+    throw err;
+  }
+  unlinkSync(path);
+}
+
+function restore(path: string, snap: Snap): void {
+  if (snap.kind === "absent") {
+    try {
+      unlinkPath(path);
+    } catch {
+      /* keep going */
+    }
+    return;
+  }
+  mkdirSync(dirname(path), { recursive: true });
+  try {
+    unlinkPath(path);
+  } catch {
+    /* keep going */
+  }
+  if (snap.kind === "symlink") {
+    symlinkSync(snap.target, path);
+    return;
+  }
+  writeFileSync(path, snap.bytes);
+  try {
+    chmodSync(path, snap.mode);
+  } catch {
+    /* windows / unsupported mode */
+  }
+}
+
+/** Snapshot mutated paths; restore kind, bytes, and link target on rollback. First snapshot wins. */
 export class MutationTxn {
-  private originals = new Map<string, Buffer | null>();
+  private originals = new Map<string, Snap>();
   private createdDirs: string[] = [];
   private committed = false;
   lockfileRefreshed = false;
@@ -24,7 +75,32 @@ export class MutationTxn {
   snapshot(absPath: string): void {
     const path = resolve(absPath);
     if (this.originals.has(path)) return;
-    this.originals.set(path, existsSync(path) && lstatSync(path).isFile() ? readFileSync(path) : null);
+    assertSafeWrite(this.root, path);
+    let st;
+    try {
+      st = lstatSync(path);
+    } catch (err) {
+      if (isEnoent(err)) {
+        this.originals.set(path, { kind: "absent" });
+        return;
+      }
+      throw err;
+    }
+    if (st.isSymbolicLink()) {
+      this.originals.set(path, { kind: "symlink", target: readlinkSync(path) });
+      try {
+        const real = realpathSync(path);
+        if (real !== path && !pathEscapesRoot(this.root, real)) this.snapshot(real);
+      } catch {
+        /* dangling or loop */
+      }
+      return;
+    }
+    if (st.isFile()) {
+      this.originals.set(path, { kind: "file", bytes: readFileSync(path), mode: st.mode });
+      return;
+    }
+    assertSafeWrite(this.root, path);
   }
 
   /** Snapshot path (first wins) and mkdir parents that do not yet exist. */
@@ -35,7 +111,14 @@ export class MutationTxn {
     let dir = dirname(path);
     const root = resolve(this.root);
     while (dir.startsWith(root + sep) || dir === root) {
-      if (existsSync(dir)) break;
+      let present = false;
+      try {
+        lstatSync(dir);
+        present = true;
+      } catch (err) {
+        if (!isEnoent(err)) throw err;
+      }
+      if (present) break;
       dirs.unshift(dir);
       if (dir === root) break;
       dir = dirname(dir);
@@ -66,16 +149,11 @@ export class MutationTxn {
 
   rollback(): void {
     if (this.committed) return;
-    for (const [path, buf] of this.originals) {
-      if (buf === null) {
-        try {
-          if (existsSync(path)) unlinkSync(path);
-        } catch {
-          /* keep going */
-        }
-      } else {
-        mkdirSync(dirname(path), { recursive: true });
-        writeFileSync(path, buf);
+    for (const [path, snap] of [...this.originals].reverse()) {
+      try {
+        restore(path, snap);
+      } catch {
+        /* keep going */
       }
     }
     for (const dir of [...this.createdDirs].reverse()) {
