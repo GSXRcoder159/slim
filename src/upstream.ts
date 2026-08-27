@@ -96,7 +96,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
   if (!existsSync(manPath)) {
     return finish(
       args,
-      reportOf("incomplete-state", EXIT_FAIL, sources, [], [], "no .slim/manifest.json"),
+      reportOf("incomplete-state", EXIT_FAIL, sources, [], [], "no .slim/manifest.json — nothing to watch"),
       null,
       "no .slim/manifest.json — nothing to watch",
     );
@@ -213,6 +213,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
   const hasUnmapped = findings.some((f) => f.exposure === "unmapped");
   const hasExposed = findings.some((f) => f.exposure === "exposed");
   const fixResults: ApplyUpstreamFixResult[] = [];
+  let regenError: string | undefined;
 
   if (hasExposed) {
     const exposedJobs: { name: string; rec: ReplacementRecord; pkgFindings: UpstreamFinding[] }[] = [];
@@ -259,7 +260,8 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
         txn.commit();
       } catch (err) {
         txn.rollback();
-        throw err;
+        fixResults.length = 0;
+        regenError = err instanceof SlimExit ? err.message : String(err);
       }
     }
   }
@@ -278,7 +280,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
   } else if (hasExposed) {
     conclusion = "exposed";
     exit = EXIT_FAIL;
-    msg = "slice exposed or advisory unmapped";
+    msg = regenError ?? "slice exposed or advisory unmapped";
   } else if (routineLines.length) {
     conclusion = "routine-release";
     exit = EXIT_OK;

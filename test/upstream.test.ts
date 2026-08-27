@@ -864,6 +864,40 @@ test("merge-gate failure under --json keeps TAP off stdout", async () => {
   assert.equal(code, EXIT_FAIL);
   assert.doesNotMatch(stdout, /ok 1 - tap/);
   assert.match(stderr, /ok 1 - tap|merge gate/i);
+  const doc = JSON.parse(stdout) as {
+    conclusion: string;
+    action: string;
+    error?: string;
+    findings: { exposure: string }[];
+    regeneration: unknown[];
+  };
+  assert.equal(doc.conclusion, "exposed");
+  assert.equal(doc.action, "blocked");
+  assert.match(doc.error ?? "", /merge gate/i);
+  assert.equal(doc.findings[0]?.exposure, "exposed");
+  assert.deepEqual(doc.regeneration, []);
+});
+
+test("export failure under --json is an upstream document, not error schema", async () => {
+  const { root, moduleRel } = writeFixture();
+  const before = readFileSync(join(root, moduleRel), "utf8");
+  const { code, stdout } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        queryOsv: async () => sourceOk([CWE_1321]),
+        assembleCatalogModule: () => "export function debounce() { return; }\n",
+      }),
+    ),
+  );
+  assert.equal(code, EXIT_FAIL);
+  assert.equal(readFileSync(join(root, moduleRel), "utf8"), before);
+  const doc = JSON.parse(stdout) as { conclusion: string; action: string; error?: string; findings: unknown[] };
+  assert.equal(doc.conclusion, "exposed");
+  assert.equal(doc.action, "blocked");
+  assert.match(doc.error ?? "", /export/i);
+  assert.ok(Array.isArray(doc.findings) && doc.findings.length > 0);
 });
 
 test("exposed regen --json reports action regenerated", async () => {
