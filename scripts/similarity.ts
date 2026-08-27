@@ -1,22 +1,51 @@
 /**
  * Legal similarity gate: catalog sources and checked-in fixture slices must
  * not share long n-grams with pinned oracle implementation files.
- * Missing oracle trees fail closed. locale/ is skipped as data tables and
- * reported; lodash fp/ is scanned.
+ * Missing oracle trees fail closed. Moment locale *data* is classified
+ * excluded (unsupported). Locale *engine* and lodash fp/ are scanned.
+ * Unexplained skips fail.
  */
 import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CATALOG_ORACLES } from "../src/generate/catalog/oracles.ts";
 
 export const NGRAM_N = 12;
 export const MAX_HITS = 3;
-/** Data tables, not implementation. Always reported so a skip cannot hide. */
-export const SKIPPED_ORACLE_DIRS = ["locale"] as const;
+export const GOLDEN_SLICE = "fixtures/lodash-get-debounce/src/slim/lodash.ts";
+
+export const ORACLE_PATH_POLICY = [
+  { pkg: "moment", prefix: "locale/", class: "intentionally-excluded" },
+  { pkg: "moment", prefix: "src/locale/", class: "intentionally-excluded" },
+  { pkg: "moment", prefix: "dist/locale/", class: "intentionally-excluded" },
+  { pkg: "moment", prefix: "min/locales.js", class: "intentionally-excluded" },
+  { pkg: "moment", prefix: "min/locales.min.js", class: "intentionally-excluded" },
+  { pkg: "moment", prefix: "min/moment-with-locales.js", class: "intentionally-excluded" },
+  { pkg: "moment", prefix: "min/moment-with-locales.min.js", class: "intentionally-excluded" },
+] as const;
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 export const ORACLE_PKGS = [...new Set(Object.keys(CATALOG_ORACLES))];
+
+export function exclusionIds(): string[] {
+  return ORACLE_PATH_POLICY.map((p) => `${p.pkg}:${p.prefix}`).sort();
+}
+
+function posix(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+function matchesPrefix(rel: string, prefix: string): boolean {
+  const n = posix(rel);
+  const p = posix(prefix);
+  if (p.endsWith("/")) return n === p.slice(0, -1) || n.startsWith(p);
+  return n === p;
+}
+
+function policyMatch(pkg: string, rel: string): (typeof ORACLE_PATH_POLICY)[number] | undefined {
+  return ORACLE_PATH_POLICY.find((row) => row.pkg === pkg && matchesPrefix(rel, row.prefix));
+}
 
 function tokens(src: string): string[] {
   return src
@@ -32,19 +61,18 @@ function ngrams(toks: string[], n: number): Set<string> {
   return s;
 }
 
-function walk(
+function walkFiles(
   dir: string,
   pred: (f: string) => boolean,
-  skipDirs: ReadonlySet<string>,
   acc: string[] = [],
 ): string[] {
   if (!existsSync(dir)) return acc;
   const names = readdirSync(dir).slice().sort();
   for (const e of names) {
-    if (e === "node_modules" || skipDirs.has(e)) continue;
+    if (e === "node_modules") continue;
     const p = join(dir, e);
     const st = statSync(p);
-    if (st.isDirectory()) walk(p, pred, skipDirs, acc);
+    if (st.isDirectory()) walkFiles(p, pred, acc);
     else if (pred(p)) acc.push(p);
   }
   return acc;
@@ -55,8 +83,49 @@ function oracleFile(path: string): boolean {
 }
 
 function sliceFile(path: string): boolean {
-  const n = path.replace(/\\/g, "/");
+  const n = posix(path);
   return /\/src\/slim\/[^/]+\.(ts|js)$/.test(n);
+}
+
+function collectOracle(
+  pkgDir: string,
+  pkg: string,
+): { files: string[]; matched: Set<string> } {
+  const matched = new Set<string>();
+  const files: string[] = [];
+  const visit = (dir: string): void => {
+    if (!existsSync(dir)) return;
+    const names = readdirSync(dir).slice().sort();
+    for (const e of names) {
+      if (e === "node_modules") continue;
+      const p = join(dir, e);
+      const rel = posix(relative(pkgDir, p));
+      const hit = policyMatch(pkg, rel);
+      if (hit) {
+        matched.add(`${hit.pkg}:${hit.prefix}`);
+        continue;
+      }
+      const st = statSync(p);
+      if (st.isDirectory()) visit(p);
+      else if (oracleFile(p)) files.push(p);
+    }
+  };
+  visit(pkgDir);
+  files.sort();
+  return { files, matched };
+}
+
+export function listOracleRels(opts?: { root?: string; oraclePkgs?: string[] }): string[] {
+  const root = opts?.root ?? ROOT;
+  const pkgs = opts?.oraclePkgs ?? ORACLE_PKGS;
+  const out: string[] = [];
+  for (const pkg of pkgs) {
+    const dir = join(root, "node_modules", pkg);
+    if (!existsSync(dir)) continue;
+    const { files } = collectOracle(dir, pkg);
+    for (const f of files) out.push(posix(join(pkg, relative(dir, f))));
+  }
+  return out.sort();
 }
 
 export function runSimilarityGate(opts?: {
@@ -67,37 +136,40 @@ export function runSimilarityGate(opts?: {
   missing: string[];
   worst: number;
   worstFile: string;
-  skipped: string[];
+  excluded: string[];
   failed?: string;
 } {
   const root = opts?.root ?? ROOT;
   const pkgs = opts?.oraclePkgs ?? ORACLE_PKGS;
-  const skipped = [...SKIPPED_ORACLE_DIRS];
-  const catalog = walk(
-    join(root, "src/generate/catalog"),
-    (f) => f.endsWith(".ts"),
-    new Set(),
-  );
-  const slices = walk(join(root, "fixtures"), sliceFile, new Set());
+  const full = opts?.oraclePkgs == null;
+  const catalog = walkFiles(join(root, "src/generate/catalog"), (f) => f.endsWith(".ts"));
+  const slices = walkFiles(join(root, "fixtures"), sliceFile);
   const targets = [...catalog, ...slices].sort();
   const missing: string[] = [];
   const oracles: string[] = [];
-  const oracleSkip = new Set<string>(SKIPPED_ORACLE_DIRS);
+  const matched = new Set<string>();
+  const policyPkgs = new Set(ORACLE_PATH_POLICY.map((p) => p.pkg));
   for (const pkg of pkgs) {
     const dir = join(root, "node_modules", pkg);
     if (!existsSync(dir)) {
       missing.push(pkg);
       continue;
     }
-    oracles.push(...walk(dir, oracleFile, oracleSkip));
+    const got = collectOracle(dir, pkg);
+    oracles.push(...got.files);
+    for (const id of got.matched) matched.add(id);
   }
   oracles.sort();
-  const fail = (failed: string, extra?: Partial<{ missing: string[]; worst: number; worstFile: string }>) => ({
+  const excluded = [...matched].sort();
+  const fail = (
+    failed: string,
+    extra?: Partial<{ missing: string[]; worst: number; worstFile: string; excluded: string[] }>,
+  ) => ({
     ok: false as const,
     missing: extra?.missing ?? missing,
     worst: extra?.worst ?? 0,
     worstFile: extra?.worstFile ?? "",
-    skipped,
+    excluded: extra?.excluded ?? excluded,
     failed,
   });
   if (missing.length) {
@@ -105,6 +177,27 @@ export function runSimilarityGate(opts?: {
   }
   if (!oracles.length) {
     return fail("similarity-gate FAIL: no oracle implementation files found", { missing: pkgs });
+  }
+  if (!targets.length) {
+    return fail("similarity-gate FAIL: no catalog or slice targets");
+  }
+  if (full) {
+    if (!catalog.length) {
+      return fail("similarity-gate FAIL: empty catalog target set");
+    }
+    if (!existsSync(join(root, GOLDEN_SLICE))) {
+      return fail(`similarity-gate FAIL: missing required golden slice ${GOLDEN_SLICE}`);
+    }
+  }
+  const stale: string[] = [];
+  for (const row of ORACLE_PATH_POLICY) {
+    if (!pkgs.includes(row.pkg)) continue;
+    if (!policyPkgs.has(row.pkg)) continue;
+    const id = `${row.pkg}:${row.prefix}`;
+    if (!matched.has(id)) stale.push(id);
+  }
+  if (stale.length) {
+    return fail(`similarity-gate FAIL: stale exclusion matched nothing: ${stale.join(", ")}`);
   }
 
   const oracleGrams = new Set<string>();
@@ -128,5 +221,5 @@ export function runSimilarityGate(opts?: {
       });
     }
   }
-  return { ok: true, missing: [], worst, worstFile, skipped };
+  return { ok: true, missing: [], worst, worstFile, excluded };
 }

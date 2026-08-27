@@ -271,4 +271,8 @@ export function matchCatalog(
   return { matched, missing };
 }
 
-export { CATALOG_ORACLES, LODASH_SYMBOLS };
+export function allCatalogEntries(): CatalogEntry[] {
+  return ENTRIES.slice();
+}
+
+export { CATALOG_ORACLES, LODASH_SYMBOLS, PKG_ALIAS as CATALOG_PKG_ALIAS };

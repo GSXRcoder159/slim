@@ -55,6 +55,89 @@ test("cyclic function placeholder keeps export symbols", () => {
   );
 });
 
+test("native constructors remain constructable after wrapExports", () => {
+  const events: TraceEvent[] = [];
+  const wrapped = wrapExports(
+    { WeakMap, Map },
+    { packageName: "lodash-es", onEvent: (e) => events.push(e) },
+  ) as { WeakMap: typeof WeakMap; Map: typeof Map };
+  const wm = new wrapped.WeakMap();
+  wm.set({}, 1);
+  assert.equal(wm.get({}), undefined);
+  const k = {};
+  wm.set(k, 2);
+  assert.equal(wm.get(k), 2);
+  assert.ok(wm instanceof WeakMap);
+  const m = new wrapped.Map([["a", 1]]);
+  assert.equal(m.get("a"), 1);
+  assert.ok(m instanceof Map);
+});
+
+test("does not wrap native constructors returned from callees", () => {
+  const events: TraceEvent[] = [];
+  const wrapped = wrapExports(
+    { getNative: () => WeakMap },
+    { packageName: "lodash-es", onEvent: (e) => events.push(e) },
+  ) as { getNative: () => typeof WeakMap };
+  const WM = wrapped.getNative();
+  assert.equal(WM, WeakMap);
+  assert.ok(new WM() instanceof WeakMap);
+  assert.match(Function.prototype.toString.call(WM), /\[native code\]/);
+});
+
+test("methods mixed onto a wrapped default after wrap record as default.method", () => {
+  const events: TraceEvent[] = [];
+  const opts = { packageName: "lodash-es", onEvent: (e: TraceEvent) => events.push(e) };
+  const get = (o: Record<string, unknown>, p: string) => o[p];
+  const wrappedGet = (
+    wrapExports({ default: get }, opts) as { default: typeof get }
+  ).default;
+  const lodash = function lodash() {
+    return "ld";
+  };
+  const wrappedLodash = (
+    wrapExports({ default: lodash }, opts) as { default: typeof lodash & { get: typeof get } }
+  ).default;
+  wrappedLodash.get = wrappedGet;
+  const mixed = (
+    wrapExports({ default: wrappedLodash }, opts) as { default: typeof wrappedLodash }
+  ).default;
+  assert.equal(mixed.get({ a: 1 }, "a"), 1);
+  const symbols = events.map((e) => e.symbol);
+  assert.ok(
+    symbols.includes("default.get") || symbols.includes("get"),
+    `expected default.get or get, got ${symbols.join(",")}`,
+  );
+});
+
+test("double wrap of a returned function keeps cancel", () => {
+  const events: TraceEvent[] = [];
+  const opts = { packageName: "lodash-es", onEvent: (e: TraceEvent) => events.push(e) };
+  const debounce = (fn: () => number) => {
+    function debounced() {
+      return fn();
+    }
+    debounced.cancel = () => "cancelled";
+    return debounced;
+  };
+  const inner = wrapExports({ default: debounce }, opts) as {
+    default: typeof debounce;
+  };
+  const once = inner.default(() => 1);
+  const outer = wrapExports({ debounce: () => once }, opts) as {
+    debounce: () => { (): number; cancel: () => string };
+  };
+  const twice = outer.debounce();
+  assert.equal(typeof twice.cancel, "function");
+  assert.equal(twice.cancel(), "cancelled");
+  const cancelEv = events.find((e) => e.symbol.includes("cancel"));
+  assert.ok(cancelEv?.parentOriginId);
+  assert.ok(
+    events.some((e) => e.originId === cancelEv!.parentOriginId),
+    "cancel parentOriginId must refer to an emitted event",
+  );
+});
+
 test("does not wrap primitive exports", () => {
   assert.equal(
     wrapExports("hello", { packageName: "x", onEvent: () => {} }),

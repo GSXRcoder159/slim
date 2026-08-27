@@ -9,7 +9,7 @@ Catalog implementations are written from **public documentation and observed beh
 - Do not implement a slice with upstream source open in another window.
 - `.d.ts` and README are API specs. Implementation files are not.
 
-Slim CI runs an n-gram similarity gate against pinned catalog oracles in `node_modules` (including lodash `fp/`) and checked-in `fixtures/**/src/slim` slices. Missing oracle trees fail closed. The gate is a heuristic, not a legal opinion.
+Slim CI runs an n-gram similarity gate against pinned catalog oracles in `node_modules` (including lodash `fp/` and moment's locale *engine* under `src/lib/locale/`) and checked-in `fixtures/**/src/slim` slices. Moment locale *data* packs (`locale/`, `src/locale/`, `dist/locale/`, `min/*locales*`) are classified excluded because locales are unsupported (`supports.locales === false`). Missing oracle trees, empty catalog targets, a missing golden slice, and unexplained or stale exclusions fail closed. The gate is a heuristic, not a legal opinion. `npm run similarity` is the local entry.
 
 ## Tests
 

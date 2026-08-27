@@ -438,6 +438,7 @@ function unwrapModule(m: unknown): Record<string, Function> {
   const out: Record<string, Function> = {};
   if (typeof m === "function") {
     out.default = m;
+    aliasFnName(out, m);
     Object.assign(out, pickFns(m as unknown as object));
   }
   if (typeof m === "object" || typeof m === "function") {
@@ -446,12 +447,20 @@ function unwrapModule(m: unknown): Record<string, Function> {
     const def = rec.default;
     if (typeof def === "function") {
       out.default = def;
+      aliasFnName(out, def);
       Object.assign(out, pickFns(def as unknown as object));
     } else if (def && typeof def === "object") {
       Object.assign(out, pickFns(def as object));
     }
   }
   return out;
+}
+
+function aliasFnName(out: Record<string, Function>, fn: Function): void {
+  const n = fn.name;
+  if (n && n !== "default" && /^[A-Za-z_$][\w$]*$/.test(n) && typeof out[n] !== "function") {
+    out[n] = fn as (...args: unknown[]) => unknown;
+  }
 }
 
 function pickFns(rec: object): Record<string, Function> {

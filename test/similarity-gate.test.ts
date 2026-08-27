@@ -1,20 +1,55 @@
 import assert from "node:assert/strict";
-import { mkdirSync, rmSync, writeFileSync, mkdtempSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync, mkdtempSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { MAX_HITS, NGRAM_N, runSimilarityGate } from "../scripts/similarity.ts";
+import {
+  GOLDEN_SLICE,
+  MAX_HITS,
+  NGRAM_N,
+  exclusionIds,
+  listOracleRels,
+  runSimilarityGate,
+} from "../scripts/similarity.ts";
+import { getCatalog } from "../src/generate/catalog/index.ts";
+import { catalogBoundary } from "../src/generate/catalog/boundary.ts";
+import { catalogEnvelope } from "./catalog/qualify-helpers.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TMP = tmpdir();
 
-test("similarity gate passes against all pinned catalog oracles", () => {
+test("similarity gate passes against all pinned catalog oracles with classified exclusions", () => {
   const r = runSimilarityGate();
   assert.equal(r.ok, true, r.failed);
   assert.deepEqual(r.missing, []);
-  assert.ok(r.skipped.includes("locale"));
-  assert.ok(!r.skipped.includes("fp"));
+  assert.deepEqual(r.excluded, exclusionIds());
+  assert.ok(!r.excluded.some((e) => e.includes(":fp") || e.endsWith("/fp/")));
+  const rels = listOracleRels();
+  assert.ok(
+    rels.some((p) => p.includes("moment/src/lib/locale/")),
+    "moment locale engine must be scanned",
+  );
+  assert.ok(
+    rels.some((p) => p.includes("lodash/fp/")),
+    "lodash fp/ must be scanned",
+  );
+  assert.ok(
+    !rels.some((p) => /(^|\/)moment\/locale\//.test(p)),
+    "moment locale data packs must be excluded",
+  );
+  assert.equal(getCatalog("moment", "default")?.supports?.locales, false);
+  const env = catalogEnvelope({
+    name: "moment",
+    version: "2.30.1",
+    symbols: ["default"],
+    resultMembers: { default: ["format", "locale"] },
+  });
+  const boundary = catalogBoundary(env, "moment");
+  assert.ok(boundary);
+  assert.equal(boundary.why, "envelope-too-wide");
+  assert.match(boundary.evidence, /locale/);
+  assert.ok(existsSync(join(ROOT, GOLDEN_SLICE)));
 });
 
 test("similarity gate fails closed when an oracle tree is missing", () => {
@@ -27,6 +62,55 @@ test("similarity gate fails closed when an oracle tree is missing", () => {
     assert.equal(r.ok, false);
     assert.ok(r.missing.includes("ms"));
     assert.match(r.failed ?? "", /missing oracle/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("similarity gate fails when catalog and golden targets are empty", () => {
+  mkdirSync(TMP, { recursive: true });
+  const tmp = mkdtempSync(join(TMP, "slim-sim-empty-"));
+  try {
+    mkdirSync(join(tmp, "src/generate/catalog"), { recursive: true });
+    mkdirSync(join(tmp, "node_modules/ms"), { recursive: true });
+    writeFileSync(join(tmp, "node_modules/ms/index.js"), "module.exports = 1;\n");
+    const r = runSimilarityGate({ root: tmp, oraclePkgs: ["ms"] });
+    assert.equal(r.ok, false);
+    assert.match(r.failed ?? "", /no catalog or slice targets|empty target/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("similarity gate fails when a classified exclusion matches nothing", () => {
+  mkdirSync(TMP, { recursive: true });
+  const tmp = mkdtempSync(join(TMP, "slim-sim-stale-"));
+  try {
+    mkdirSync(join(tmp, "src/generate/catalog"), { recursive: true });
+    writeFileSync(join(tmp, "src/generate/catalog/ok.ts"), "export const ok = 1;\n");
+    mkdirSync(join(tmp, "node_modules/moment"), { recursive: true });
+    writeFileSync(join(tmp, "node_modules/moment/moment.js"), "exports.x = 1;\n");
+    const r = runSimilarityGate({ root: tmp, oraclePkgs: ["moment"] });
+    assert.equal(r.ok, false);
+    assert.match(r.failed ?? "", /stale exclusion|matched nothing/);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("similarity gate does not skip unclassified locale directories", () => {
+  mkdirSync(TMP, { recursive: true });
+  const tmp = mkdtempSync(join(TMP, "slim-sim-ms-locale-"));
+  try {
+    const words = Array.from({ length: 20 }, (_, i) => `msLocaleTok${i}xyz`);
+    const body = words.join(" ") + ";\n";
+    mkdirSync(join(tmp, "src/generate/catalog"), { recursive: true });
+    writeFileSync(join(tmp, "src/generate/catalog/copied.ts"), body);
+    mkdirSync(join(tmp, "node_modules/ms/locale"), { recursive: true });
+    writeFileSync(join(tmp, "node_modules/ms/locale/data.js"), body);
+    const r = runSimilarityGate({ root: tmp, oraclePkgs: ["ms"] });
+    assert.equal(r.ok, false, "unclassified locale/ under ms must still be scanned");
+    assert.ok((r.worst ?? 0) > MAX_HITS);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
@@ -60,4 +144,5 @@ test("similarity gate worstFile is stable across two runs", () => {
   assert.equal(a.ok, b.ok);
   assert.equal(a.worst, b.worst);
   assert.equal(a.worstFile, b.worstFile);
+  assert.deepEqual(a.excluded, b.excluded);
 });

@@ -7,5 +7,5 @@ if (!r.ok) {
   process.exit(1);
 }
 console.log(
-  `similarity-gate ok (worst ${r.worst} hits in ${r.worstFile || "none"}; skipped oracle dirs: ${r.skipped.join(", ") || "none"})`,
+  `similarity-gate ok (worst ${r.worst} hits in ${r.worstFile || "none"}; excluded: ${r.excluded.join(", ") || "none"})`,
 );

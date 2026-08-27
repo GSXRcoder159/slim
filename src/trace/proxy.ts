@@ -44,6 +44,15 @@ function ensureSession(): void {
   }
 }
 
+function isNativeFn(fn: Function): boolean {
+  if (wrapperSymbol.has(fn) || wrappedObjects.has(fn)) return false;
+  try {
+    return Function.prototype.toString.call(fn).includes("[native code]");
+  } catch {
+    return false;
+  }
+}
+
 export function wrapExports(exports: unknown, opts: WrapOpts): unknown {
   if (exports === null || (typeof exports !== "object" && typeof exports !== "function")) {
     return exports;
@@ -81,16 +90,20 @@ function wrapFn(
   propParent: string,
   meta: WrapMeta,
 ): (...args: unknown[]) => unknown {
-  if (wrapperSymbol.get(fn) === symbol) return fn;
+  if (isNativeFn(fn)) return fn;
+  if (wrapperSymbol.get(fn) === symbol) {
+    copyFnProps(fn, fn, propParent, opts, meta);
+    return fn;
+  }
   if (!meta.parentOriginId) {
     const bySymbol = fnCache.get(fn);
     const cached = bySymbol?.get(symbol);
     if (cached) return cached;
     const existing = bySymbol?.values().next().value;
-    if (existing) return aliasWrapped(existing, fn, symbol, opts, meta);
+    if (existing) return aliasWrapped(existing, fn, symbol, opts, meta, propParent);
   }
   if (wrapperSymbol.has(fn)) {
-    return aliasWrapped(fn, fn, symbol, opts, meta);
+    return aliasWrapped(fn, fn, symbol, opts, meta, propParent);
   }
 
   const wrapped = makeCallWrapper(fn, symbol, opts, meta);
@@ -105,10 +118,31 @@ function aliasWrapped(
   symbol: string,
   opts: WrapOpts,
   meta: WrapMeta,
+  propParent = symbol,
 ): (...args: unknown[]) => unknown {
   const wrapped = makeCallWrapper(inner, symbol, opts, meta);
   cacheWrapper(cacheKey, symbol, wrapped);
+  copyOwnFunctionsShallow(wrapped, inner);
   return wrapped;
+}
+
+function copyOwnFunctionsShallow(
+  wrapped: (...args: unknown[]) => unknown,
+  inner: (...args: unknown[]) => unknown,
+): void {
+  const dest = wrapped as unknown as Record<string, unknown>;
+  const src = inner as unknown as Record<string, unknown>;
+  for (const key of Object.getOwnPropertyNames(inner)) {
+    if (SKIP_PROPS.has(key)) continue;
+    const val = src[key];
+    if (typeof val === "function") {
+      try {
+        dest[key] = val;
+      } catch {
+        /* ignore */
+      }
+    }
+  }
 }
 
 function cacheWrapper(
@@ -178,15 +212,18 @@ function copyFnProps(
     const nestedSymbol = propParent ? `${propParent}.${key}` : key;
     if (typeof val === "function") {
       try {
-        (wrapped as unknown as Record<string, unknown>)[key] = wrapFn(
-          val as (...args: unknown[]) => unknown,
-          nestedSymbol,
-          opts,
-          nestedSymbol,
-          meta.parentOriginId
-            ? { parentOriginId: meta.parentOriginId, resultMember: key }
-            : {},
-        );
+        (wrapped as unknown as Record<string, unknown>)[key] =
+          val === fn
+            ? wrapped
+            : wrapFn(
+                val as (...args: unknown[]) => unknown,
+                nestedSymbol,
+                opts,
+                nestedSymbol,
+                meta.parentOriginId
+                  ? { parentOriginId: meta.parentOriginId, resultMember: key }
+                  : {},
+              );
       } catch {
         /* ignore */
       }
@@ -225,7 +262,7 @@ function recordConstruct(
   recordDepth++;
   try {
     if (nested || (site && isPackageInternal(site.file))) {
-      return wrapResult(Reflect.construct(fn, args, newTarget), symbol, opts, originId);
+      return Reflect.construct(fn, args, newTarget);
     }
     let walker: ReturnType<typeof createWalker>;
     let beforeLive: SlimValue[];
@@ -300,7 +337,7 @@ function recordCall(
   recordDepth++;
   try {
     if (nested || (site && isPackageInternal(site.file))) {
-      return wrapResult(fn.apply(thisArg, args), symbol, opts, originId);
+      return fn.apply(thisArg, args);
     }
     let walker: ReturnType<typeof createWalker>;
     let beforeLive: SlimValue[];

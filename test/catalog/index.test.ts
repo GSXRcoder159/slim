@@ -5,10 +5,13 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   CATALOG_ORACLES,
+  CATALOG_PKG_ALIAS,
+  allCatalogEntries,
   catalogSymbols,
   getCatalog,
   matchCatalog,
 } from "../../src/generate/catalog/index.ts";
+import { resolvePackageFamily } from "../../src/analyze/family.ts";
 import { v4 } from "../../src/generate/catalog/uuid.ts";
 import { nanoid } from "../../src/generate/catalog/nanoid.ts";
 import { clsx } from "../../src/generate/catalog/clsx.ts";
@@ -87,5 +90,33 @@ describe("catalog matcher", () => {
       const installed = JSON.parse(readFileSync(pkgJson, "utf8")) as { version: string };
       assert.equal(installed.version, pin, `${pkg} must be pinned at ${pin}`);
     }
+  });
+
+  it("allCatalogEntries is the unique registered (pkg, symbol) set", () => {
+    const entries = allCatalogEntries();
+    const ids = entries.map((e) => `${e.pkg}.${e.symbol}`).sort();
+    assert.equal(ids.length, new Set(ids).size, "duplicate catalog ids");
+    const families = [...new Set(entries.map((e) => e.pkg))];
+    const fromMatch = families.flatMap((pkg) =>
+      catalogSymbols(pkg).map((symbol) => `${pkg}.${symbol}`),
+    ).sort();
+    assert.deepEqual(ids, fromMatch);
+    assert.ok(ids.length > 0);
+    assert.equal(
+      ids.length,
+      fromMatch.length,
+      "allCatalogEntries must match matchCatalog's canonical symbol set",
+    );
+  });
+
+  it("every catalog package alias resolves to that family in analyze", () => {
+    for (const [alias, canonical] of Object.entries(CATALOG_PKG_ALIAS)) {
+      const fam = resolvePackageFamily(alias);
+      assert.equal(fam?.family, canonical, `${alias} family`);
+    }
+    const perMethod = resolvePackageFamily("lodash.get");
+    assert.equal(perMethod?.family, "lodash");
+    assert.equal(perMethod?.subpath, "get");
+    assert.ok(catalogSymbols("mime").includes("lookup"));
   });
 });

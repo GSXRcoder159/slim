@@ -117,7 +117,7 @@ export function runTraces(
   if (r.status !== 0) {
     throw new SlimExit(
       EXIT_FAIL,
-      `trace run exited ${r.status ?? "null"}\n${(r.stderr ?? "").slice(0, 800)}`,
+      `trace run exited ${r.status ?? "null"}\n${[(r.stderr ?? "").trim(), (r.stdout ?? "").trim()].filter(Boolean).join("\n").slice(0, 800)}`,
     );
   }
 

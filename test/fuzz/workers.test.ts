@@ -18,6 +18,7 @@ import {
   fromCloneableResult,
   runJob,
   workerThreadUrl,
+  loadOrig,
 } from "../../src/fuzz/workers.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -332,4 +333,14 @@ test("runJob orig and slim observe args[0] === thisArg", async () => {
   );
   assert.equal(result.ok, true, result.reason);
   assert.equal(shared.n, 1);
+});
+
+test("CJS function module exposes both default and its function name", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-loadorig-"));
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ type: "commonjs" }) + "\n");
+  writeFileSync(join(dir, "get.js"), "module.exports = function get(o, p, d) { return o[p] ?? d; };\n");
+  const orig = await loadOrig(join(dir, "get.js"), dir);
+  assert.equal(typeof orig.default, "function");
+  assert.equal(typeof orig.get, "function");
+  assert.equal(orig.get, orig.default);
 });

@@ -139,6 +139,40 @@ test("debounce cancel inherits parent call site", () => {
   assert.equal(attributed[1]!.unmatched, false);
 });
 
+test("default call of a function module attributes to the subpath export", () => {
+  const root = tmpRoot();
+  const g = site("call:src/a.ts:4", "src/a.ts", 4, "get");
+  const base = env(root, [g]);
+  const traces: TraceEvent[] = [
+    {
+      symbol: "default",
+      originId: "g1",
+      args: [],
+      site: { file: join(root, "src", "a.ts"), line: 4, column: 10 },
+    },
+  ];
+  const attributed = attributeTraces(base, traces, root);
+  assert.equal(attributed[0]!.unmatched, false);
+  assert.equal(attributed[0]!.callSiteId, g.id);
+});
+
+test("_.get attributes to the named get export", () => {
+  const root = tmpRoot();
+  const g = site("call:src/a.ts:4", "src/a.ts", 4, "get");
+  const base = env(root, [g]);
+  const traces: TraceEvent[] = [
+    {
+      symbol: "_.get",
+      originId: "g1",
+      args: [],
+      site: { file: join(root, "src", "a.ts"), line: 4, column: 10 },
+    },
+  ];
+  const attributed = attributeTraces(base, traces, root);
+  assert.equal(attributed[0]!.unmatched, false);
+  assert.equal(attributed[0]!.callSiteId, g.id);
+});
+
 test("default.resolve attributes to the named export and orphan children still match", () => {
   const root = tmpRoot();
   const r = site("call:src/a.ts:4", "src/a.ts", 4, "resolve");

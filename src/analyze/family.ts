@@ -21,6 +21,7 @@ const FAMILY_ALIAS: Record<string, string> = {
   bluebird: "bluebird",
   "mime-types": "mime-types",
   "mime-db": "mime-types",
+  mime: "mime-types",
   "query-string": "qs",
   qs: "qs",
 };

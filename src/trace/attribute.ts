@@ -40,6 +40,8 @@ function attributeOne(
 export function symbolMatches(exportName: string, symbol: string): boolean {
   if (matchesExport(exportName, symbol)) return true;
   if (symbol.startsWith("default.")) return matchesExport(exportName, symbol.slice("default.".length));
+  if (symbol.startsWith("_.")) return matchesExport(exportName, symbol.slice(2));
+  if (symbol === "default") return true;
   return false;
 }
 
