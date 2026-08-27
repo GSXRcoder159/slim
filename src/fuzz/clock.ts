@@ -1,7 +1,19 @@
 import { setTimeout as unpatchedTimeout, clearTimeout as unpatchedClear } from "node:timers";
 
-/** Process-wall slack covering worker spawn/teardown. Documented fuzz bound is budgetMs + this. */
-export const BUDGET_SLACK_MS = 2000;
+/** Wait for worker orig/slim load before any case timer starts. Independent of --budget-ms. */
+export const STARTUP_MS = 2000;
+
+/** Bound on Worker.terminate() during pool close / replace. */
+export const SHUTDOWN_MS = 250;
+
+/** Process-wall slack covering worker spawn. Alias of STARTUP_MS; documented bound is budgetMs + STARTUP_MS + SHUTDOWN_MS. */
+export const BUDGET_SLACK_MS = STARTUP_MS;
+
+/** Extra pickFuzzArgs cases after the required prefix. Not a wall-clock drain. */
+export function extraCaseQuota(budgetMs: number): number {
+  if (!Number.isFinite(budgetMs)) return 0;
+  return Math.max(0, Math.floor(budgetMs));
+}
 
 /** Monotonic elapsed ms. Immune to the fake clock's Date.now patch. */
 export function wallMs(): number {

@@ -28,7 +28,7 @@ slim replace — write a verified slice and (usually) open a PR
 Usage:
   slim replace <pkg>
 
-      --budget-ms <n>    Process wall clock (never the fake clock); returns within n+2000ms
+      --budget-ms <n>    Extra-case quota n; wall bound n+2000ms startup+250ms shutdown (never the fake clock)
       --workers <n>      Fuzz worker threads (default: CPUs-1; 1 = in-process)
       --seed <n>         Deterministic fuzz seed
       --allow-flaky      Fuzz unseeded RNG packages (not production-ready evidence)

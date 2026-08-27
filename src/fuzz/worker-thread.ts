@@ -20,6 +20,18 @@ if (data.clock) workerClock.install();
 
 const ready = Promise.all([loadOrig(origModule, data.projectRoot), loadSlim(slimModule)]);
 
+void ready.then(
+  () => {
+    parentPort?.postMessage({ type: "ready" });
+  },
+  (e) => {
+    parentPort?.postMessage({
+      type: "error",
+      error: e instanceof Error ? e.message : String(e),
+    });
+  },
+);
+
 parentPort?.on("message", async (msg: { type: string; id?: number; job?: FuzzJob }) => {
   if (msg.type !== "run" || msg.id === undefined || !msg.job) {
     if (msg.id !== undefined) {

@@ -18,7 +18,7 @@ Usage:
   slim doctor [--strict] [--json]
 
 Replace options:
-  --budget-ms <n>     process wall clock (never the fake clock); run returns within n+2000ms
+  --budget-ms <n>     extra-case quota n; wall bound n+2000ms startup+250ms shutdown (never the fake clock)
   --no-trace          skip tests; static-only evidence, never trace-closed
   --no-pr             write files; no branch, commit, push, or PR
   --allow-unknown     generate even with dynamic access (never claimed closed)

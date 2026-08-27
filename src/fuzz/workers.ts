@@ -10,7 +10,7 @@ import {
   clearTimeout as clearTimeoutFn,
   setImmediate as nextTurn,
 } from "node:timers";
-import { createFakeClock, type FakeClock } from "./clock.ts";
+import { createFakeClock, STARTUP_MS, SHUTDOWN_MS, wallMs, type FakeClock } from "./clock.ts";
 import { withSeededCrypto } from "./crypto.ts";
 import { minimize } from "./minimize.ts";
 import {
@@ -47,6 +47,8 @@ export interface FuzzResult {
 
 export interface WorkerPool {
   runCase(job: FuzzJob, timeoutMs?: number): Promise<FuzzResult>;
+  /** Wait until every worker has loaded orig/slim, or throw insufficient startup. */
+  ready(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -92,7 +94,7 @@ export function defaultJobTimeoutMs(budgetMs: number): number {
   return Math.max(50, Math.min(JOB_TIMEOUT_CAP_MS, Math.max(0, budgetMs) + 50));
 }
 
-function terminateSoon(w: Worker, ms = 250): Promise<void> {
+function terminateSoon(w: Worker, ms = SHUTDOWN_MS): Promise<void> {
   try {
     w.unref();
   } catch {
@@ -115,6 +117,18 @@ function terminateSoon(w: Worker, ms = 250): Promise<void> {
   });
 }
 
+function raceTimeout<T>(promise: Promise<T>, ms: number, err: SlimExit): Promise<T> {
+  let timer: ReturnType<typeof timeoutFn> | undefined;
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      timer = timeoutFn(() => reject(err), Math.max(1, ms));
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeoutFn(timer);
+  });
+}
+
 function createThreadPool(opts: {
   workers: number;
   origModule: string;
@@ -133,11 +147,14 @@ function createThreadPool(opts: {
   const waiters: Array<{ resolve: (w: Worker) => void; reject: (e: unknown) => void }> = [];
   let closed = false;
   let nextId = 1;
+  const startedAt = wallMs();
   const pending = new Map<
     number,
     { resolve: (r: FuzzResult) => void; reject: (e: unknown) => void; worker: Worker }
   >();
   const inflight = new Map<Worker, number>();
+  const readyAt = new WeakMap<Worker, Promise<void>>();
+  const spawnedAt = new WeakMap<Worker, number>();
   const slimModule = withSlimQuery(opts.slimModule, opts.slimHash);
 
   function failJob(id: number, err: unknown): void {
@@ -157,6 +174,21 @@ function createThreadPool(opts: {
   }
 
   function spawn(): Worker {
+    let settleReady: () => void;
+    let failReady: (e: unknown) => void;
+    let settled = false;
+    const ready = new Promise<void>((resolve, reject) => {
+      settleReady = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      failReady = (e) => {
+        if (settled) return;
+        settled = true;
+        reject(e);
+      };
+    });
     const w = new Worker(workerThreadUrl(), {
       execArgv: workerExecArgv(),
       env: workerEnv(),
@@ -168,7 +200,18 @@ function createThreadPool(opts: {
         projectRoot: opts.projectRoot,
       },
     });
+    readyAt.set(w, ready);
+    spawnedAt.set(w, wallMs());
     w.on("message", (msg: { type: string; id?: number; result?: FuzzResult; error?: string }) => {
+      if (msg.type === "ready") {
+        settleReady();
+        return;
+      }
+      if (closed || !workers.includes(w)) return;
+      if (msg.type === "error" && msg.id === undefined) {
+        failReady(new SlimExit(EXIT_ENV, `fuzz worker crashed: ${msg.error ?? "worker error"}`));
+        return;
+      }
       if (msg.type === "result" && msg.id !== undefined && msg.result) {
         succeedJob(msg.id, fromCloneableResult(msg.result));
       } else if (msg.type === "error" && msg.id !== undefined) {
@@ -182,15 +225,17 @@ function createThreadPool(opts: {
       }
     });
     w.on("error", (err) => {
+      const crash = new SlimExit(EXIT_ENV, `fuzz worker crashed: ${err.message}`);
+      failReady(crash);
       const id = inflight.get(w);
-      if (id !== undefined) failJob(id, new SlimExit(EXIT_ENV, `fuzz worker crashed: ${err.message}`));
+      if (id !== undefined) failJob(id, crash);
     });
     w.on("exit", (code) => {
       if (closed) return;
+      const crash = new SlimExit(EXIT_ENV, `fuzz worker crashed (exit ${code ?? 1})`);
+      failReady(crash);
       const id = inflight.get(w);
-      if (id !== undefined) {
-        failJob(id, new SlimExit(EXIT_ENV, `fuzz worker crashed (exit ${code ?? 1})`));
-      }
+      if (id !== undefined) failJob(id, crash);
     });
     return w;
   }
@@ -223,11 +268,19 @@ function createThreadPool(opts: {
     idle.push(w);
   }
 
+  async function waitReady(w: Worker): Promise<void> {
+    const p = readyAt.get(w);
+    if (!p) throw new SlimExit(EXIT_ENV, "insufficient startup budget");
+    const from = spawnedAt.get(w) ?? startedAt;
+    const left = Math.max(1, STARTUP_MS - (wallMs() - from));
+    await raceTimeout(p, left, new SlimExit(EXIT_ENV, "insufficient startup budget"));
+  }
+
   async function acquire(): Promise<Worker> {
     if (closed) throw new SlimExit(EXIT_ENV, "fuzz worker pool closed");
-    const w = idle.pop();
-    if (w) return w;
-    return new Promise((resolve, reject) => waiters.push({ resolve, reject }));
+    const w = idle.pop() ?? (await new Promise<Worker>((resolve, reject) => waiters.push({ resolve, reject })));
+    await waitReady(w);
+    return w;
   }
 
   function release(w: Worker): void {
@@ -238,6 +291,15 @@ function createThreadPool(opts: {
   }
 
   return {
+    async ready(): Promise<void> {
+      if (closed) throw new SlimExit(EXIT_ENV, "fuzz worker pool closed");
+      const left = Math.max(1, STARTUP_MS - (wallMs() - startedAt));
+      await raceTimeout(
+        Promise.all(workers.map((w) => waitReady(w))),
+        left,
+        new SlimExit(EXIT_ENV, "insufficient startup budget"),
+      );
+    },
     async runCase(job: FuzzJob, timeoutMs = defaultTimeout): Promise<FuzzResult> {
       if (closed) throw new SlimExit(EXIT_ENV, "fuzz worker pool closed");
       const acquired = await acquire();
@@ -336,6 +398,9 @@ function createInProcessPool(opts: {
   }
 
   return {
+    async ready(): Promise<void> {
+      await ensure();
+    },
     async runCase(job: FuzzJob): Promise<FuzzResult> {
       await ensure();
       return runJob(orig!, slim!, job, persistClock);

@@ -1,8 +1,7 @@
 import { availableParallelism } from "node:os";
-import type { Envelope, HyrumFlags, SymbolEnvelope, TraceEvent } from "../envelope/types.ts";
+import type { Envelope, SymbolEnvelope, TraceEvent } from "../envelope/types.ts";
 import { EXIT_ENV, EXIT_FAIL, EXIT_REFUSED, SlimExit } from "../exit.ts";
 import { refusePackage } from "../scan/refuse.ts";
-import { equal } from "./equal.ts";
 import {
   createGen,
   fromTraces,
@@ -14,9 +13,8 @@ import {
   pickObservedArgc,
 } from "./gen.ts";
 import { deserializeEvent } from "../trace/serialize.ts";
-import { BUDGET_SLACK_MS, createFakeClock, nativeClear, nativeTimeout, wallMs, type FakeClock } from "./clock.ts";
+import { STARTUP_MS, SHUTDOWN_MS, extraCaseQuota, createFakeClock, nativeClear, nativeTimeout, wallMs, type FakeClock } from "./clock.ts";
 import {
-  runDebounceScript,
   taxonomyForObserved,
   isTimerSymbol,
   TAXONOMY,
@@ -29,6 +27,8 @@ import {
   loadSlim,
   runJob,
   withSlimQuery,
+  toCloneableResult,
+  fromCloneableResult,
   type FuzzJob,
   type FuzzResult,
 } from "./workers.ts";
@@ -159,10 +159,7 @@ async function runFuzzInProcess(opts: {
   projectRoot?: string;
 }): Promise<FuzzReport> {
   const t0 = wallMs();
-  const deadline = t0 + Math.max(0, opts.budgetMs);
-  const gen = createGen(opts.seed);
   const report = emptyReport(opts.seed, opts.allowFlaky);
-  const over = (): boolean => wallMs() >= deadline;
 
   let persistClock: FakeClock | undefined;
   let original = opts.original;
@@ -183,59 +180,19 @@ async function runFuzzInProcess(opts: {
     }
     assertRequiredFunctions(original, replacement, opts.envelope);
 
-    const timerSymbols = opts.envelope.symbols.filter((s) => isTimerSymbol(s.exportName));
-    const valueSymbols = opts.envelope.symbols.filter((s) => !isTimerSymbol(s.exportName));
-
-    for (const sym of timerSymbols) {
-      const origFn = original[sym.exportName]!;
-      const slimFn = replacement[sym.exportName]!;
-      const hyrum = sym.hyrum;
-      const scripts = scriptsForSymbol(sym, opts.envelope);
-      for (const script of scripts) {
-        if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
-        await recordDebounce(report, origFn, slimFn, sym.exportName, script, hyrum, persistClock);
-      }
-    }
-
-    for (const sym of valueSymbols) {
+    const plan = planCases(opts);
+    for (const item of plan) {
       if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
-      const origFn = original[sym.exportName]!;
-      const slimFn = replacement[sym.exportName]!;
-      const traces = exportTracesFor(opts.envelope, sym);
-      const hyrum = sym.hyrum;
-
-      for (const tr of traces) {
-        if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
-        const live = deserializeEvent({ args: tr.args, thisArg: tr.thisArg, result: tr.result });
-        await recordCall(report, origFn, slimFn, sym.exportName, live.args, live.thisArg, hyrum, opts, persistClock);
-        report.tracesReplayed++;
-      }
-
-      for (const site of sym.callSites) {
-        if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
-        const arities = site.argc.observed.length ? site.argc.observed : [site.argShapes.length];
-        for (const argc of arities) {
-          const sliced = site.argShapes.slice(0, argc);
-          const literals = enumerateLiteralUnions(sliced, 64);
-          for (const args of literals) {
-            if (report.disagreements.length >= MAX_DISAGREEMENTS) break;
-            await recordCall(report, origFn, slimFn, sym.exportName, args, undefined, hyrum, opts, persistClock);
-          }
-        }
-      }
-
-      const replayed = fromTraces(traces, gen);
-      while (!over() && report.disagreements.length < MAX_DISAGREEMENTS) {
-        const args = pickFuzzArgs(gen, replayed, sym);
-        await recordCall(report, origFn, slimFn, sym.exportName, args, undefined, hyrum, opts, persistClock);
-      }
+      const r = await runJob(original, replacement, item.job, persistClock);
+      applyPlanned(report, item, r);
     }
+    throwIfEmpty(report);
   } finally {
     persistClock?.uninstall();
   }
 
   report.wallMs = wallMs() - t0;
-  return report;
+  return freezeReport(report);
 }
 
 async function runFuzzPool(opts: {
@@ -250,15 +207,8 @@ async function runFuzzPool(opts: {
   projectRoot?: string;
 }): Promise<FuzzReport> {
   const t0 = wallMs();
-  const deadline = t0 + Math.max(0, opts.budgetMs);
-  const gen = createGen(opts.seed);
   const report = emptyReport(opts.seed, opts.allowFlaky);
-  const over = (): boolean => wallMs() >= deadline;
   const symbols = opts.envelope.symbols.map((s) => s.exportName);
-
-  const origFns = await loadOrig(opts.origModule, opts.projectRoot);
-  const slimFns = await loadSlim(withSlimQuery(opts.slimModule, opts.slimHash));
-  assertRequiredFunctions(origFns, slimFns, opts.envelope);
 
   const timeoutMs = defaultJobTimeoutMs(opts.budgetMs);
   const pool = createPool({
@@ -273,133 +223,179 @@ async function runFuzzPool(opts: {
   });
 
   try {
-    const timerSymbols = opts.envelope.symbols.filter((s) => isTimerSymbol(s.exportName));
-    const valueSymbols = opts.envelope.symbols.filter((s) => !isTimerSymbol(s.exportName));
-    const pending = new Set<Promise<void>>();
-    const atCap = (): boolean => report.disagreements.length >= MAX_DISAGREEMENTS;
-
-    const racePending = async (): Promise<void> => {
-      if (pending.size === 0) return;
-      const rem = Math.max(1, deadline + BUDGET_SLACK_MS - wallMs());
-      let timer: ReturnType<typeof nativeTimeout> | undefined;
-      try {
-        await Promise.race([
-          ...pending,
-          new Promise<never>((_, reject) => {
-            timer = nativeTimeout(
-              () => reject(new SlimExit(EXIT_ENV, "fuzz worker timeout")),
-              rem,
-            );
-          }),
-        ]);
-      } finally {
-        if (timer) nativeClear(timer);
-      }
-    };
-
-    const spawn = async (
-      job: FuzzJob,
-      onResult: (r: FuzzResult) => void,
-      untilDeadline = false,
-    ): Promise<void> => {
-      while (report.disagreements.length + pending.size >= MAX_DISAGREEMENTS && pending.size > 0) {
-        await racePending();
-      }
-      if (atCap()) return;
-      if (untilDeadline && over() && report.cases > 0) return;
-      const jobMs = untilDeadline
-        ? Math.min(timeoutMs, Math.max(50, deadline - wallMs() + 50))
-        : timeoutMs;
-      const p = pool
-        .runCase(job, jobMs)
-        .then(onResult)
-        .finally(() => pending.delete(p));
-      pending.add(p);
-      if (pending.size >= opts.workers) await racePending();
-    };
-
-    for (const sym of timerSymbols) {
-      const scripts = scriptsForSymbol(sym, opts.envelope);
-      for (const script of scripts) {
-        if (atCap()) break;
-        await spawn(
-          { symbol: sym.exportName, args: [script], kind: "debounce", script, hyrum: sym.hyrum },
-          (r) => recordPoolDebounce(report, r, script),
-        );
-      }
-    }
-    await racePending();
-
-    for (const sym of valueSymbols) {
-      if (atCap()) break;
-      const traces = exportTracesFor(opts.envelope, sym);
-      const hyrum = sym.hyrum;
-
-      for (const tr of traces) {
-        if (atCap()) break;
-        const live = deserializeEvent({ args: tr.args, thisArg: tr.thisArg, result: tr.result });
-        await spawn(
-          {
-            symbol: sym.exportName,
-            args: live.args,
-            thisArg: live.thisArg,
-            kind: "call",
-            hyrum,
-            cryptoSeed: cryptoSeedFor(opts.envelope, opts.allowFlaky, opts.seed, report.cases),
-          },
-          (r) => {
-            recordPoolCall(report, r);
-            report.tracesReplayed++;
-          },
-        );
-      }
-
-      for (const site of sym.callSites) {
-        if (atCap()) break;
-        const arities = site.argc.observed.length ? site.argc.observed : [site.argShapes.length];
-        for (const argc of arities) {
-          const sliced = site.argShapes.slice(0, argc);
-          const literals = enumerateLiteralUnions(sliced, 64);
-          for (const args of literals) {
-            if (atCap()) break;
-            await spawn(
-              {
-                symbol: sym.exportName,
-                args,
-                kind: "call",
-                hyrum,
-                cryptoSeed: cryptoSeedFor(opts.envelope, opts.allowFlaky, opts.seed, report.cases),
-              },
-              (r) => recordPoolCall(report, r),
-            );
-          }
-        }
-      }
-
-      const replayed = fromTraces(traces, gen);
-      while (!over() && !atCap()) {
-        const args = pickFuzzArgs(gen, replayed, sym);
-        await spawn(
-          {
-            symbol: sym.exportName,
-            args,
-            kind: "call",
-            hyrum,
-            cryptoSeed: cryptoSeedFor(opts.envelope, opts.allowFlaky, opts.seed, report.cases),
-          },
-          (res) => recordPoolCall(report, res),
-          true,
-        );
-      }
-    }
-    await racePending();
-    if (pending.size) await Promise.all(pending);
+    await pool.ready();
+    const plan = planCases(opts);
+    const bound = t0 + Math.max(0, opts.budgetMs) + STARTUP_MS + SHUTDOWN_MS;
+    await executePlanOnPool(pool, plan, report, opts.workers, timeoutMs, bound);
+    throwIfEmpty(report);
   } finally {
     await pool.close();
   }
 
   report.wallMs = wallMs() - t0;
-  return report;
+  return freezeReport(report);
+}
+
+interface PlannedCase {
+  seq: number;
+  job: FuzzJob;
+  isTrace: boolean;
+  isDebounce: boolean;
+  script?: DebounceScript;
+}
+
+function planCases(opts: {
+  envelope: Envelope;
+  seed: number;
+  budgetMs: number;
+  allowFlaky: boolean;
+}): PlannedCase[] {
+  const gen = createGen(opts.seed);
+  const out: PlannedCase[] = [];
+  let seq = 0;
+  const add = (
+    job: FuzzJob,
+    extra: { isTrace?: boolean; isDebounce?: boolean; script?: DebounceScript } = {},
+  ): void => {
+    const id = seq++;
+    out.push({
+      seq: id,
+      job: {
+        ...job,
+        cryptoSeed: cryptoSeedFor(opts.envelope, opts.allowFlaky, opts.seed, id),
+      },
+      isTrace: extra.isTrace === true,
+      isDebounce: extra.isDebounce === true,
+      script: extra.script,
+    });
+  };
+
+  const timerSymbols = opts.envelope.symbols.filter((s) => isTimerSymbol(s.exportName));
+  const valueSymbols = opts.envelope.symbols.filter((s) => !isTimerSymbol(s.exportName));
+
+  for (const sym of timerSymbols) {
+    for (const script of scriptsForSymbol(sym, opts.envelope)) {
+      add(
+        { symbol: sym.exportName, args: [script], kind: "debounce", script, hyrum: sym.hyrum },
+        { isDebounce: true, script },
+      );
+    }
+  }
+
+  let extraLeft = extraCaseQuota(opts.budgetMs);
+  for (const sym of valueSymbols) {
+    const traces = exportTracesFor(opts.envelope, sym);
+    const hyrum = sym.hyrum;
+    for (const tr of traces) {
+      const live = deserializeEvent({ args: tr.args, thisArg: tr.thisArg, result: tr.result });
+      add(
+        { symbol: sym.exportName, args: live.args, thisArg: live.thisArg, kind: "call", hyrum },
+        { isTrace: true },
+      );
+    }
+    for (const site of sym.callSites) {
+      const arities = site.argc.observed.length ? site.argc.observed : [site.argShapes.length];
+      for (const argc of arities) {
+        const sliced = site.argShapes.slice(0, argc);
+        for (const args of enumerateLiteralUnions(sliced, 64)) {
+          add({ symbol: sym.exportName, args, kind: "call", hyrum });
+        }
+      }
+    }
+    const replayed = fromTraces(traces, gen);
+    while (extraLeft > 0) {
+      extraLeft--;
+      add({ symbol: sym.exportName, args: pickFuzzArgs(gen, replayed, sym), kind: "call", hyrum });
+    }
+  }
+  return out;
+}
+
+function applyPlanned(report: FuzzReport, item: PlannedCase, r: FuzzResult): void {
+  const wired = fromCloneableResult(toCloneableResult(r));
+  if (item.isDebounce) {
+    recordPoolDebounce(report, wired, item.script!);
+    return;
+  }
+  recordPoolCall(report, wired);
+  if (item.isTrace) report.tracesReplayed++;
+}
+
+function freezeReport(report: FuzzReport): FuzzReport {
+  Object.freeze(report.disagreements);
+  return Object.freeze(report);
+}
+
+function throwIfEmpty(report: FuzzReport): void {
+  if (report.cases === 0) {
+    throw new SlimExit(EXIT_ENV, "insufficient budget");
+  }
+}
+
+async function executePlanOnPool(
+  pool: { runCase(job: FuzzJob, timeoutMs?: number): Promise<FuzzResult> },
+  plan: PlannedCase[],
+  report: FuzzReport,
+  workers: number,
+  timeoutMs: number,
+  bound: number,
+): Promise<void> {
+  const slots = new Map<number, { result?: FuzzResult; error?: unknown }>();
+  const running = new Map<number, Promise<void>>();
+  let applyAt = 0;
+  let issued = 0;
+  const width = Math.max(1, workers);
+
+  const start = (seq: number, item: PlannedCase): void => {
+    const p = pool
+      .runCase(item.job, timeoutMs)
+      .then(
+        (result) => {
+          slots.set(seq, { result });
+        },
+        (error: unknown) => {
+          slots.set(seq, { error });
+        },
+      )
+      .finally(() => {
+        running.delete(seq);
+      });
+    running.set(seq, p);
+  };
+
+  while (applyAt < plan.length && report.disagreements.length < MAX_DISAGREEMENTS) {
+    if (wallMs() >= bound) throw new SlimExit(EXIT_ENV, "fuzz worker timeout");
+    while (
+      issued < plan.length &&
+      running.size < width &&
+      report.disagreements.length < MAX_DISAGREEMENTS
+    ) {
+      start(issued, plan[issued]!);
+      issued++;
+    }
+    if (!slots.has(applyAt)) {
+      if (running.size === 0) break;
+      const rem = Math.max(1, bound - wallMs());
+      let timer: ReturnType<typeof nativeTimeout> | undefined;
+      try {
+        await Promise.race([
+          Promise.race([...running.values()]),
+          new Promise<never>((_, reject) => {
+            timer = nativeTimeout(() => reject(new SlimExit(EXIT_ENV, "fuzz worker timeout")), rem);
+          }),
+        ]);
+      } finally {
+        if (timer) nativeClear(timer);
+      }
+      continue;
+    }
+    const slot = slots.get(applyAt)!;
+    if (slot.error) throw slot.error;
+    applyPlanned(report, plan[applyAt]!, slot.result!);
+    applyAt++;
+  }
+
+  await Promise.all([...running.values()]);
 }
 
 function emptyReport(seed: number, allowFlaky: boolean): FuzzReport {
@@ -447,69 +443,6 @@ function recordPoolDebounce(report: FuzzReport, r: FuzzResult, script: DebounceS
       reason: r.reason ?? "mismatch",
     });
   }
-}
-
-async function recordCall(
-  report: FuzzReport,
-  origFn: Function,
-  slimFn: Function,
-  symbol: string,
-  args: unknown[],
-  thisArg: unknown,
-  hyrum: Partial<HyrumFlags> | undefined,
-  opts: { envelope: Envelope; allowFlaky: boolean; seed: number },
-  persistClock?: FakeClock,
-): Promise<void> {
-  const r = await runJob(
-    { [symbol]: origFn },
-    { [symbol]: slimFn },
-    {
-      symbol,
-      args,
-      thisArg,
-      kind: "call",
-      hyrum,
-      cryptoSeed: cryptoSeedFor(opts.envelope, opts.allowFlaky, opts.seed, report.cases),
-    },
-    persistClock,
-  );
-  recordPoolCall(report, r);
-}
-
-async function recordDebounce(
-  report: FuzzReport,
-  origFn: Function,
-  slimFn: Function,
-  symbol: string,
-  script: DebounceScript,
-  hyrum: Partial<HyrumFlags> | undefined,
-  persistClock?: FakeClock,
-): Promise<void> {
-  let a;
-  let b;
-  if (persistClock) {
-    persistClock.reset(0);
-    a = await runDebounceScript(origFn, script, persistClock);
-    persistClock.reset(0);
-    b = await runDebounceScript(slimFn, script, persistClock);
-  } else {
-    const clockOrig = createFakeClock(0);
-    const clockSlim = createFakeClock(0);
-    a = await runDebounceScript(origFn, script, clockOrig);
-    b = await runDebounceScript(slimFn, script, clockSlim);
-  }
-  report.cases++;
-  report.timerCases++;
-  report.comparisons += 3;
-  const spiesOk = equal(a.spies, b.spies, hyrum);
-  const retOk = equal(a.returns, b.returns, hyrum);
-  const flushOk = equal(a.flushResults, b.flushResults, hyrum);
-  if (spiesOk && retOk && flushOk) return;
-  report.disagreements.push({
-    symbol,
-    args: [script],
-    reason: !spiesOk ? "debounce spy timeline mismatch" : "debounce return/flush mismatch",
-  });
 }
 
 export function traceHits(tr: TraceEvent, sym: SymbolEnvelope): boolean {

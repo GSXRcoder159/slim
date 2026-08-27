@@ -12,8 +12,8 @@ import {
   type SymbolEnvelope,
 } from "../../src/envelope/types.ts";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../../src/exit.ts";
-import { BUDGET_SLACK_MS } from "../../src/fuzz/clock.ts";
-import { runFuzz } from "../../src/fuzz/run.ts";
+import { BUDGET_SLACK_MS, STARTUP_MS, SHUTDOWN_MS, wallMs } from "../../src/fuzz/clock.ts";
+import { defaultWorkerCount, runFuzz, type FuzzReport } from "../../src/fuzz/run.ts";
 import {
   createPool,
   toCloneableJob,
@@ -734,7 +734,8 @@ test("worker-thread posts error on malformed run message", { timeout: 8000 }, as
   try {
     const msg = await new Promise<{ type: string; error?: string }>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("no malformed reply")), 3000);
-      w.once("message", (m: { type: string; error?: string }) => {
+      w.on("message", (m: { type: string; error?: string }) => {
+        if (m.type === "ready") return;
         clearTimeout(t);
         resolve(m);
       });
@@ -751,4 +752,352 @@ test("worker-thread posts error on malformed run message", { timeout: 8000 }, as
 test("toCloneableJob still roundtrips a normal call", () => {
   const wired = toCloneableJob({ symbol: "id", args: [1, "x"], kind: "call" });
   assert.equal((wired.args[0] as { t?: string }).t, "num");
+});
+
+const ID_SRC = "export function id(x) { return x; }\n";
+
+function idEnvelope(): Envelope {
+  return baseEnvelope({
+    traces: [{ symbol: "id", args: [{ t: "num", v: 1 }] }],
+    symbols: [
+      valueSym("id", [
+        {
+          id: "c1",
+          loc: loc(),
+          exportName: "id",
+          memberPath: ["id"],
+          thisBinding: { kind: "unbound" },
+          argc: { min: 1, max: 1, observed: [1] },
+          argShapes: [{ kind: "literal", literals: [1, 2, 3] }],
+          spread: false,
+          resultMembers: [],
+        },
+      ]),
+    ],
+  });
+}
+
+function comparable(r: FuzzReport) {
+  return {
+    cases: r.cases,
+    comparisons: r.comparisons,
+    timerCases: r.timerCases,
+    tracesReplayed: r.tracesReplayed,
+    seed: r.seed,
+    allowFlaky: r.allowFlaky,
+    disagreements: r.disagreements,
+  };
+}
+
+function writeGetPair(): { orig: string; slim: string } {
+  const dir = mkdtempSync(join(tmpdir(), "slim-p5-get-"));
+  const orig = join(dir, "orig.mjs");
+  const slim = join(dir, "slim.mjs");
+  writeFileSync(
+    orig,
+    `export function get(object, path, d) {
+      if (object == null) return d;
+      const segs = String(path).split(".").filter(Boolean);
+      let cur = object;
+      for (const p of segs) { if (cur == null) return d; cur = cur[p]; }
+      return cur === undefined ? d : cur;
+    }\n`,
+  );
+  writeFileSync(
+    slim,
+    `export function get(object, path, d) {
+      if (object == null) return d;
+      if (typeof path === "string") {
+        const v = object[path];
+        return v === undefined ? d : v;
+      }
+      return d;
+    }\n`,
+  );
+  return { orig, slim };
+}
+
+test(
+  "same seed and budget reproduce cases and ordered disagreements for workers 1, 2, and default",
+  { timeout: 30_000 },
+  async () => {
+    const { orig, slim } = writeGetPair();
+    const counts = [...new Set([1, 2, defaultWorkerCount()])];
+    for (const workers of counts) {
+      const opts = {
+        origModule: orig,
+        slimModule: slim,
+        envelope: getEnvelope(),
+        budgetMs: 20,
+        seed: 42,
+        workers,
+      };
+      const a = await runFuzz(opts);
+      const b = await runFuzz(opts);
+      assert.ok(a.cases > 0, `workers=${workers} ran no cases`);
+      assert.deepEqual(comparable(a), comparable(b), `workers=${workers} rerun diverged`);
+    }
+  },
+);
+
+test(
+  "workers 1 and 2 produce the same work set for the same seed and budget",
+  { timeout: 20_000 },
+  async () => {
+    const { orig, slim } = writeGetPair();
+    const opts = {
+      origModule: orig,
+      slimModule: slim,
+      envelope: getEnvelope(),
+      budgetMs: 20,
+      seed: 7,
+    };
+    const one = await runFuzz({ ...opts, workers: 1 });
+    const two = await runFuzz({ ...opts, workers: 2 });
+    assert.deepEqual(comparable(one), comparable(two));
+  },
+);
+
+test(
+  "slow worker import does not consume a short case timeout",
+  { timeout: 8000 },
+  async () => {
+    const dir = mkdtempSync(join(tmpdir(), "slim-p5-slow-"));
+    const orig = join(dir, "orig.mjs");
+    const slim = join(dir, "slim.mjs");
+    writeFileSync(
+      orig,
+      `await new Promise((r) => setTimeout(r, 200));
+export function id(x) { return x; }
+`,
+    );
+    writeFileSync(slim, ID_SRC);
+    const report = await runFuzz({
+      origModule: orig,
+      slimModule: slim,
+      envelope: idEnvelope(),
+      budgetMs: 80,
+      seed: 1,
+      workers: 2,
+    });
+    assert.ok(report.cases > 0);
+    assert.equal(report.disagreements.length, 0, report.disagreements.map((d) => d.reason).join("; "));
+  },
+);
+
+test("insufficient startup is EXIT_ENV and distinct from timeout", { timeout: 10_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-p5-hangload-"));
+  const orig = join(dir, "orig.mjs");
+  const slim = join(dir, "slim.mjs");
+  writeFileSync(orig, "await new Promise(() => {});\nexport function id() { return 1; }\n");
+  writeFileSync(slim, ID_SRC);
+  await assert.rejects(
+    () =>
+      runFuzz({
+        origModule: orig,
+        slimModule: slim,
+        envelope: idEnvelope(),
+        budgetMs: 80,
+        seed: 1,
+        workers: 2,
+      }),
+    (e: unknown) =>
+      e instanceof SlimExit &&
+      e.code === EXIT_ENV &&
+      /insufficient startup/i.test(e.message) &&
+      !/timeout/i.test(e.message),
+  );
+});
+
+test("empty work set with zero extra quota is insufficient budget", async () => {
+  await assert.rejects(
+    () =>
+      runFuzz({
+        original: { id: (x: unknown) => x },
+        replacement: { id: (x: unknown) => x },
+        envelope: baseEnvelope({
+          symbols: [valueSym("id", [])],
+        }),
+        budgetMs: 0,
+        seed: 1,
+        workers: 1,
+      }),
+    (e: unknown) =>
+      e instanceof SlimExit && e.code === EXIT_ENV && /insufficient budget/i.test(e.message),
+  );
+});
+
+test("hung worker timeout then a healthy run still works", { timeout: 15_000 }, async () => {
+  const hung = mkdtempSync(join(tmpdir(), "slim-p5-hung2-"));
+  writeFileSync(join(hung, "orig.mjs"), "export function id() { for (;;) {} }\n");
+  writeFileSync(join(hung, "slim.mjs"), ID_SRC);
+  const env = idEnvelope();
+  const t0 = wallMs();
+  await assert.rejects(
+    () =>
+      runFuzz({
+        origModule: join(hung, "orig.mjs"),
+        slimModule: join(hung, "slim.mjs"),
+        envelope: env,
+        budgetMs: 80,
+        seed: 1,
+        workers: 2,
+      }),
+    (e: unknown) => e instanceof SlimExit && e.code === EXIT_ENV && /timeout/i.test(e.message),
+  );
+  const elapsed = wallMs() - t0;
+  assert.ok(
+    elapsed <= 80 + STARTUP_MS + SHUTDOWN_MS + BUDGET_SLACK_MS,
+    `hung worker overran documented bound: ${elapsed}ms`,
+  );
+  const { orig, slim } = writePair(ID_SRC);
+  const healthy = await runFuzz({
+    origModule: orig,
+    slimModule: slim,
+    envelope: env,
+    budgetMs: 20,
+    seed: 2,
+    workers: 2,
+  });
+  assert.ok(healthy.cases > 0);
+});
+
+test("returned pool report is frozen after close", { timeout: 8000 }, async () => {
+  const { orig, slim } = writePair(ID_SRC);
+  const report = await runFuzz({
+    origModule: orig,
+    slimModule: slim,
+    envelope: idEnvelope(),
+    budgetMs: 10,
+    seed: 3,
+    workers: 2,
+  });
+  assert.ok(Object.isFrozen(report));
+  assert.ok(Object.isFrozen(report.disagreements));
+});
+
+test("crash, serialize, hang, and startup failures have distinct messages", { timeout: 15_000 }, async () => {
+  const crashDir = mkdtempSync(join(tmpdir(), "slim-p5-c-"));
+  writeFileSync(join(crashDir, "orig.mjs"), "export function id() { process.exit(1); }\n");
+  writeFileSync(join(crashDir, "slim.mjs"), ID_SRC);
+  const hangDir = mkdtempSync(join(tmpdir(), "slim-p5-h-"));
+  writeFileSync(join(hangDir, "orig.mjs"), "export function id() { for (;;) {} }\n");
+  writeFileSync(join(hangDir, "slim.mjs"), ID_SRC);
+  const loadDir = mkdtempSync(join(tmpdir(), "slim-p5-l-"));
+  writeFileSync(join(loadDir, "orig.mjs"), "await new Promise(() => {});\nexport function id() { return 1; }\n");
+  writeFileSync(join(loadDir, "slim.mjs"), ID_SRC);
+  const env = idEnvelope();
+
+  const crash = await runFuzz({
+    origModule: join(crashDir, "orig.mjs"),
+    slimModule: join(crashDir, "slim.mjs"),
+    envelope: env,
+    budgetMs: 80,
+    seed: 1,
+    workers: 2,
+  }).then(
+    () => null,
+    (e: unknown) => e,
+  );
+  const hang = await runFuzz({
+    origModule: join(hangDir, "orig.mjs"),
+    slimModule: join(hangDir, "slim.mjs"),
+    envelope: env,
+    budgetMs: 80,
+    seed: 1,
+    workers: 2,
+  }).then(
+    () => null,
+    (e: unknown) => e,
+  );
+  const startup = await runFuzz({
+    origModule: join(loadDir, "orig.mjs"),
+    slimModule: join(loadDir, "slim.mjs"),
+    envelope: env,
+    budgetMs: 80,
+    seed: 1,
+    workers: 2,
+  }).then(
+    () => null,
+    (e: unknown) => e,
+  );
+  const { orig, slim } = writePair(ID_SRC);
+  const bomb: Record<string, unknown> = {};
+  Object.defineProperty(bomb, "x", {
+    enumerable: true,
+    get() {
+      throw new Error("nope");
+    },
+  });
+  const pool = createPool({
+    workers: 2,
+    origModule: orig,
+    slimModule: slim,
+    symbols: ["id"],
+    timeoutMs: 500,
+  });
+  let serialize: unknown;
+  try {
+    serialize = await pool.runCase({ symbol: "id", args: [bomb], kind: "call" }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+  } finally {
+    await pool.close();
+  }
+
+  assert.ok(crash instanceof SlimExit && crash.code === EXIT_ENV && /crashed/i.test(crash.message));
+  assert.ok(hang instanceof SlimExit && hang.code === EXIT_ENV && /timeout/i.test(hang.message));
+  assert.ok(
+    startup instanceof SlimExit &&
+      startup.code === EXIT_ENV &&
+      /insufficient startup/i.test(startup.message),
+  );
+  assert.ok(
+    serialize instanceof SlimExit && serialize.code === EXIT_FAIL && /serialization/i.test(serialize.message),
+  );
+  const msgs = [crash.message, hang.message, startup.message, serialize.message];
+  assert.equal(new Set(msgs).size, 4, `messages were not distinct: ${msgs.join(" | ")}`);
+});
+
+test("worker-pool determinism holds across 10 serial repeats", { timeout: 30_000 }, async () => {
+  const { orig, slim } = writePair(ID_SRC);
+  const opts = {
+    origModule: orig,
+    slimModule: slim,
+    envelope: idEnvelope(),
+    budgetMs: 15,
+    seed: 99,
+    workers: 2 as const,
+  };
+  const first = comparable(await runFuzz(opts));
+  assert.ok(first.cases > 0);
+  for (let i = 0; i < 9; i++) {
+    assert.deepEqual(comparable(await runFuzz(opts)), first, `repeat ${i + 2} diverged`);
+  }
+});
+
+test("worker-thread posts ready after load", { timeout: 8000 }, async () => {
+  const { orig, slim } = writePair(ID_SRC);
+  const w = new Worker(workerThreadUrl(), {
+    execArgv: process.execArgv.filter((a) => a !== "--test" && !a.startsWith("--test-")),
+    workerData: {
+      origModule: orig,
+      slimModule: pathToFileURL(slim).href,
+      clock: false,
+    },
+  });
+  try {
+    const msg = await new Promise<{ type: string }>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("no ready")), 3000);
+      w.once("message", (m: { type: string }) => {
+        clearTimeout(t);
+        resolve(m);
+      });
+      w.once("error", reject);
+    });
+    assert.equal(msg.type, "ready");
+  } finally {
+    await w.terminate();
+  }
 });
