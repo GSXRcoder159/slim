@@ -19,6 +19,7 @@ test("isConsultedFailure ignores not-required success", () => {
   assert.equal(isConsultedFailure({ status: "success", detail: "not required" }), false);
   assert.equal(isConsultedFailure({ status: "success", detail: "ok" }), false);
   assert.equal(isConsultedFailure({ status: "unavailable", detail: "HTTP 503" }), true);
+  assert.equal(isConsultedFailure({ status: "timeout", detail: "timeout: aborted" }), true);
   assert.equal(isConsultedFailure({ status: "malformed", detail: "no version" }), true);
   assert.equal(isConsultedFailure({ status: "stale", detail: "older than pin" }), true);
 });
@@ -32,12 +33,20 @@ test("fetchJson HTTP 503 is unavailable", async () => {
   assert.equal(r.value, undefined);
 });
 
-test("fetchJson timeout is unavailable", async () => {
+test("fetchJson timeout is timeout, not unavailable", async () => {
   const r = await fetchJson("https://api.osv.dev/v1/query", {}, async () => {
     throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
   });
-  assert.equal(r.status, "unavailable");
+  assert.equal(r.status, "timeout");
   assert.match(r.detail, /timeout/i);
+});
+
+test("fetchJson abort is timeout, not unavailable", async () => {
+  const r = await fetchJson("https://api.osv.dev/v1/query", {}, async () => {
+    throw new DOMException("This operation was aborted", "AbortError");
+  });
+  assert.equal(r.status, "timeout");
+  assert.match(r.detail, /abort/i);
 });
 
 test("fetchJson network error is unavailable", async () => {
@@ -69,6 +78,21 @@ test("queryOsv HTTP 503 is unavailable, not an empty vuln list", async () => {
 test("queryOsv malformed vulns field is malformed", async () => {
   const r = await queryOsv("lodash", "4.17.21", async () => jsonResponse(200, { vulns: "nope" }));
   assert.equal(r.status, "malformed");
+});
+
+test("queryOsv vuln without id is malformed", async () => {
+  const r = await queryOsv("lodash", "4.17.21", async () =>
+    jsonResponse(200, { vulns: [{ summary: "no id" }] }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /missing id/);
+  assert.equal(r.value, undefined);
+});
+
+test("queryOsv non-object 200 body is malformed", async () => {
+  const r = await queryOsv("lodash", "4.17.21", async () => jsonResponse(200, ["not", "an", "object"]));
+  assert.equal(r.status, "malformed");
+  assert.equal(r.value, undefined);
 });
 
 test("queryOsv empty vulns is success with []", async () => {
@@ -115,6 +139,12 @@ test("npmLatest HTTP 404 is unavailable", async () => {
 test("npmLatest missing version is malformed", async () => {
   const r = await npmLatest("lodash", async () => jsonResponse(200, { name: "lodash" }));
   assert.equal(r.status, "malformed");
+});
+
+test("npmLatest non-object 200 body is malformed", async () => {
+  const r = await npmLatest("lodash", async () => jsonResponse(200, ["not", "an", "object"]));
+  assert.equal(r.status, "malformed");
+  assert.equal(r.value, undefined);
 });
 
 test("npmLatest non-string version is malformed", async () => {

@@ -175,6 +175,7 @@ test("command result schemas exist with required fields", () => {
   const upstream = JSON.parse(readFileSync(join(ROOT, "docs/upstream.schema.json"), "utf8")) as {
     required: string[];
     properties: { conclusion: { enum: string[] }; action: { enum: string[] } };
+    $defs: { source: { properties: { status: { enum: string[] } } } };
   };
   assert.deepEqual(
     upstream.required.sort(),
@@ -185,6 +186,9 @@ test("command result schemas exist with required fields", () => {
   }
   for (const a of ["none", "blocked", "review", "regenerated"]) {
     assert.ok(upstream.properties.action.enum.includes(a), a);
+  }
+  for (const s of ["success", "unavailable", "timeout", "malformed", "stale"]) {
+    assert.ok(upstream.$defs.source.properties.status.enum.includes(s), s);
   }
 });
 

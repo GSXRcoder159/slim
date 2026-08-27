@@ -9,6 +9,7 @@ import {
   parseReceipt,
   qualifyInventory,
   receiptFileName,
+  sourceReceipt,
   writeReceipt,
 } from "../src/support/receipts.ts";
 
@@ -138,4 +139,92 @@ test("writeReceipt rejects forbidden prompt payloads", () => {
     () => writeReceipt(dir, "provider.openai", { ...rec, prompt: "secret system" } as never),
     /forbidden field prompt/,
   );
+});
+
+test("sourceReceipt is schema-valid with service identity", () => {
+  const rec = sourceReceipt({
+    service: "osv",
+    fixture: "ms-watch",
+    commit: COMMIT,
+    npmDigest: NPM,
+    startedAt: new Date("2026-08-27T14:00:00.000Z"),
+    endedAt: new Date("2026-08-27T14:00:01.000Z"),
+    log: "not-exposed:success:success:0",
+  });
+  const parsed = parseReceipt(rec);
+  assert.equal(parsed.checkId, "test/upstream-live.test.ts");
+  assert.equal(parsed.command, "upstream");
+  assert.equal(parsed.service, "osv");
+  assert.equal(parsed.provider, null);
+  assert.equal(parsed.outcome, "pass");
+  assert.match(parsed.environment ?? "", /node-/);
+});
+
+test("qualify missing externalService.osv receipt fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-osv-"));
+  const osv: InventoryEntry = {
+    id: "externalService.osv",
+    kind: "externalService",
+    name: "osv",
+    docs: ["docs/dx.md"],
+    checkId: "test/upstream-live.test.ts",
+    receiptClass: "live",
+  };
+  const inv: SupportInventory = { schemaVersion: 1, entries: [osv] };
+  const failures = qualifyInventory(inv, dir, candidate, { now: NOW });
+  assert.deepEqual(failures, [{ entryId: "externalService.osv", reason: "missing receipt" }]);
+});
+
+test("qualify stale commit on npm-registry receipt fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-npm-stale-"));
+  const npmEntry: InventoryEntry = {
+    id: "externalService.npm-registry",
+    kind: "externalService",
+    name: "npm-registry",
+    docs: ["docs/dx.md"],
+    checkId: "test/upstream-live.test.ts",
+    receiptClass: "live",
+  };
+  writeReceipt(
+    dir,
+    npmEntry.id,
+    sourceReceipt({
+      service: "npm-registry",
+      fixture: "ms-watch",
+      commit: "d".repeat(40),
+      npmDigest: NPM,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+    }),
+  );
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [npmEntry] }, dir, candidate, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /stale commit/);
+});
+
+test("qualify wrong service on OSV receipt fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-osv-svc-"));
+  const osv: InventoryEntry = {
+    id: "externalService.osv",
+    kind: "externalService",
+    name: "osv",
+    docs: ["docs/dx.md"],
+    checkId: "test/upstream-live.test.ts",
+    receiptClass: "live",
+  };
+  writeReceipt(
+    dir,
+    osv.id,
+    sourceReceipt({
+      service: "npm-registry",
+      fixture: "ms-watch",
+      commit: COMMIT,
+      npmDigest: NPM,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+    }),
+  );
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [osv] }, dir, candidate, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /service npm-registry != osv/);
 });

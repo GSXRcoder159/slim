@@ -1,6 +1,6 @@
 export const FETCH_MS = 15_000;
 
-export type SourceStatus = "success" | "unavailable" | "malformed" | "stale";
+export type SourceStatus = "success" | "unavailable" | "timeout" | "malformed" | "stale";
 
 export interface SourceResult<T> {
   status: SourceStatus;
@@ -51,8 +51,9 @@ export async function fetchJson(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const timeout = /timeout|aborted|abort/i.test(msg);
-    return sourceErr("unavailable", timeout ? `timeout: ${msg}` : msg);
+    const name = err instanceof Error ? err.name : "";
+    const timeout = /timeout|aborted|abort/i.test(msg) || name === "TimeoutError" || name === "AbortError";
+    return sourceErr(timeout ? "timeout" : "unavailable", timeout ? `timeout: ${msg}` : msg);
   }
   if (!res.ok) {
     return sourceErr("unavailable", `HTTP ${res.status}`);

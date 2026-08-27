@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://unpkg.com/slim/docs/upstream.schema.json",
   "title": "Slim upstream --json report",
-  "description": "One JSON document on stdout for success and non-success. schemaVersion 1. Unconsulted sources use status success with detail 'not required' and are ignored when folding fail-closed.",
+  "description": "One JSON document on stdout for success and non-success. schemaVersion 1. Unconsulted sources use status success with detail 'not required' and are ignored when folding fail-closed. Consulted OSV/npm statuses are success, unavailable, timeout, malformed, and stale.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "ok", "exit", "status", "conclusion", "action", "sources", "findings", "regeneration"],
@@ -81,7 +81,7 @@
       "additionalProperties": false,
       "required": ["status", "detail"],
       "properties": {
-        "status": { "type": "string", "enum": ["success", "unavailable", "malformed", "stale"] },
+        "status": { "type": "string", "enum": ["success", "unavailable", "timeout", "malformed", "stale"] },
         "detail": { "type": "string" }
       }
     },

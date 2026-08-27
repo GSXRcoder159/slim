@@ -146,7 +146,7 @@ JSON `{ schemaVersion, ok, exit, status, packages[] }` includes per-package `dri
     --json              One schema-valid document on stdout (docs/upstream.schema.json)
 ```
 
-Network: OSV `POST /v1/query` and npm registry packument. GitHub is probed only with `--pr` (CLI or `GITHUB_TOKEN`) after replacement state is complete. Oracle install is probed only when regenerating an exposed slice. Any consulted OSV/npm/GitHub status of unavailable, malformed, or stale → exit 4 and never prints `slice not exposed.` Missing manifest, empty-invalid artifacts, or corrupt envelope/evidence/module/standing/hardening tests → exit 1, `incomplete-state`, never `not-exposed`. A valid empty replacement set → exit 0, `no replacements`. Unmapped advisories write `.slim/UPSTREAM.md` for human review and do not rewrite the slice. Exposed slices regenerate only after catalog/LLM validation, export/size/fuzz/standing/hardening/evidence/merge gates; all exposed packages share one transaction. No installable oracle leaves the tree unchanged (exit 1, `oracle-unavailable`). GitHub Advisory GraphQL, `querybatch`, `--fail-on`, and `--write-workflow` are not v1.
+Network: OSV `POST /v1/query` and npm registry packument. GitHub is probed only with `--pr` (CLI or `GITHUB_TOKEN`) after replacement state is complete. Oracle install is probed only when regenerating an exposed slice. Any consulted OSV/npm/GitHub status of unavailable, timeout, malformed, or stale → exit 4 and never prints `slice not exposed.` Missing manifest, empty-invalid artifacts, or corrupt envelope/evidence/module/standing/hardening tests → exit 1, `incomplete-state`, never `not-exposed`. A valid empty replacement set → exit 0, `no replacements`. Unmapped advisories write `.slim/UPSTREAM.md` for human review and do not rewrite the slice. Exposed slices regenerate only after catalog/LLM validation, export/size/fuzz/standing/hardening/evidence/merge gates; all exposed packages share one transaction. No installable oracle leaves the tree unchanged (exit 1, `oracle-unavailable`). GitHub Advisory GraphQL, `querybatch`, `--fail-on`, and `--write-workflow` are not v1.
 
 ### `slim doctor`
 
@@ -394,10 +394,14 @@ Local cron is documented, not installed.
 
 ### Sources (fail-closed)
 
-1. **OSV** `POST https://api.osv.dev/v1/query` — `{ package: { name, ecosystem: "npm" }, version }` for the pinned version and, when npm reports a newer latest, that version too. Empty `vulns` is success, not “not exposed” by itself.
+1. **OSV** `POST https://api.osv.dev/v1/query` — `{ package: { name, ecosystem: "npm" }, version }` for the pinned version and, when npm reports a newer latest, that version too. Empty `vulns` is source `success`, not “not exposed” by itself.
 2. **npm registry** `GET https://registry.npmjs.org/<pkg>` — latest version and published versions. Used for routine-release notes and stale/pin checks, not as a vuln DB.
 3. **Oracle install** — temp-install latest/patched, else the project pin. Required before any automatic rewrite.
 4. **GitHub availability** — origin + `gh`/`GITHUB_TOKEN`, only when `--pr`. Not a GHSA advisory client.
+
+Consulted OSV/npm `sources.*.status` values: `success`, `unavailable` (HTTP/network), `timeout`, `malformed` (invalid JSON or missing fields), `stale` (latest older than pin, or pin absent from published versions). Unconsulted sources stay `success` with detail `not required`. A consulted non-success folds to `conclusion: source-unavailable`, exit 4, and never `slice not exposed.`
+
+Live packed `slim upstream` proof for advertised sources is `SLIM_UPSTREAM_LIVE=1`. Missing or stale `externalService.osv` / `externalService.npm-registry` receipts fail `npm run qualify`; they do not vanish from `npm test`. Set `SLIM_RECEIPTS_DIR` to write those receipts (commit + tarball digest).
 
 GitHub Advisory GraphQL and OSV `querybatch` are later-scope; OSV already mirrors GHSA ids. No NVD key. No Slim servers.
 

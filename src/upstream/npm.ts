@@ -16,7 +16,7 @@ export async function npmLatest(
     return { status: got.status, detail: `npm registry ${got.detail}` };
   }
   const json = got.value;
-  if (!json || typeof json !== "object") {
+  if (!json || typeof json !== "object" || Array.isArray(json)) {
     return sourceErr("malformed", "npm registry body is not an object");
   }
   const rec = json as {

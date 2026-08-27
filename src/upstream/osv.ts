@@ -65,7 +65,7 @@ export async function queryOsv(
     return { status: got.status, detail: `osv.dev ${got.detail}` };
   }
   const json = got.value;
-  if (!json || typeof json !== "object") {
+  if (!json || typeof json !== "object" || Array.isArray(json)) {
     return sourceErr("malformed", "osv.dev body is not an object");
   }
   const vulns = (json as { vulns?: unknown }).vulns;

@@ -81,7 +81,7 @@ The generator receives envelope JSON plus public `.d.ts` / README **only**, and 
 
 LLM slices pass the same AST, export-contract, size, fuzz, standing-test, and evidence gates as catalog slices. Generated `Object.setPrototypeOf`, `__proto__` assignment, and `Object.defineProperty` on `*.prototype` fail before any project write. Catalog `defineData` may still define an own `__proto__` data property on a user object (hardening, not prototype mutation). Provider HTTP failures (timeout, 429, 5xx) exit 4. Unsafe or exhausted repairs exit 1. Nothing is written to the project until fuzz passes. Evidence records provider, model, prompt hash, attempts, and summarized counterexamples — never API keys.
 
-Live packed `replace --llm` proof for advertised providers is `SLIM_LLM_LIVE=1` plus the matching API key. Missing credentials or missing current receipts fail `npm run qualify`; they do not vanish from `npm test`.
+Live packed `replace --llm` proof for advertised providers is `SLIM_LLM_LIVE=1` plus the matching API key. Live packed `upstream` proof for advertised OSV and npm-registry sources is `SLIM_UPSTREAM_LIVE=1`. Missing credentials or missing current receipts fail `npm run qualify`; they do not vanish from `npm test`.
 
 ## Vitest
 

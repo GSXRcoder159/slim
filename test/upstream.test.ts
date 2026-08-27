@@ -518,26 +518,56 @@ async function capture(fn: () => Promise<number>): Promise<{ code: number; stdou
   }
 }
 
+type SourceDoc = {
+  ok: boolean;
+  exit: number;
+  conclusion: string;
+  action: string;
+  sources: { osv: { status: string; detail: string }; npm: { status: string; detail: string } };
+  findings: unknown[];
+};
+
+function parseUpstream(stdout: string): SourceDoc {
+  const trimmed = stdout.trim();
+  assert.ok(trimmed.startsWith("{"), stdout);
+  return JSON.parse(trimmed) as SourceDoc;
+}
+
+function assertBlockedSource(
+  result: { code: number; stdout: string; stderr: string },
+  source: "osv" | "npm",
+  status: string,
+): SourceDoc {
+  assert.equal(result.code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(result.stdout + result.stderr), false);
+  const doc = parseUpstream(result.stdout);
+  assert.equal(doc.ok, false);
+  assert.equal(doc.exit, EXIT_ENV);
+  assert.equal(doc.conclusion, "source-unavailable");
+  assert.equal(doc.action, "blocked");
+  assert.equal(doc.sources[source].status, status);
+  return doc;
+}
+
 test("OSV outage never prints slice not exposed", async () => {
   const { root } = writeFixture();
   const { code, stdout, stderr } = await capture(() =>
     runUpstream(
-      parseCli(["upstream"]),
+      parseCli(["upstream", "--json"]),
       baseDeps({
         cwd: root,
         queryOsv: async () => sourceErr("unavailable", "HTTP 503"),
       }),
     ),
   );
-  assert.equal(code, EXIT_ENV);
-  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  assertBlockedSource({ code, stdout, stderr }, "osv", "unavailable");
 });
 
 test("npm outage with empty OSV never prints slice not exposed", async () => {
   const { root } = writeFixture();
   const { code, stdout, stderr } = await capture(() =>
     runUpstream(
-      parseCli(["upstream"]),
+      parseCli(["upstream", "--json"]),
       baseDeps({
         cwd: root,
         npmLatest: async () => sourceErr("unavailable", "HTTP 503"),
@@ -545,31 +575,102 @@ test("npm outage with empty OSV never prints slice not exposed", async () => {
       }),
     ),
   );
-  assert.equal(code, EXIT_ENV);
-  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  assertBlockedSource({ code, stdout, stderr }, "npm", "unavailable");
+});
+
+test("OSV timeout is source-unavailable with status timeout", async () => {
+  const { root } = writeFixture();
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        queryOsv: async () => sourceErr("timeout", "timeout: aborted"),
+      }),
+    ),
+  );
+  assertBlockedSource({ code, stdout, stderr }, "osv", "timeout");
+});
+
+test("npm timeout is source-unavailable with status timeout", async () => {
+  const { root } = writeFixture();
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => sourceErr("timeout", "timeout: aborted"),
+        queryOsv: async () => sourceOk([]),
+      }),
+    ),
+  );
+  assertBlockedSource({ code, stdout, stderr }, "npm", "timeout");
+});
+
+test("OSV invalid JSON is source-unavailable with status malformed", async () => {
+  const { root } = writeFixture();
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        queryOsv: async () => sourceErr("malformed", "osv.dev response is not JSON"),
+      }),
+    ),
+  );
+  assertBlockedSource({ code, stdout, stderr }, "osv", "malformed");
+});
+
+test("OSV malformed fields are source-unavailable with status malformed", async () => {
+  const { root } = writeFixture();
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        queryOsv: async () => sourceErr("malformed", "osv.dev vuln missing id"),
+      }),
+    ),
+  );
+  assertBlockedSource({ code, stdout, stderr }, "osv", "malformed");
+});
+
+test("npm malformed fields are source-unavailable with status malformed", async () => {
+  const { root } = writeFixture();
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => sourceErr("malformed", "npm registry response missing version"),
+        queryOsv: async () => sourceOk([]),
+      }),
+    ),
+  );
+  assertBlockedSource({ code, stdout, stderr }, "npm", "malformed");
 });
 
 test("all sources down is EXIT_ENV", async () => {
   const { root } = writeFixture();
   const { code, stdout, stderr } = await capture(() =>
     runUpstream(
-      parseCli(["upstream"]),
+      parseCli(["upstream", "--json"]),
       baseDeps({
         cwd: root,
-        npmLatest: async () => sourceErr("unavailable", "timeout: aborted"),
+        npmLatest: async () => sourceErr("timeout", "timeout: aborted"),
         queryOsv: async () => sourceErr("malformed", "osv.dev response is not JSON"),
       }),
     ),
   );
-  assert.equal(code, EXIT_ENV);
-  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  const doc = assertBlockedSource({ code, stdout, stderr }, "npm", "timeout");
+  assert.equal(doc.sources.osv.status, "malformed");
 });
 
 test("npm latest older than pin is stale and never slice not exposed", async () => {
   const { root } = writeFixture();
   const { code, stdout, stderr } = await capture(() =>
     runUpstream(
-      parseCli(["upstream"]),
+      parseCli(["upstream", "--json"]),
       baseDeps({
         cwd: root,
         npmLatest: async () => sourceOk({ version: "4.17.0" }),
@@ -577,8 +678,22 @@ test("npm latest older than pin is stale and never slice not exposed", async () 
       }),
     ),
   );
-  assert.equal(code, EXIT_ENV);
-  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  assertBlockedSource({ code, stdout, stderr }, "npm", "stale");
+});
+
+test("pinned version absent from npm versions is stale", async () => {
+  const { root } = writeFixture();
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => sourceOk({ version: "4.17.22", versions: ["4.17.20", "4.17.22"] }),
+        queryOsv: async () => sourceOk([]),
+      }),
+    ),
+  );
+  assertBlockedSource({ code, stdout, stderr }, "npm", "stale");
 });
 
 test("successful empty advisory set may print slice not exposed", async () => {
@@ -930,8 +1045,15 @@ test("successful empty advisory --json includes action none", async () => {
     runUpstream(parseCli(["upstream", "--json"]), baseDeps({ cwd: root })),
   );
   assert.equal(code, EXIT_OK);
-  const doc = JSON.parse(stdout) as { conclusion: string; action: string; regeneration: unknown[] };
+  const doc = JSON.parse(stdout) as {
+    conclusion: string;
+    action: string;
+    regeneration: unknown[];
+    sources: { osv: { status: string }; npm: { status: string } };
+  };
   assert.equal(doc.conclusion, "not-exposed");
   assert.equal(doc.action, "none");
+  assert.equal(doc.sources.osv.status, "success");
+  assert.equal(doc.sources.npm.status, "success");
   assert.deepEqual(doc.regeneration, []);
 });

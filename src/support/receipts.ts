@@ -105,6 +105,35 @@ export function providerReceipt(opts: {
   };
 }
 
+export function sourceReceipt(opts: {
+  service: "osv" | "npm-registry";
+  fixture: string;
+  commit: string;
+  npmDigest: string | null;
+  startedAt: Date;
+  endedAt: Date;
+  log: string;
+  workflowRun?: string | null;
+}): QualificationReceipt {
+  return {
+    schemaVersion: 1,
+    checkId: "test/upstream-live.test.ts",
+    command: "upstream",
+    fixture: opts.fixture,
+    environment: `${process.platform} node-${process.version}`,
+    provider: null,
+    service: opts.service,
+    startedAt: opts.startedAt.toISOString(),
+    endedAt: opts.endedAt.toISOString(),
+    outcome: "pass",
+    commit: opts.commit,
+    npmDigest: opts.npmDigest,
+    actionDigest: null,
+    workflowRun: opts.workflowRun ?? null,
+    logDigest: createHash("sha256").update(opts.log).digest("hex"),
+  };
+}
+
 export function forbiddenKey(value: unknown, path = ""): string | null {
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {
