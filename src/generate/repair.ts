@@ -3,6 +3,7 @@ import { generateWithLlm, type LlmConfig } from "./llm.ts";
 import { assertValidGenerated } from "./validate.ts";
 import { checkContracts } from "./exports.ts";
 import { loadTargetTypescript } from "../project.ts";
+import { capCounterexamples } from "./prompt.ts";
 import type { PublicApiSpec } from "./public-api.ts";
 import { SlimExit, EXIT_FAIL } from "../exit.ts";
 
@@ -56,7 +57,7 @@ export async function repairLoop(opts: {
       if (cannotRepair()) {
         throw new SlimExit(EXIT_FAIL, `generated contracts failed: ${examples.join("; ")}`);
       }
-      const next = await generate(opts.envelope, opts.publicApi, examples, opts.llm!);
+      const next = await generate(opts.envelope, opts.publicApi, capCounterexamples(examples), opts.llm!);
       source = next.source;
       promptHash = next.promptHash;
       continue;
@@ -72,7 +73,7 @@ export async function repairLoop(opts: {
     if (cannotRepair()) {
       throw new SlimExit(EXIT_FAIL, `fuzz disagreements remain: ${examples.join("; ")}`);
     }
-    const next = await generate(opts.envelope, opts.publicApi, examples, opts.llm!);
+    const next = await generate(opts.envelope, opts.publicApi, capCounterexamples(examples), opts.llm!);
     source = next.source;
     promptHash = next.promptHash;
   }

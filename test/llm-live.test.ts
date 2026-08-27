@@ -1,79 +1,102 @@
-import { test } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { generateWithLlm, llmConfigFromEnv } from "../src/generate/llm.ts";
-import { assertValidGenerated } from "../src/generate/validate.ts";
-import { checkContracts } from "../src/generate/exports.ts";
-import { ENVELOPE_VERSION, emptyHyrum } from "../src/envelope/types.ts";
-import type { Envelope } from "../src/envelope/types.ts";
-import * as ts from "typescript";
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { canonicalInventory } from "../src/support/inventory.ts";
+import { providerReceipt, writeReceipt } from "../src/support/receipts.ts";
+import {
+  installFixture,
+  packSlim,
+  replaceLlmArgs,
+  runSlim,
+  writeTinyAddFixture,
+} from "./helpers/llm-replace.ts";
 
-const live = process.env.SLIM_LLM_LIVE === "1";
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const LIVE = process.env.SLIM_LLM_LIVE === "1";
 
-function env(): Envelope {
-  return {
-    schemaVersion: ENVELOPE_VERSION,
-    package: { name: "ms", version: "2", family: "ms", subpath: "" },
-    env: ["node"],
-    imports: [],
-    symbols: [
-      {
-        exportName: "default",
-        packages: [],
-        callSites: [],
-        resultMembers: [],
-        hyrum: emptyHyrum(),
-        coverage: { callSitesStatic: 0, callSitesTraced: 0 },
-      },
-    ],
-    unknowns: [],
-    traces: [],
-    closure: {
-      confidence: "closed",
-      readyToGenerate: true,
-      staticCallSiteIds: [],
-      tracedCallSiteIds: [],
-      untracedCallSiteIds: [],
-      reason: "",
-    },
-    slimmable: { score: 80, verdict: "slim", blockers: [], reasons: [] },
-    clock: false,
-    cryptoRandom: false,
-  };
-}
+let packDir = "";
+let tarball = "";
 
-const spec = {
-  text: "export default function ms(value: string | number): number;",
-  source: "bundled-dts" as const,
-};
+before(() => {
+  if (!LIVE) return;
+  if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) return;
+  const packed = packSlim();
+  packDir = packed.packDir;
+  tarball = packed.tarball;
+});
 
-if (live && process.env.ANTHROPIC_API_KEY) {
-  test("live Anthropic smoke produces a valid module", async () => {
-    const cfg = llmConfigFromEnv({
-      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-    } as NodeJS.ProcessEnv);
-    assert.ok(cfg);
-    const out = await generateWithLlm(env(), spec, [], cfg!);
-    assert.ok(out.promptHash);
-    assert.match(out.source, /SPDX-License-Identifier: MIT/);
-    assert.doesNotMatch(out.source, /FROM_IMPL/);
-    assertValidGenerated(ts, out.source, env());
-    const contracts = checkContracts(ts, out.source, env());
-    assert.equal(contracts.ok, true, contracts.errors.join("; "));
-  });
-}
+after(() => {
+  if (packDir) rmSync(packDir, { recursive: true, force: true });
+});
 
-if (live && process.env.OPENAI_API_KEY) {
-  test("live OpenAI smoke produces a valid module", async () => {
-    const cfg = llmConfigFromEnv({
-      OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    } as NodeJS.ProcessEnv);
-    assert.ok(cfg);
-    const out = await generateWithLlm(env(), spec, [], cfg!);
-    assert.ok(out.promptHash);
-    assert.match(out.source, /SPDX-License-Identifier: MIT/);
-    assert.doesNotMatch(out.source, /FROM_IMPL/);
-    assertValidGenerated(ts, out.source, env());
-    const contracts = checkContracts(ts, out.source, env());
-    assert.equal(contracts.ok, true, contracts.errors.join("; "));
+test("support inventory advertises anthropic and openai as required live providers", () => {
+  const providers = canonicalInventory().entries.filter((e) => e.kind === "provider");
+  assert.deepEqual(
+    providers.map((p) => p.name).sort(),
+    ["anthropic", "openai"],
+  );
+  for (const p of providers) {
+    assert.equal(p.receiptClass, "live");
+    assert.equal(p.checkId, "test/llm-live.test.ts");
+  }
+});
+
+for (const name of ["anthropic", "openai"] as const) {
+  test(`live packed replace --llm via ${name}`, { timeout: 300_000 }, async () => {
+    if (!LIVE) {
+      assert.equal(process.env.SLIM_LLM_LIVE ?? "", "", "live tests stay registered when SLIM_LLM_LIVE is unset");
+      return;
+    }
+    const keyName = name === "anthropic" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+    const key = process.env[keyName];
+    assert.ok(key, `${keyName} is required when SLIM_LLM_LIVE=1`);
+    const dest = mkdtempSync(join(tmpdir(), `slim-llm-live-${name}-`));
+    const startedAt = new Date();
+    try {
+      writeTinyAddFixture(dest);
+      const slimJs = installFixture(dest, tarball);
+      const model = name === "anthropic" ? "claude-sonnet-4-5" : "gpt-4.1";
+      const extra: NodeJS.ProcessEnv = { SLIM_LLM_MODEL: model };
+      extra[keyName] = key;
+      const out = await runSlim(slimJs, replaceLlmArgs(), dest, extra, 240_000);
+      assert.equal(out.status, 0, `${out.stdout}\n${out.stderr}`);
+      const evidencePath = join(dest, ".slim/tiny-add/evidence.json");
+      assert.ok(existsSync(evidencePath));
+      const evidenceRaw = readFileSync(evidencePath, "utf8");
+      assert.doesNotMatch(evidenceRaw, /ANTHROPIC_API_KEY|OPENAI_API_KEY|sk-/);
+      const evidence = JSON.parse(evidenceRaw) as {
+        envelopeHash?: string;
+        generation?: { kind?: string; provider?: string; model?: string; promptHash?: string };
+      };
+      assert.equal(evidence.generation?.kind, "llm");
+      assert.equal(evidence.generation?.provider, name);
+      const receiptsDir = process.env.SLIM_RECEIPTS_DIR;
+      if (receiptsDir) {
+        const commit =
+          process.env.SLIM_CANDIDATE_COMMIT ??
+          execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+        writeReceipt(
+          receiptsDir,
+          `provider.${name}`,
+          providerReceipt({
+            provider: name,
+            model: evidence.generation?.model ?? model,
+            fixture: "tiny-add",
+            commit,
+            npmDigest: process.env.SLIM_NPM_DIGEST ?? null,
+            startedAt,
+            endedAt: new Date(),
+            log: `${evidence.envelopeHash ?? ""}:${evidence.generation?.promptHash ?? ""}:${out.status}`,
+            workflowRun: process.env.SLIM_WORKFLOW_RUN ?? null,
+          }),
+        );
+      }
+    } finally {
+      rmSync(dest, { recursive: true, force: true });
+    }
   });
 }

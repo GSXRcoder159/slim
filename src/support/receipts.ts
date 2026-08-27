@@ -4,7 +4,8 @@
  * Qualification receipts: schema, identity, forbidden payload, inventory coverage.
  */
 
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { assertDocument } from "../schema/documents.ts";
 import type { InventoryEntry, SupportInventory } from "./inventory.ts";
@@ -64,6 +65,44 @@ const FORBIDDEN_KEYS = new Set([
 
 export function receiptFileName(entryId: string): string {
   return `${entryId.replaceAll("/", "--")}.json`;
+}
+
+export function writeReceipt(dir: string, entryId: string, receipt: unknown): string {
+  parseReceipt(receipt);
+  mkdirSync(dir, { recursive: true });
+  const dest = join(dir, receiptFileName(entryId));
+  writeFileSync(dest, JSON.stringify(receipt, null, 2) + "\n");
+  return dest;
+}
+
+export function providerReceipt(opts: {
+  provider: "anthropic" | "openai";
+  model: string;
+  fixture: string;
+  commit: string;
+  npmDigest: string | null;
+  startedAt: Date;
+  endedAt: Date;
+  log: string;
+  workflowRun?: string | null;
+}): QualificationReceipt {
+  return {
+    schemaVersion: 1,
+    checkId: "test/llm-live.test.ts",
+    command: "replace",
+    fixture: opts.fixture,
+    environment: `${process.platform} node-${process.version} model=${opts.model}`,
+    provider: opts.provider,
+    service: null,
+    startedAt: opts.startedAt.toISOString(),
+    endedAt: opts.endedAt.toISOString(),
+    outcome: "pass",
+    commit: opts.commit,
+    npmDigest: opts.npmDigest,
+    actionDigest: null,
+    workflowRun: opts.workflowRun ?? null,
+    logDigest: createHash("sha256").update(opts.log).digest("hex"),
+  };
 }
 
 export function forbiddenKey(value: unknown, path = ""): string | null {

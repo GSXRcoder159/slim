@@ -3,6 +3,12 @@ import type { Envelope } from "../envelope/types.ts";
 import type { PublicApiSpec } from "./public-api.ts";
 
 const SPEC_CAP = 12_000;
+const EXAMPLE_CAP = 500;
+const EXAMPLE_COUNT = 8;
+
+export function capCounterexamples(examples: string[]): string[] {
+  return examples.slice(-EXAMPLE_COUNT).map((s) => (s.length > EXAMPLE_CAP ? `${s.slice(0, EXAMPLE_CAP)}…` : s));
+}
 
 export function buildPrompt(
   env: Envelope,
@@ -27,6 +33,7 @@ export function buildPrompt(
     "Rules:",
     "- Original implementation. Not derived from the original package or any original .js.",
     "- No eval, Function, WebAssembly, import(), require, node: builtins, fetch, Proxy, string-setTimeout.",
+    "- No Object.setPrototypeOf, __proto__ assignment, or Object.defineProperty on Object.prototype / *.prototype.",
     "- Look up Date.now, setTimeout, clearTimeout at call time. Never cache timers at module init.",
     "- Named exports for each used symbol.",
     wantsDefault ? "- Also `export default { ... }` covering those named exports (default/namespace/CJS import)." : "",
@@ -75,7 +82,7 @@ export function buildPrompt(
     publicApi.text.slice(0, SPEC_CAP),
     "",
     counterexamples.length ? "Previous disagreements to fix:" : "",
-    ...counterexamples,
+    ...capCounterexamples(counterexamples),
   ]
     .filter((line) => line !== "")
     .join("\n");

@@ -224,3 +224,34 @@ test("repairLoop does not repair unsafe AST", async () => {
   );
   assert.equal(generated, 0);
 });
+
+test("repairLoop does not repair prototype-mutation AST", async () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-repair-proto-"));
+  writeFileSync(join(root, "package.json"), JSON.stringify({ name: "slim", devDependencies: { typescript: "^5" } }));
+  linkTypescript(root);
+  let generated = 0;
+  let fuzzed = 0;
+  await assert.rejects(
+    () =>
+      repairLoop({
+        envelope: env(),
+        publicApi: { text: "", source: "envelope-only" },
+        initial: `export function ms() { Object.setPrototypeOf({}, {}); return 1; }\n`,
+        maxAttempts: 3,
+        llm,
+        projectRoot: root,
+        catalog: false,
+        fuzz: async () => {
+          fuzzed++;
+          return { disagreements: [] };
+        },
+        generate: async () => {
+          generated++;
+          return { source: okSource, promptHash: "p" };
+        },
+      }),
+    SlimExit,
+  );
+  assert.equal(generated, 0);
+  assert.equal(fuzzed, 0);
+});

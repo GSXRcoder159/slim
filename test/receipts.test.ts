@@ -9,6 +9,7 @@ import {
   parseReceipt,
   qualifyInventory,
   receiptFileName,
+  writeReceipt,
 } from "../src/support/receipts.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -110,4 +111,31 @@ test("qualify against a two-entry inventory fails closed on the missing one", ()
   const failures = qualifyInventory(inv, dir, candidate, { now: NOW });
   assert.ok(failures.some((f) => f.entryId === "provider.anthropic" && f.reason === "missing receipt"));
   assert.equal(failures.some((f) => f.entryId === "command.scan"), false);
+});
+
+test("writeReceipt persists a schema-valid provider receipt without secrets", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-write-"));
+  const rec = parseReceipt(loadFix("command.scan.json"));
+  const written = writeReceipt(dir, "provider.anthropic", {
+    ...rec,
+    checkId: "test/llm-live.test.ts",
+    command: "replace",
+    fixture: "tiny-add",
+    environment: "darwin node-v22.18.0 model=claude-sonnet-4-5",
+    provider: "anthropic",
+  });
+  assert.equal(written, join(dir, "provider.anthropic.json"));
+  const round = parseReceipt(JSON.parse(readFileSync(written, "utf8")));
+  assert.equal(round.provider, "anthropic");
+  assert.match(round.environment ?? "", /model=claude-sonnet-4-5/);
+  assert.doesNotMatch(readFileSync(written, "utf8"), /apiKey|ANTHROPIC_API_KEY|prompt/);
+});
+
+test("writeReceipt rejects forbidden prompt payloads", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-bad-"));
+  const rec = parseReceipt(loadFix("command.scan.json"));
+  assert.throws(
+    () => writeReceipt(dir, "provider.openai", { ...rec, prompt: "secret system" } as never),
+    /forbidden field prompt/,
+  );
 });

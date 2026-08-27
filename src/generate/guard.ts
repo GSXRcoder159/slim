@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SlimExit, EXIT_FAIL } from "../exit.ts";
+import { pathEscapesRoot } from "../rewrite/paths.ts";
 
 const IMPL_EXT = /\.(js|mjs|cjs)(\.map)?$/i;
 const MAP_EXT = /\.map$/i;
@@ -37,6 +38,24 @@ export class OriginalSourceGuard {
     }
     return guardedReadFileSync(filePath);
   }
+}
+
+/** Refuse metadata that is absolute or that resolves outside `allowedRoot`. */
+export function assertDeclaredSpecInside(allowedRoot: string, rel: string): string {
+  const clean = rel.split("?")[0]!;
+  if (isAbsolute(clean)) {
+    throw new SlimExit(EXIT_FAIL, `public spec escapes package root: ${rel}`);
+  }
+  return assertPublicSpecInside(allowedRoot, resolve(allowedRoot, clean));
+}
+
+/** Refuse symlink/traversal that leaves `allowedRoot`. `candidate` may already be absolute. */
+export function assertPublicSpecInside(allowedRoot: string, candidate: string): string {
+  const abs = isAbsolute(candidate) ? candidate : resolve(allowedRoot, candidate);
+  if (pathEscapesRoot(allowedRoot, abs)) {
+    throw new SlimExit(EXIT_FAIL, `public spec escapes package root: ${candidate}`);
+  }
+  return abs;
 }
 
 /** Generate/validate file reads. Fuzz workers may still import originals. */

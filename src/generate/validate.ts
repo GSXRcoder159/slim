@@ -144,6 +144,12 @@ export function validateGenerated(
         errors.push("forbidden import()");
       }
     }
+    if (ts.isCallExpression(node)) {
+      checkPrototypeMutationCall(ts, node, errors);
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      checkPrototypeMutationAssign(ts, node, errors);
+    }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require") {
       errors.push("forbidden require");
     }
@@ -412,6 +418,57 @@ function checkPropertyAccess(
     if (prop === "Buffer" && allowBuffer) return;
     errors.push(`forbidden ${node.expression.text}.${prop}`);
   }
+}
+
+function checkPrototypeMutationCall(
+  ts: typeof import("typescript"),
+  node: ts.CallExpression,
+  errors: string[],
+): void {
+  const expr = node.expression;
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Object" &&
+    expr.name.text === "setPrototypeOf"
+  ) {
+    errors.push("prototype-mutation: Object.setPrototypeOf");
+    return;
+  }
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "Object" &&
+    expr.name.text === "defineProperty"
+  ) {
+    const target = node.arguments[0];
+    if (target && isPrototypeObject(ts, target)) {
+      errors.push("prototype-mutation: Object.defineProperty on a prototype");
+    }
+  }
+}
+
+function checkPrototypeMutationAssign(
+  ts: typeof import("typescript"),
+  node: ts.BinaryExpression,
+  errors: string[],
+): void {
+  const left = node.left;
+  if (ts.isPropertyAccessExpression(left) && left.name.text === "__proto__") {
+    errors.push("prototype-mutation: __proto__ assignment");
+    return;
+  }
+  if (
+    ts.isElementAccessExpression(left) &&
+    (ts.isStringLiteral(left.argumentExpression) || ts.isNoSubstitutionTemplateLiteral(left.argumentExpression)) &&
+    left.argumentExpression.text === "__proto__"
+  ) {
+    errors.push("prototype-mutation: __proto__ assignment");
+  }
+}
+
+function isPrototypeObject(ts: typeof import("typescript"), expr: ts.Expression): boolean {
+  return ts.isPropertyAccessExpression(expr) && expr.name.text === "prototype";
 }
 
 function checkDangerousKeys(

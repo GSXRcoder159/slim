@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { EXIT_FAIL, SlimExit } from "../src/exit.ts";
 import { OriginalSourceGuard } from "../src/generate/guard.ts";
 import { loadPublicApi } from "../src/generate/public-api.ts";
 
@@ -130,5 +131,116 @@ test("never includes implementation .js in public spec", () => {
   assert.throws(
     () => OriginalSourceGuard.readPublicSpec(join(root, "node_modules/trap/index.js")),
     /OriginalSourceGuard/,
+  );
+});
+
+const SENTINEL = "SENTINEL_PUBLIC_SPEC_ESCAPE";
+
+function assertEscapingSpec(root: string, pkg: string, subpath = ""): void {
+  assert.throws(
+    () => loadPublicApi(root, pkg, subpath),
+    (err: unknown) => {
+      assert.ok(err instanceof SlimExit, String(err));
+      assert.equal(err.code, EXIT_FAIL);
+      assert.match(err.message, /public spec|escapes/i);
+      assert.doesNotMatch(err.message, new RegExp(SENTINEL));
+      return true;
+    },
+  );
+}
+
+test("types traversal cannot escape the package root", () => {
+  const root = tmpProject();
+  const outside = write(root, "SENTINEL.d.ts", `export const ${SENTINEL} = 1;\n`);
+  write(
+    root,
+    "node_modules/evil/package.json",
+    JSON.stringify({ name: "evil", types: "../../SENTINEL.d.ts" }),
+  );
+  write(root, "node_modules/evil/index.js", "module.exports = 1;\n");
+  assertEscapingSpec(root, "evil");
+  assert.ok(outside.endsWith("SENTINEL.d.ts"));
+});
+
+test("typings traversal cannot escape the package root", () => {
+  const root = tmpProject();
+  write(root, "SECRET.d.ts", `export const ${SENTINEL} = 1;\n`);
+  write(
+    root,
+    "node_modules/evil/package.json",
+    JSON.stringify({ name: "evil", typings: "../../SECRET.d.ts" }),
+  );
+  assertEscapingSpec(root, "evil");
+});
+
+test("exports['.'].types traversal cannot escape the package root", () => {
+  const root = tmpProject();
+  write(root, "OUT.d.ts", `export const ${SENTINEL} = 1;\n`);
+  write(
+    root,
+    "node_modules/evil/package.json",
+    JSON.stringify({ name: "evil", exports: { ".": { types: "../../OUT.d.ts" } } }),
+  );
+  assertEscapingSpec(root, "evil");
+});
+
+test("subpath exports types traversal cannot escape the package root", () => {
+  const root = tmpProject();
+  write(root, "SUB.d.ts", `export const ${SENTINEL} = 1;\n`);
+  write(
+    root,
+    "node_modules/evil/package.json",
+    JSON.stringify({
+      name: "evil",
+      exports: { "./x": { types: "../../SUB.d.ts" } },
+    }),
+  );
+  assertEscapingSpec(root, "evil", "x");
+});
+
+test("absolute types path cannot escape the package root", () => {
+  const root = tmpProject();
+  const abs = write(mkdtempSync(join(tmpdir(), "slim-papi-abs-")), "ABS.d.ts", `export const ${SENTINEL} = 1;\n`);
+  write(
+    root,
+    "node_modules/evil/package.json",
+    JSON.stringify({ name: "evil", types: abs }),
+  );
+  assertEscapingSpec(root, "evil");
+});
+
+test("symlink .d.ts whose realpath leaves the package is refused", () => {
+  const root = tmpProject();
+  const outside = write(root, "link-target.d.ts", `export const ${SENTINEL} = 1;\n`);
+  write(root, "node_modules/evil/package.json", JSON.stringify({ name: "evil", types: "index.d.ts" }));
+  symlinkSync(outside, join(root, "node_modules/evil/index.d.ts"));
+  assertEscapingSpec(root, "evil");
+});
+
+test("symlink README whose realpath leaves the package is refused", () => {
+  const root = tmpProject();
+  const outside = write(root, "OUTSIDE.md", `# ${SENTINEL}\n`);
+  write(root, "node_modules/evil/package.json", JSON.stringify({ name: "evil" }));
+  symlinkSync(outside, join(root, "node_modules/evil/README.md"));
+  assertEscapingSpec(root, "evil");
+});
+
+test("sibling package types cannot be read as this package's spec", () => {
+  const root = tmpProject();
+  write(root, "node_modules/other/secret.d.ts", `export const ${SENTINEL} = 1;\n`);
+  write(
+    root,
+    "node_modules/evil/package.json",
+    JSON.stringify({ name: "evil", types: "../other/secret.d.ts" }),
+  );
+  assertEscapingSpec(root, "evil");
+});
+
+test("package name traversal cannot leave node_modules", () => {
+  const root = tmpProject();
+  write(root, "SENTINEL.d.ts", `export const ${SENTINEL} = 1;\n`);
+  assert.throws(
+    () => loadPublicApi(root, "../SENTINEL.d.ts"),
+    SlimExit,
   );
 });

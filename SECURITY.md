@@ -13,7 +13,9 @@ Do not file a public issue with an exploit against a still-installed upstream pa
 
 ## Allowlist
 
-Generated code is fail-closed: no `eval`, `Function`, `WebAssembly`, `import()`, `require`, `Proxy`, `fetch`, or string-`setTimeout`. `_.template` is a refuse.
+Generated code is fail-closed: no `eval`, `Function`, `WebAssembly`, `import()`, `require`, `Proxy`, `fetch`, string-`setTimeout`, `Object.setPrototypeOf`, `__proto__` assignment, or `Object.defineProperty` targeting `Object.prototype` / `*.prototype`. Catalog get/set/has may use `Object.defineProperty` on a user object to set an own `__proto__` data property (hardening, not prototype mutation). `_.template` is a refuse.
+
+Public spec reads (`.d.ts`, README) stay inside the package root or `@types/<pkg>`. Traversal, absolute metadata paths, and escaping symlinks are refused before any LLM request.
 
 ## Supply chain
 

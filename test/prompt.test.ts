@@ -111,3 +111,38 @@ test("prompt never includes implementation trap text", () => {
   assert.doesNotMatch(user, /FROM_IMPL/);
   assert.doesNotMatch(system, /FROM_IMPL/);
 });
+
+test("system prompt forbids prototype mutation", () => {
+  const { system } = buildPrompt(env(), { text: "export function get(): unknown;", source: "bundled-dts" }, []);
+  assert.match(system, /Object\.setPrototypeOf/);
+  assert.match(system, /__proto__/);
+});
+
+test("prompt caps counterexample length and count", () => {
+  const long = "x".repeat(800);
+  const many = Array.from({ length: 12 }, (_, i) => `example-${i}:${long}`);
+  const { user } = buildPrompt(env(), { text: "export function get(): unknown;", source: "bundled-dts" }, many);
+  assert.doesNotMatch(user, /example-0:/);
+  assert.doesNotMatch(user, /example-3:/);
+  assert.match(user, /example-4:/);
+  assert.match(user, /example-11:/);
+  const match = user.match(/example-11:x+/);
+  assert.ok(match);
+  assert.ok(match![0]!.length <= "example-11:".length + 500 + 1);
+  assert.doesNotMatch(user, /x{600}/);
+});
+
+test("prompt audit: confined spec from is project-relative and has no sentinel or impl js", () => {
+  const spec: PublicApiSpec = {
+    text: "export function add(a: number, b: number): number;",
+    source: "bundled-dts",
+    from: "node_modules/tiny-add/index.d.ts",
+  };
+  const { user, system } = buildPrompt(env(), spec, ["add: 1 !== 2"]);
+  assert.match(user, /Spec from: node_modules\/tiny-add\/index\.d\.ts/);
+  assert.doesNotMatch(user, /SENTINEL_PUBLIC_SPEC_ESCAPE/);
+  assert.doesNotMatch(user, /FROM_IMPL/);
+  assert.doesNotMatch(user, /node_modules\/[^"'\\\s]+\.js/);
+  assert.doesNotMatch(system, /FROM_IMPL/);
+  assert.doesNotMatch(system, /SENTINEL_PUBLIC_SPEC_ESCAPE/);
+});

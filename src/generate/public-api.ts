@@ -1,6 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
-import { OriginalSourceGuard } from "./guard.ts";
+import { isAbsolute, join, relative, resolve } from "node:path";
+import { EXIT_FAIL, SlimExit } from "../exit.ts";
+import {
+  OriginalSourceGuard,
+  assertDeclaredSpecInside,
+  assertPublicSpecInside,
+} from "./guard.ts";
 
 export type SpecSource =
   | "bundled-dts"
@@ -19,7 +24,8 @@ export interface PublicApiSpec {
 const README_CAP = 8000;
 
 export function loadPublicApi(projectRoot: string, pkg: string, subpath = ""): PublicApiSpec {
-  const dir = packageDir(projectRoot, pkg);
+  const nodeModules = resolve(projectRoot, "node_modules");
+  const dir = assertInsideNodeModules(nodeModules, packageDir(projectRoot, pkg));
   const meta = readPackageJson(dir);
 
   if (subpath) {
@@ -27,7 +33,8 @@ export function loadPublicApi(projectRoot: string, pkg: string, subpath = ""): P
       typesFromExports(meta?.exports, `./${subpath}`) ??
       typesFromExports(meta?.exports, subpath);
     const subAbs = firstDts(
-      subRel ? join(dir, subRel) : undefined,
+      dir,
+      subRel,
       join(dir, `${subpath}.d.ts`),
     );
     if (subAbs) return specFromDts(projectRoot, subAbs, "subpath-dts");
@@ -38,17 +45,21 @@ export function loadPublicApi(projectRoot: string, pkg: string, subpath = ""): P
     (typeof meta?.types === "string" ? meta.types : undefined) ??
     (typeof meta?.typings === "string" ? meta.typings : undefined);
   const bundled = firstDts(
-    rootRel ? join(dir, rootRel) : undefined,
+    dir,
+    rootRel,
     join(dir, "index.d.ts"),
     join(dir, `${bareName(pkg)}.d.ts`),
   );
   if (bundled) return specFromDts(projectRoot, bundled, "bundled-dts");
 
   const typesDir = packageDir(projectRoot, typesPackageName(pkg));
-  const dt = firstDts(join(typesDir, "index.d.ts"), join(typesDir, `${bareName(pkg)}.d.ts`));
-  if (dt) return specFromDts(projectRoot, dt, "types-package");
+  if (!pathWouldEscape(nodeModules, typesDir) && existsSync(typesDir)) {
+    const typesRoot = assertPublicSpecInside(nodeModules, typesDir);
+    const dt = firstDts(typesRoot, undefined, join(typesRoot, "index.d.ts"), join(typesRoot, `${bareName(pkg)}.d.ts`));
+    if (dt) return specFromDts(projectRoot, dt, "types-package");
+  }
 
-  const readme = firstExisting(join(dir, "README.md"), join(dir, "README"));
+  const readme = firstExisting(dir, join(dir, "README.md"), join(dir, "README"));
   if (readme) {
     const raw = OriginalSourceGuard.readPublicSpec(readme);
     const truncated = raw.length > README_CAP;
@@ -76,8 +87,21 @@ function specFromDts(projectRoot: string, abs: string, source: SpecSource): Publ
   };
 }
 
+function assertInsideNodeModules(nodeModules: string, dir: string): string {
+  const abs = resolve(dir);
+  const rel = relative(nodeModules, abs);
+  if (rel.startsWith("..") || rel === ".." || isAbsolute(rel) || rel === "") {
+    throw new SlimExit(EXIT_FAIL, `public spec escapes package root: ${dir}`);
+  }
+  return abs;
+}
+
 function packageDir(projectRoot: string, pkg: string): string {
-  return join(projectRoot, "node_modules", ...pkg.split("/"));
+  const parts = pkg.split("/");
+  if (parts.some((p) => p === ".." || p === "." || p === "" || isAbsolute(p))) {
+    throw new SlimExit(EXIT_FAIL, `public spec escapes package root: ${pkg}`);
+  }
+  return join(projectRoot, "node_modules", ...parts);
 }
 
 function typesPackageName(pkg: string): string {
@@ -139,18 +163,48 @@ function dtsOnly(rel: string | undefined): string | undefined {
   return clean.endsWith(".d.ts") ? rel : undefined;
 }
 
-function firstDts(...paths: Array<string | undefined>): string | undefined {
-  for (const p of paths) {
-    if (p && p.endsWith(".d.ts") && existsSync(p)) {
-      OriginalSourceGuard.assertNotOriginalImpl(p);
-      return p;
+/**
+ * `declaredRel` is package.json metadata: escaping it is a hard refuse.
+ * Later `candidates` are discovered files: missing is skip, present-but-escaping is refuse.
+ */
+function firstDts(
+  packageRoot: string,
+  declaredRel: string | undefined,
+  ...candidates: Array<string | undefined>
+): string | undefined {
+  if (declaredRel) {
+    const abs = assertDeclaredSpecInside(packageRoot, declaredRel);
+    if (abs.endsWith(".d.ts") && existsSync(abs)) {
+      OriginalSourceGuard.assertNotOriginalImpl(abs);
+      assertPublicSpecInside(packageRoot, abs);
+      return abs;
     }
+  }
+  for (const p of candidates) {
+    if (!p || !p.endsWith(".d.ts") || !existsSync(p)) continue;
+    OriginalSourceGuard.assertNotOriginalImpl(p);
+    assertPublicSpecInside(packageRoot, p);
+    return p;
   }
   return undefined;
 }
 
-function firstExisting(...paths: string[]): string | undefined {
-  return paths.find((p) => existsSync(p));
+function firstExisting(packageRoot: string, ...paths: string[]): string | undefined {
+  for (const p of paths) {
+    if (!existsSync(p)) continue;
+    assertPublicSpecInside(packageRoot, p);
+    return p;
+  }
+  return undefined;
+}
+
+function pathWouldEscape(root: string, candidate: string): boolean {
+  try {
+    assertPublicSpecInside(root, candidate);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 export { readFileSync };

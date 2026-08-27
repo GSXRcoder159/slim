@@ -126,6 +126,37 @@ test("catalog debounce (call-time timer lookup) is not cached-timers", () => {
   assert.equal(r.errors.some((err) => /cached-timers/i.test(err)), false);
 });
 
+test("allowlist rejects prototype mutation", () => {
+  const cases = [
+    `export function f(o: object) { Object.setPrototypeOf(o, {}); return o; }\n`,
+    `export function f(o: object) { o.__proto__ = {}; return o; }\n`,
+    `export function f(o: object) { o["__proto__"] = {}; return o; }\n`,
+    `export function f() { Object.defineProperty(Object.prototype, "x", { value: 1 }); }\n`,
+    `export function f() { Object.defineProperty(Array.prototype, "x", { value: 1 }); }\n`,
+  ];
+  for (const src of cases) {
+    const r = validateGenerated(ts, src);
+    assert.equal(r.ok, false, `expected reject: ${src}`);
+    assert.ok(
+      r.errors.some((e) => e.includes("prototype-mutation")),
+      `expected prototype-mutation in errors for ${src}, got: ${r.errors.join("; ")}`,
+    );
+  }
+});
+
+test("allowlist accepts ordinary defineProperty and catalog defineData on user objects", () => {
+  const ordinary = `export function f(o: object) { Object.defineProperty(o, "k", { value: 1 }); return o; }\n`;
+  const r = validateGenerated(ts, ordinary);
+  assert.equal(r.ok, true, r.errors.join("; "));
+
+  const e = env(["set"]);
+  const src = assembleCatalogModule(e);
+  assert.ok(src);
+  const ok = validateGenerated(ts, src!, { envelope: e });
+  assert.equal(ok.ok, true, ok.errors.join("; "));
+  assert.match(src!, /defineProperty/);
+});
+
 test("constructor/__proto__ literal keys allowed only in hardened get/set/has", () => {
   const poisoned = `export function map(o: object) { return { __proto__: o, constructor: 1 }; }\n`;
   const r = validateGenerated(ts, poisoned);
