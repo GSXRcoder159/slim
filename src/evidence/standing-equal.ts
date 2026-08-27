@@ -119,35 +119,27 @@ function reviveEvent(p) {
   return { args, thisArg, result };
 }
 
-function collectObjs(v, bag) {
+function seedIdentity(v, seen) {
   if (v === null || (typeof v !== "object" && typeof v !== "function")) return;
-  if (bag.has(v)) return;
-  bag.add(v);
+  if (seen.has(v)) return;
+  seen.set(v, v);
   if (v instanceof Date || v instanceof RegExp || v instanceof Error) return;
   if (Array.isArray(v)) {
-    for (const el of v) collectObjs(el, bag);
+    for (const el of v) seedIdentity(el, seen);
     return;
   }
   if (v instanceof Map) {
     for (const [k, val] of v) {
-      collectObjs(k, bag);
-      collectObjs(val, bag);
+      seedIdentity(k, seen);
+      seedIdentity(val, seen);
     }
     return;
   }
   if (v instanceof Set) {
-    for (const el of v) collectObjs(el, bag);
+    for (const el of v) seedIdentity(el, seen);
     return;
   }
-  for (const k of Reflect.ownKeys(v)) collectObjs(v[k], bag);
-}
-
-function aliasedFromInputs(result, args, thisArg) {
-  if (result === null || (typeof result !== "object" && typeof result !== "function")) return false;
-  const bag = new Set();
-  for (const a of args) collectObjs(a, bag);
-  collectObjs(thisArg, bag);
-  return bag.has(result);
+  for (const k of Reflect.ownKeys(v)) seedIdentity(v[k], seen);
 }
 
 function enumerableOwn(obj, key) {
@@ -175,6 +167,11 @@ function eqDeep(a, b, ctx, seen) {
   const prev = seen.get(a);
   if (prev) return prev === b;
   seen.set(a, b);
+  if (ctx.toString) {
+    const sa = customToString(a);
+    const sb = customToString(b);
+    if (sa !== sb) return false;
+  }
   if (ctx.prototype && Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false;
   if (a instanceof Date && b instanceof Date) {
     const at = a.getTime();
@@ -186,6 +183,17 @@ function eqDeep(a, b, ctx, seen) {
   if (isUrlLike(a) && isUrlLike(b)) return a.href === b.href;
   if (a instanceof RegExp && b instanceof RegExp) return a.source === b.source && a.flags === b.flags;
   if (typeof Buffer !== "undefined" && Buffer.isBuffer(a) && Buffer.isBuffer(b)) return a.equals(b);
+  if (a instanceof ArrayBuffer && b instanceof ArrayBuffer) {
+    if (a.byteLength !== b.byteLength) return false;
+    return eqDeep(new Uint8Array(a), new Uint8Array(b), ctx, seen);
+  }
+  if (ArrayBuffer.isView(a) && ArrayBuffer.isView(b)) {
+    if (a.byteLength !== b.byteLength) return false;
+    const ua = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
+    const ub = new Uint8Array(b.buffer, b.byteOffset, b.byteLength);
+    for (let i = 0; i < ua.length; i++) if (ua[i] !== ub[i]) return false;
+    return true;
+  }
   if (a instanceof Map && b instanceof Map) {
     if (a.size !== b.size) return false;
     const ae = [...a.entries()];
@@ -261,8 +269,15 @@ function extras(a, b, ctx) {
   return true;
 }
 
-function standingEqual(a, b, hyrum) {
-  const ctx = {
+function customToString(v) {
+  const ts = v && v.toString;
+  if (typeof ts !== "function") return undefined;
+  if (ts === Object.prototype.toString || ts === Array.prototype.toString) return undefined;
+  try { return String(v); } catch { return undefined; }
+}
+
+function standingCtx(hyrum) {
+  return {
     signedZero: hyrum?.signedZero === true,
     keyOrder: hyrum?.keyOrder === true,
     prototype: hyrum?.prototype === true,
@@ -275,6 +290,10 @@ function standingEqual(a, b, hyrum) {
     mutation: hyrum?.mutation === true,
     errorMessage: hyrum?.errorMessage === true,
   };
+}
+
+function standingEqual(a, b, hyrum) {
+  const ctx = standingCtx(hyrum);
   if (!eqDeep(a, b, ctx, new WeakMap())) return false;
   return extras(a, b, ctx);
 }
@@ -305,9 +324,45 @@ function eq(actual, expected, hyrum) {
   }
 }
 
+function invalidUrlTypeError(a, b) {
+  if (a.name !== "TypeError") return false;
+  const norm = (m) => m.replace(/^Invalid URL(?::[\\s\\S]*)?$/, "Invalid URL");
+  return norm(a.message) === "Invalid URL" && norm(b.message) === "Invalid URL";
+}
+
+function equalThrown(a, b) {
+  if (a.name !== b.name) return false;
+  if (invalidUrlTypeError(a, b)) return true;
+  return a.message === b.message && Object.is(a.code, b.code);
+}
+
+function checkAfter(live, p, ctx) {
+  if (!p.argsAfter && p.thisAfter == null) return;
+  const afterSeen = [];
+  const expectedArgs = (p.argsAfter ?? []).map((a) => decode(a, afterSeen));
+  const expectedThis = p.thisAfter != null ? decode(p.thisAfter, afterSeen) : undefined;
+  const pairSeen = new WeakMap();
+  if (p.thisAfter != null || live.thisArg != null) {
+    if (!eqDeep(expectedThis, live.thisArg, ctx, pairSeen)) {
+      throw new Error("standing receiver mutation mismatch for " + p.symbol);
+    }
+  }
+  if (p.argsAfter) {
+    if (expectedArgs.length !== live.args.length) {
+      throw new Error("standing args mutation mismatch for " + p.symbol);
+    }
+    for (let i = 0; i < expectedArgs.length; i++) {
+      if (!eqDeep(expectedArgs[i], live.args[i], ctx, pairSeen)) {
+        throw new Error("standing args mutation mismatch for " + p.symbol);
+      }
+    }
+  }
+}
+
 function checkFrozenPair(fn, p) {
   const live = reviveEvent(p);
   const hyrum = p.hyrum ?? {};
+  const ctx = standingCtx(hyrum);
   if (p.threw) {
     const called = callFn(fn, live.thisArg, live.args);
     if (called.ok) throw new Error("expected throw " + p.threw.name);
@@ -315,37 +370,29 @@ function checkFrozenPair(fn, p) {
     const got = err instanceof Error
       ? { name: err.name, message: err.message, code: err.code }
       : { name: "Error", message: String(err) };
-    if (got.name !== p.threw.name || got.message !== p.threw.message) {
+    if (!equalThrown(got, p.threw)) {
       throw new Error("error mismatch: " + got.name + ":" + got.message);
     }
-    if (p.threw.code !== undefined && !Object.is(got.code, p.threw.code)) {
+    if (p.threw.code !== undefined && !Object.is(got.code, p.threw.code) && !invalidUrlTypeError(got, p.threw)) {
       throw new Error("error code mismatch");
     }
+    checkAfter(live, p, ctx);
     return;
   }
   const called = callFn(fn, live.thisArg, live.args);
   if (!called.ok) throw called.err;
   const got = called.value;
   const identity = hyrum.sameReference === true || hyrum.dateIdentity === true;
-  if (identity && aliasedFromInputs(live.result, live.args, live.thisArg) && got !== live.result) {
-    throw new Error("standing identity mismatch for " + p.symbol);
-  }
-  if (!standingEqual(got, live.result, hyrum)) {
+  if (identity) {
+    const pairSeen = new WeakMap();
+    seedIdentity(live.thisArg, pairSeen);
+    for (const a of live.args) seedIdentity(a, pairSeen);
+    if (!eqDeep(live.result, got, ctx, pairSeen) || !extras(live.result, got, ctx)) {
+      throw new Error("standing identity mismatch for " + p.symbol);
+    }
+  } else if (!standingEqual(got, live.result, hyrum)) {
     throw new Error("standing mismatch for " + p.symbol);
   }
-  if (p.argsAfter) {
-    const afterSeen = [];
-    const expectedArgs = (p.argsAfter ?? []).map((a) => decode(a, afterSeen));
-    if (!standingEqual(live.args, expectedArgs, hyrum)) {
-      throw new Error("standing args mutation mismatch for " + p.symbol);
-    }
-  }
-  if (p.thisAfter != null) {
-    const afterSeen = [];
-    const expectedThis = decode(p.thisAfter, afterSeen);
-    if (!standingEqual(live.thisArg, expectedThis, hyrum)) {
-      throw new Error("standing receiver mutation mismatch for " + p.symbol);
-    }
-  }
+  checkAfter(live, p, ctx);
 }
 `;

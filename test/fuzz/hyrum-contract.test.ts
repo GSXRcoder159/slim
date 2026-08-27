@@ -144,6 +144,36 @@ test("cyclic aliased values serialize hydrate clone invoke and compare", () => {
   assert.equal(equalResults(invoke(ident, [a]), invoke(broken, [a]), { sameReference: true }).ok, false);
 });
 
+test("known-bad replacements fail reviewed aliasing gaps", () => {
+  const shared = { n: 1 };
+  function identPair(a: { n: number }, b: { n: number }) {
+    return a === b ? a : { n: a.n };
+  }
+  function splitPair(a: { n: number }, _b: { n: number }) {
+    return { n: a.n };
+  }
+  assert.equal(equalResults(invoke(identPair, [shared, shared]), invoke(identPair, [shared, shared]), { sameReference: true }).ok, true);
+  assert.equal(equalResults(invoke(identPair, [shared, shared]), invoke(splitPair, [shared, shared]), { sameReference: true }).ok, false);
+
+  function identThis(this: { n: number }, x: { n: number }) {
+    return this === x ? this : { n: x.n };
+  }
+  function splitThis(this: { n: number }, x: { n: number }) {
+    return { n: x.n };
+  }
+  assert.equal(equalResults(invoke(identThis, [shared], shared), invoke(identThis, [shared], shared), { sameReference: true }).ok, true);
+  assert.equal(equalResults(invoke(identThis, [shared], shared), invoke(splitThis, [shared], shared), { sameReference: true }).ok, false);
+
+  function wrap(o: { n: number }) {
+    return { wrapped: o };
+  }
+  function wrapCopy(o: { n: number }) {
+    return { wrapped: { n: o.n } };
+  }
+  assert.equal(equalResults(invoke(wrap, [shared]), invoke(wrap, [shared]), { sameReference: true }).ok, true);
+  assert.equal(equalResults(invoke(wrap, [shared]), invoke(wrapCopy, [shared]), { sameReference: true }).ok, false);
+});
+
 test("serialize hydrate clone standing revive never mutate Object.prototype", () => {
   const src = Object.create(null) as Record<string, unknown>;
   for (const key of ["__proto__", "constructor", "prototype"]) {

@@ -1,10 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { TraceEvent } from "../envelope/types.ts";
+import type { SlimValue, TraceEvent } from "../envelope/types.ts";
 import type { TraceErrorRecord } from "./session.ts";
 import {
   createWalker,
   mutatedArgIndexes,
-  serialize,
   snapshot,
 } from "./serialize.ts";
 import { captureUserSite } from "./stack.ts";
@@ -229,7 +228,7 @@ function recordConstruct(
       return wrapResult(Reflect.construct(fn, args, newTarget), symbol, opts, originId);
     }
     let walker: ReturnType<typeof createWalker>;
-    let beforeLive: ReturnType<typeof serialize>[];
+    let beforeLive: SlimValue[];
     let beforeSnap: ReturnType<typeof snapshot>;
     try {
       walker = createWalker();
@@ -304,8 +303,8 @@ function recordCall(
       return wrapResult(fn.apply(thisArg, args), symbol, opts, originId);
     }
     let walker: ReturnType<typeof createWalker>;
-    let beforeLive: ReturnType<typeof serialize>[];
-    let thisSv: ReturnType<typeof serialize> | undefined;
+    let beforeLive: SlimValue[];
+    let thisSv: SlimValue | undefined;
     let beforeSnap: ReturnType<typeof snapshot>;
     try {
       walker = createWalker();
@@ -319,7 +318,7 @@ function recordCall(
     }
     try {
       const result = fn.apply(thisArg, args);
-      const afterSnap = snapshot(args);
+      const after = snapshotAfter(args, thisArg, thisSv !== undefined);
       const recorded = wrapResult(result, symbol, opts, originId);
       const event: TraceEvent = {
         symbol,
@@ -327,15 +326,15 @@ function recordCall(
         argc: args.length,
         args: beforeLive,
         result: walker.value(recorded),
-        mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
+        mutatedArgIndexes: mutatedArgIndexes(beforeSnap, after.args),
         truncated: walker.truncated,
         tRelMs,
         sessionId,
       };
-      if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
+      if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = after.args;
       if (thisSv !== undefined) {
         event.thisArg = thisSv;
-        event.thisAfter = serialize(thisArg);
+        event.thisAfter = after.thisArg;
       }
       if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
       if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
@@ -343,22 +342,22 @@ function recordCall(
       opts.onEvent(event);
       return recorded;
     } catch (err) {
-      const afterSnap = snapshot(args);
+      const after = snapshotAfter(args, thisArg, thisSv !== undefined);
       const event: TraceEvent = {
         symbol,
         originId,
         argc: args.length,
         args: beforeLive,
         threw: threwShape(err),
-        mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
+        mutatedArgIndexes: mutatedArgIndexes(beforeSnap, after.args),
         truncated: walker.truncated,
         tRelMs,
         sessionId,
       };
-      if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
+      if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = after.args;
       if (thisSv !== undefined) {
         event.thisArg = thisSv;
-        event.thisAfter = serialize(thisArg);
+        event.thisAfter = after.thisArg;
       }
       if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
       if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
@@ -421,6 +420,18 @@ function shouldRecordThis(thisArg: unknown): boolean {
   if (thisArg === undefined || thisArg === null) return false;
   if (thisArg === globalThis) return false;
   return typeof thisArg === "object" || typeof thisArg === "function";
+}
+
+function snapshotAfter(
+  args: unknown[],
+  thisArg: unknown,
+  recordThis: boolean,
+): { args: SlimValue[]; thisArg?: SlimValue } {
+  const w = createWalker();
+  return {
+    args: args.map((a) => w.value(a)),
+    thisArg: recordThis ? w.value(thisArg) : undefined,
+  };
 }
 
 function threwShape(err: unknown): { name: string; message: string; code?: string } {

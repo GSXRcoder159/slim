@@ -11,7 +11,14 @@ import {
   type Envelope,
 } from "../../src/envelope/types.ts";
 import { runFuzz } from "../../src/fuzz/run.ts";
-import { toCloneableJob, fromCloneableJob, workerThreadUrl } from "../../src/fuzz/workers.ts";
+import {
+  toCloneableJob,
+  fromCloneableJob,
+  toCloneableResult,
+  fromCloneableResult,
+  runJob,
+  workerThreadUrl,
+} from "../../src/fuzz/workers.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, "..", "..");
@@ -289,4 +296,40 @@ test("cloneable roundtrip preserves args[0] === thisArg alias", () => {
   const wired = toCloneableJob({ symbol: "id", args: [recv], thisArg: recv, kind: "call" });
   const back = fromCloneableJob(wired);
   assert.equal(back.args[0], back.thisArg);
+});
+
+test("cloneable result roundtrip preserves cross-arg aliases", () => {
+  const shared = { n: 1 };
+  const wired = toCloneableResult({
+    symbol: "id",
+    ok: false,
+    reason: "x",
+    args: [shared, shared],
+    minimized: [shared, shared],
+  });
+  const back = fromCloneableResult(wired);
+  assert.equal(back.args?.[0], back.args?.[1]);
+  assert.equal(back.minimized?.[0], back.minimized?.[1]);
+});
+
+test("runJob orig and slim observe args[0] === thisArg", async () => {
+  const shared = { n: 1 };
+  function bump(this: { n: number }, x: { n: number }) {
+    if (this !== x) return -1;
+    this.n += 1;
+    return x.n;
+  }
+  const result = await runJob(
+    { bump },
+    { bump },
+    {
+      symbol: "bump",
+      args: [shared],
+      thisArg: shared,
+      kind: "call",
+      hyrum: { sameReference: true, mutation: true },
+    },
+  );
+  assert.equal(result.ok, true, result.reason);
+  assert.equal(shared.n, 1);
 });

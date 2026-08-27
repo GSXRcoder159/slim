@@ -220,6 +220,13 @@ test("toString compared only if hyrum.toString", () => {
   assert.equal(equal(a, { x: 1, toString() { return "A"; } }, { toString: true }), true);
 });
 
+test("toString is compared on nested objects when hyrum.toString", () => {
+  const a = { nested: { x: 1, toString() { return "A"; } } };
+  const b = { nested: { x: 1, toString() { return "B"; } } };
+  assert.equal(equal(a, b), true);
+  assert.equal(equal(a, b, { toString: true }), false);
+});
+
 test("json compared only if hyrum.json", () => {
   const a = { x: 1, hidden: undefined };
   const b = { x: 1 };
@@ -272,6 +279,97 @@ test("dateIdentity: new Date with same time fails when input Date was returned",
   assert.equal(equalResults(invoke(ident, [d]), invoke(ident, [d]), { dateIdentity: true }).ok, true);
   assert.equal(equalResults(invoke(ident, [d]), invoke(copy, [d]), { dateIdentity: true }).ok, false);
   assert.equal(equalResults(invoke(ident, [d]), invoke(copy, [d])).ok, true);
+});
+
+test("invoke preserves args[0] === args[1] and isolates orig from slim", () => {
+  const shared = { n: 0 };
+  function bumpBoth(a: { n: number }, b: { n: number }) {
+    assert.equal(a, b);
+    a.n += 1;
+    return a.n;
+  }
+  const a = invoke(bumpBoth, [shared, shared]);
+  const b = invoke(bumpBoth, [shared, shared]);
+  assert.equal(shared.n, 0);
+  assert.equal(a.ok && a.value, 1);
+  assert.equal(b.ok && b.value, 1);
+  assert.ok(a.ok && b.ok);
+  if (!a.ok || !b.ok) return;
+  assert.equal(a.argsAfter[0], a.argsAfter[1]);
+  assert.equal(b.argsAfter[0], b.argsAfter[1]);
+  assert.notEqual(a.argsAfter[0], b.argsAfter[0]);
+  assert.notEqual(a.argsAfter[0], shared);
+});
+
+test("invoke preserves args[0] === thisArg including cycles across the boundary", () => {
+  const recv: { n: number; self?: unknown } = { n: 0 };
+  recv.self = recv;
+  function bump(this: { n: number; self?: unknown }, x: { n: number; self?: unknown }) {
+    assert.equal(this, x);
+    assert.equal(this.self, this);
+    this.n += 1;
+    return this;
+  }
+  const out = invoke(bump, [recv], recv);
+  assert.ok(out.ok);
+  if (!out.ok) return;
+  assert.equal(out.argsAfter[0], out.thisAfter);
+  assert.equal((out.thisAfter as { self: unknown }).self, out.thisAfter);
+  assert.equal((out.thisAfter as { n: number }).n, 1);
+  assert.equal(recv.n, 0);
+});
+
+test("invoke constructor retry and throw keep the cloned alias graph", () => {
+  class Pair {
+    a: { n: number };
+    b: { n: number };
+    constructor(a: { n: number }, b: { n: number }) {
+      if (new.target === undefined) {
+        throw new TypeError("Class constructor Pair cannot be invoked without 'new'");
+      }
+      assert.equal(a, b);
+      this.a = a;
+      this.b = b;
+    }
+  }
+  const shared = { n: 1 };
+  const constructed = invoke(Pair, [shared, shared]);
+  assert.ok(constructed.ok);
+  if (!constructed.ok) return;
+  assert.equal(constructed.argsAfter[0], constructed.argsAfter[1]);
+  const inst = constructed.value as { a: { n: number }; b: { n: number } };
+  assert.equal(inst.a, inst.b);
+  assert.equal(inst.a, constructed.argsAfter[0]);
+
+  function boom(a: { n: number }, b: { n: number }) {
+    a.n += 1;
+    assert.equal(a, b);
+    throw new TypeError("nope");
+  }
+  const threw = invoke(boom, [shared, shared]);
+  assert.equal(threw.ok, false);
+  assert.equal(threw.argsAfter[0], threw.argsAfter[1]);
+  assert.equal((threw.argsAfter[0] as { n: number }).n, 2);
+  assert.equal(shared.n, 1);
+});
+
+test("equalResults fails a replacement that splits a shared arg/receiver alias under mutation", () => {
+  const shared = { n: 1 };
+  function bumpShared(this: { n: number }, x: { n: number }) {
+    this.n += 1;
+    return x.n;
+  }
+  const good = equalResults(invoke(bumpShared, [shared], shared), invoke(bumpShared, [shared], shared), {
+    mutation: true,
+  });
+  assert.equal(good.ok, true);
+
+  const origShared = { n: 1 };
+  const orig: CallOutcome = { ok: true, value: 1, argsAfter: [origShared], thisAfter: origShared };
+  const slim: CallOutcome = { ok: true, value: 1, argsAfter: [{ n: 1 }], thisAfter: { n: 1 } };
+  const bad = equalResults(orig, slim, { mutation: true });
+  assert.equal(bad.ok, false);
+  assert.match(bad.reason ?? "", /mutation/i);
 });
 
 test("receiver mutation is compared by equalResults", () => {

@@ -531,3 +531,136 @@ test("standing tests compare post-call arg mutation when argsAfter is frozen", (
   const r = spawnTest(file, dir);
   assert.equal(r.status, 0, r.stderr + r.stdout);
 });
+
+test("standing tests fail a nested-ref cloning replacement", () => {
+  const dir = tmpProject();
+  writeFileSync(
+    join(dir, "src", "lodash.ts"),
+    `export function wrap(object: { n: number }) {\n  return { wrapped: { ...object } };\n}\n`,
+  );
+  const e = env({ symbols: ["wrap"] });
+  e.symbols[0]!.hyrum = { ...emptyHyrum(), sameReference: true };
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "lodash",
+    env: e,
+    traces: [
+      {
+        symbol: "wrap",
+        args: [{ t: "obj", keys: ["n"], v: { n: { t: "num", v: 1 } } }],
+        result: {
+          t: "obj",
+          keys: ["wrapped"],
+          v: { wrapped: { t: "ref", id: 0 } },
+        },
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./lodash.ts",
+  });
+  const r = spawnTest(file, dir);
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout + r.stderr, /identity mismatch|standing mismatch/i);
+});
+
+test("standing tests pass nested-ref identity-preserving wrap", () => {
+  const dir = tmpProject();
+  writeFileSync(
+    join(dir, "src", "lodash.ts"),
+    `export function wrap(object: { n: number }) {\n  return { wrapped: object };\n}\n`,
+  );
+  const e = env({ symbols: ["wrap"] });
+  e.symbols[0]!.hyrum = { ...emptyHyrum(), sameReference: true };
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "lodash",
+    env: e,
+    traces: [
+      {
+        symbol: "wrap",
+        args: [{ t: "obj", keys: ["n"], v: { n: { t: "num", v: 1 } } }],
+        result: {
+          t: "obj",
+          keys: ["wrapped"],
+          v: { wrapped: { t: "ref", id: 0 } },
+        },
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./lodash.ts",
+  });
+  const r = spawnTest(file, dir);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+});
+
+test("standing tests compare arg and receiver mutation with shared after-state aliases", () => {
+  const dir = tmpProject();
+  writeFileSync(
+    join(dir, "src", "lodash.ts"),
+    `export function bump(this: { n: number }, x: { n: number }) {
+  this.n += 1;
+  return x.n;
+}
+`,
+  );
+  const e = env({ symbols: ["bump"] });
+  e.symbols[0]!.hyrum = { ...emptyHyrum(), mutation: true };
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "lodash",
+    env: e,
+    traces: [
+      {
+        symbol: "bump",
+        args: [{ t: "obj", keys: ["n"], v: { n: { t: "num", v: 1 } } }],
+        thisArg: { t: "ref", id: 0 },
+        result: { t: "num", v: 2 },
+        argsAfter: [{ t: "obj", keys: ["n"], v: { n: { t: "num", v: 2 } } }],
+        thisAfter: { t: "ref", id: 0 },
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./lodash.ts",
+  });
+  const body = readFileSync(file, "utf8");
+  assert.match(body, /thisAfter/);
+  const r = spawnTest(file, dir);
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+});
+
+test("standing tests fail when slim skips mutation through a shared receiver", () => {
+  const dir = tmpProject();
+  writeFileSync(
+    join(dir, "src", "lodash.ts"),
+    `export function bump(this: { n: number }, x: { n: number }) {
+  return x.n + 1;
+}
+`,
+  );
+  const e = env({ symbols: ["bump"] });
+  e.symbols[0]!.hyrum = { ...emptyHyrum(), mutation: true };
+  const file = emitStandingTests({
+    root: dir,
+    outDir: "src",
+    pkg: "lodash",
+    env: e,
+    traces: [
+      {
+        symbol: "bump",
+        args: [{ t: "obj", keys: ["n"], v: { n: { t: "num", v: 1 } } }],
+        thisArg: { t: "ref", id: 0 },
+        result: { t: "num", v: 2 },
+        argsAfter: [{ t: "obj", keys: ["n"], v: { n: { t: "num", v: 2 } } }],
+        thisAfter: { t: "ref", id: 0 },
+      },
+    ],
+    runner: "node:test",
+    moduleSpecifier: "./lodash.ts",
+  });
+  const r = spawnTest(file, dir);
+  assert.notEqual(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout + r.stderr, /mutation mismatch/i);
+});

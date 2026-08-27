@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { wrapExports } from "../../src/trace/proxy.ts";
+import { deserializeEvent } from "../../src/trace/serialize.ts";
 import type { TraceEvent } from "../../src/envelope/types.ts";
 
 test("wraps a fake module get export and records a TraceEvent", () => {
@@ -202,4 +203,55 @@ test("records thisArg for method-style calls and site for the caller", () => {
   assert.equal(wrapped.tap.call(rec, 2), 3);
   assert.equal(events[0]!.thisArg?.t, "obj");
   assert.equal(events[0]!.argc, 1);
+});
+
+test("argsAfter and thisAfter share identity when args[0] === this", () => {
+  const events: TraceEvent[] = [];
+  const rec = { n: 1 };
+  const mod = {
+    bump(this: { n: number }, x: { n: number }) {
+      this.n += 1;
+      return x.n;
+    },
+  };
+  const wrapped = wrapExports(mod, {
+    packageName: "x",
+    onEvent: (e) => events.push(e),
+  }) as typeof mod;
+  assert.equal(wrapped.bump.call(rec, rec), 2);
+  const ev = events[0]!;
+  assert.ok(ev.argsAfter);
+  assert.ok(ev.thisAfter);
+  assert.equal(ev.thisAfter?.t, "ref");
+  const back = deserializeEvent({
+    args: ev.argsAfter ?? [],
+    thisArg: ev.thisAfter,
+  });
+  assert.equal(back.args[0], back.thisArg);
+  assert.equal((back.thisArg as { n: number }).n, 2);
+});
+
+test("throw path argsAfter and thisAfter share identity when args[0] === this", () => {
+  const events: TraceEvent[] = [];
+  const rec = { n: 1 };
+  const mod = {
+    boom(this: { n: number }, _x: { n: number }) {
+      this.n += 1;
+      throw new TypeError("nope");
+    },
+  };
+  const wrapped = wrapExports(mod, {
+    packageName: "x",
+    onEvent: (e) => events.push(e),
+  }) as typeof mod;
+  assert.throws(() => wrapped.boom.call(rec, rec));
+  const ev = events[0]!;
+  assert.equal(ev.threw?.name, "TypeError");
+  assert.equal(ev.thisAfter?.t, "ref");
+  const back = deserializeEvent({
+    args: ev.argsAfter ?? [],
+    thisArg: ev.thisAfter,
+  });
+  assert.equal(back.args[0], back.thisArg);
+  assert.equal((back.thisArg as { n: number }).n, 2);
 });

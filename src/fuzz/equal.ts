@@ -1,5 +1,5 @@
 import type { HyrumFlags } from "../envelope/types.ts";
-import { clone } from "./clone.ts";
+import { cloneInvocation } from "./clone.ts";
 
 export interface EqualOptions {
   /** When true, -0 and +0 are not equal (Object.is). Default SameValueZero. */
@@ -65,9 +65,7 @@ export function invoke(
   args: unknown[],
   thisArg?: unknown,
 ): CallOutcome {
-  const cloned = args.map((a) => clone(a));
-  const clonedThis =
-    thisArg === undefined || thisArg === null ? thisArg : clone(thisArg);
+  const { args: cloned, thisArg: clonedThis } = cloneInvocation(args, thisArg);
   try {
     const value = fn.apply(clonedThis, cloned);
     return { ok: true, value, argsAfter: cloned, thisAfter: clonedThis };
@@ -237,6 +235,24 @@ function extras(a: unknown, b: unknown, ctx: EqCtx): boolean {
   return true;
 }
 
+function equalCustomToString(a: object, b: object): boolean {
+  const sa = customToString(a);
+  const sb = customToString(b);
+  if (sa === undefined && sb === undefined) return true;
+  return sa === sb;
+}
+
+function customToString(v: object): string | undefined {
+  const ts = (v as { toString?: unknown }).toString;
+  if (typeof ts !== "function") return undefined;
+  if (ts === Object.prototype.toString || ts === Array.prototype.toString) return undefined;
+  try {
+    return String(v);
+  } catch {
+    return undefined;
+  }
+}
+
 function equalToString(a: unknown, b: unknown): boolean {
   try {
     return String(a) === String(b);
@@ -283,6 +299,8 @@ function eq(
   const prev = seen.get(ao);
   if (prev) return prev === bo;
   seen.set(ao, bo);
+
+  if (ctx.toString && !equalCustomToString(a, b)) return false;
 
   if (ctx.prototype && Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) {
     return false;

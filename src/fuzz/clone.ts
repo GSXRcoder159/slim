@@ -106,3 +106,15 @@ export function clone<T>(value: T, seen: WeakMap<object, unknown> = new WeakMap(
   }
   return c as T;
 }
+
+/** One WeakMap across args and the receiver so aliases and cycles survive isolation clones. */
+export function cloneInvocation(
+  args: unknown[],
+  thisArg?: unknown,
+): { args: unknown[]; thisArg?: unknown } {
+  const seen = new WeakMap<object, unknown>();
+  return {
+    args: args.map((a) => clone(a, seen)),
+    thisArg: thisArg === undefined || thisArg === null ? thisArg : clone(thisArg, seen),
+  };
+}

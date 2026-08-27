@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clone } from "../../src/fuzz/clone.ts";
+import { clone, cloneInvocation } from "../../src/fuzz/clone.ts";
 import { equal } from "../../src/fuzz/equal.ts";
 
 test("primitives and functions are returned as-is", () => {
@@ -109,6 +109,33 @@ test("Error, Buffer, and Uint8Array", () => {
   assert.ok(cu instanceof Uint8Array);
   assert.notEqual(cu, u);
   assert.deepEqual([...cu], [4, 5]);
+});
+
+test("cloneInvocation preserves cross-arg and arg-receiver aliases independently of the source", () => {
+  const shared = { n: 1, self: null as unknown };
+  shared.self = shared;
+  const nested = { child: shared };
+  const { args, thisArg } = cloneInvocation([shared, nested, shared], shared);
+  assert.equal(args.length, 3);
+  assert.equal(args[0], args[2]);
+  assert.equal(args[0], thisArg);
+  assert.equal((args[1] as { child: unknown }).child, args[0]);
+  assert.equal((args[0] as { self: unknown }).self, args[0]);
+  assert.notEqual(args[0], shared);
+  assert.notEqual(thisArg, shared);
+  (args[0] as { n: number }).n = 9;
+  assert.equal(shared.n, 1);
+  const other = cloneInvocation([shared, nested, shared], shared);
+  assert.notEqual(other.args[0], args[0]);
+  assert.equal(other.args[0], other.thisArg);
+});
+
+test("cloneInvocation leaves null and undefined thisArg uncloned", () => {
+  const o = { n: 1 };
+  assert.equal(cloneInvocation([o], undefined).thisArg, undefined);
+  assert.equal(cloneInvocation([o], null).thisArg, null);
+  const { args } = cloneInvocation([o, o], undefined);
+  assert.equal(args[0], args[1]);
 });
 
 test("plain objects and nested arrays", () => {

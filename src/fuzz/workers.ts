@@ -20,7 +20,6 @@ import {
 } from "./debounce-driver.ts";
 import type { HyrumFlags, SlimValue } from "../envelope/types.ts";
 import { deserializeEvent, serializeEvent, snapshot } from "../trace/serialize.ts";
-import { hydrate } from "./gen.ts";
 
 const MINIMIZE_MS = 2000;
 const JOB_TIMEOUT_CAP_MS = 5000;
@@ -505,11 +504,14 @@ export function fromCloneableResult(result: FuzzResult): FuzzResult {
     symbol: result.symbol,
     ok: result.ok,
     reason: result.reason,
-    args: result.args === undefined ? undefined : result.args.map((a) => hydrate(a as SlimValue)),
+    args:
+      result.args === undefined
+        ? undefined
+        : deserializeEvent({ args: result.args as SlimValue[] }).args,
     minimized:
       result.minimized === undefined
         ? undefined
-        : result.minimized.map((a) => hydrate(a as SlimValue)),
+        : deserializeEvent({ args: result.minimized as SlimValue[] }).args,
   };
 }
 
