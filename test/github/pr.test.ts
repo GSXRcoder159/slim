@@ -5,67 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as pr from "../../src/github/pr.ts";
 import { SlimExit, EXIT_ENV, EXIT_FAIL } from "../../src/exit.ts";
-
-const SAMPLE_BODY = `# EVIDENCE, NOT PROOF
-
-## 2. What was used
-
-- Package: \`lodash@4.17.21\` (family \`lodash\`)
-- Symbols: \`get\`, \`debounce\`
-- Unknowns: 0
-- Envelope hash: \`217c102e5c34a74ba017061f1a5574a2ada6cd6a6497e6797e6eb97eafa706c4\`
-
-## 3. Byte delta
-
-71000 B estimated original min → 6981 B replacement
-
-## 5. Fuzz
-
-- cases: 10
-- comparisons: 10
-- disagreements: 0
-- seed: 141647386
-
-## 6. Coverage holes
-
-- debounce options never observed
-
-## 7. Upstream pin
-
-Slim will watch this slice via \`slim upstream\` / osv.dev.
-
-## 8. How to revert
-
-1. Restore \`lodash@4.17.21\` in package.json.
-
-## Residual risk
-
-- Differential fuzzing is evidence, not proof.
-`;
-
-const OPTS = {
-  root: "/tmp/slim-pr-test-root",
-  title: "slim: replace lodash with a verified slice",
-  body: SAMPLE_BODY,
-  branch: "slim/lodash",
-  files: ["src/slim/lodash.ts", ".slim/lodash/evidence.md"],
-};
-
-const GH_ARGS = [
-  "gh",
-  "pr",
-  "create",
-  "--repo",
-  "acme/app",
-  "--base",
-  "main",
-  "--head",
-  OPTS.branch,
-  "--title",
-  OPTS.title,
-  "--body",
-  OPTS.body,
-];
+import { plantReplaceTxn } from "../helpers/pr-txn.ts";
 
 type ExecFileFn = (
   file: string,
@@ -98,6 +38,25 @@ function assertSafeGit(calls: string[][]): void {
   }
 }
 
+function ghCreateArgs(opts: pr.CreatePrOpts, repo = "acme/app", base = "main"): string[] {
+  return [
+    "gh",
+    "pr",
+    "create",
+    "--repo",
+    repo,
+    "--base",
+    base,
+    "--head",
+    opts.branch,
+    "--title",
+    opts.title,
+    "--body",
+    opts.body,
+    ...opts.labels.flatMap((l) => ["--label", l]),
+  ];
+}
+
 function makeExec(opts?: {
   origin?: string;
   commitError?: string;
@@ -108,8 +67,14 @@ function makeExec(opts?: {
   remoteError?: string;
   branchExists?: boolean;
   remoteBranch?: boolean;
+  files?: string[];
+  message?: string;
+  head?: string;
 }) {
   const calls: string[][] = [];
+  const files = opts?.files ?? [];
+  const message = opts?.message ?? "slim: replace lodash with a verified slice";
+  const head = opts?.head ?? "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
   const execFile: ExecFileFn = (file, args = []) => {
     calls.push([file, ...args]);
     if (file === "git" && args[0] === "show-ref") {
@@ -121,7 +86,7 @@ function makeExec(opts?: {
     }
     if (file === "git" && args[0] === "rev-parse") {
       if (args.includes("--is-inside-work-tree")) return "true\n";
-      return "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef\n";
+      return `${head}\n`;
     }
     if (file === "git" && args[0] === "write-tree") return "treesha\n";
     if (file === "git" && args[0] === "commit-tree") {
@@ -129,6 +94,12 @@ function makeExec(opts?: {
         throw Object.assign(new Error(opts.commitError), { status: 1 });
       }
       return "commitsha\n";
+    }
+    if (file === "git" && args[0] === "diff-tree") {
+      return files.join("\n") + (files.length ? "\n" : "");
+    }
+    if (file === "git" && args[0] === "log") {
+      return `${message}\n`;
     }
     if (file === "git" && args[0] === "push" && opts?.pushError) {
       throw Object.assign(new Error(opts.pushError), { status: 1 });
@@ -151,6 +122,24 @@ function makeExec(opts?: {
     return "";
   };
   return { execFile, calls };
+}
+
+function restOk(
+  url: string,
+  html = "https://github.com/acme/app/pull/3",
+  number = 3,
+): Response {
+  const u = String(url);
+  if (u.includes("/pulls")) {
+    return new Response(JSON.stringify({ html_url: html, number }), { status: 201 });
+  }
+  if (u.includes("/issues/") && u.endsWith("/labels")) {
+    return new Response("[]", { status: 200 });
+  }
+  if (u.endsWith("/labels")) {
+    return new Response("{}", { status: 201 });
+  }
+  return new Response("no", { status: 500 });
 }
 
 async function withStderr<T>(fn: () => Promise<T>): Promise<{ result: T; stderr: string }> {
@@ -205,11 +194,12 @@ test("parseGithubOwnerRepo rejects non-GitHub remotes", () => {
 });
 
 test("createPullRequest throws EXIT_ENV when gh and token are missing before git branch", async () => {
-  const { execFile, calls } = makeExec();
+  const opts = plantReplaceTxn();
+  const { execFile, calls } = makeExec({ files: opts.files, message: opts.title });
   let fetched = false;
   await assert.rejects(
     () =>
-      pr.createPullRequest(OPTS, {
+      pr.createPullRequest(opts, {
         hasGh: () => false,
         env: {},
         execFile,
@@ -232,9 +222,10 @@ test("createPullRequest throws EXIT_ENV when gh and token are missing before git
 });
 
 test("maybeCreatePullRequest --no-pr never attempts PR", async () => {
+  const opts = plantReplaceTxn();
   assert.equal(typeof pr.maybeCreatePullRequest, "function");
   let execed = false;
-  const result = await pr.maybeCreatePullRequest(false, OPTS, {
+  const result = await pr.maybeCreatePullRequest(false, opts, {
     hasGh: () => {
       throw new Error("should not probe gh");
     },
@@ -252,10 +243,11 @@ test("maybeCreatePullRequest --no-pr never attempts PR", async () => {
 });
 
 test("maybeCreatePullRequest requested without gh or token is EXIT_ENV", async () => {
-  const { execFile } = makeExec();
+  const opts = plantReplaceTxn();
+  const { execFile } = makeExec({ files: opts.files, message: opts.title });
   await assert.rejects(
     () =>
-      pr.maybeCreatePullRequest(true, OPTS, {
+      pr.maybeCreatePullRequest(true, opts, {
         hasGh: () => false,
         env: {},
         execFile,
@@ -266,9 +258,10 @@ test("maybeCreatePullRequest requested without gh or token is EXIT_ENV", async (
 });
 
 test("gh on PATH: prints exact gh pr create invocation then runs equivalent args", async () => {
-  const { execFile, calls } = makeExec();
+  const opts = plantReplaceTxn();
+  const { execFile, calls } = makeExec({ files: opts.files, message: opts.title });
   const { result, stderr } = await withStderr(() =>
-    pr.createPullRequest(OPTS, {
+    pr.createPullRequest(opts, {
       hasGh: () => true,
       env: {},
       execFile,
@@ -279,48 +272,53 @@ test("gh on PATH: prints exact gh pr create invocation then runs equivalent args
   );
   const ghPr = calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "create");
   assert.ok(ghPr, "expected gh pr create");
-  assert.deepEqual(ghPr, GH_ARGS);
-  assert.ok(stderr.includes(`gh pr create --repo acme/app --base main --head ${OPTS.branch}`), stderr);
-  assert.ok(stderr.includes(`--title ${OPTS.title}`), stderr);
+  assert.deepEqual(ghPr, ghCreateArgs(opts));
+  assert.ok(stderr.includes(`gh pr create --repo acme/app --base main --head ${opts.branch}`), stderr);
+  assert.ok(stderr.includes(`--title ${opts.title}`), stderr);
   assert.equal(result.local, false);
   assert.equal(result.url, "https://github.com/acme/app/pull/7");
+  assert.deepEqual(opts.labels, ["slim", "slim:replace"]);
   assertSafeGit(calls);
 });
 
 test("GITHUB_TOKEN: REST POST /repos/{owner}/{repo}/pulls after git push", async () => {
-  const { execFile, calls } = makeExec({ origin: "https://github.com/acme/app.git" });
+  const opts = plantReplaceTxn();
+  const { execFile, calls } = makeExec({ origin: "https://github.com/acme/app.git", files: opts.files, message: opts.title });
   const fetchCalls: { url: string; init?: RequestInit }[] = [];
   let pushed = false;
   const exec: ExecFileFn = (file, args = [], options) => {
-    if (file === "git" && args[0] === "push") pushed = true;
+    if (file === "git" && args[0] === "push" && !args.includes("--delete")) pushed = true;
     return execFile(file, args, options);
   };
-  const result = await pr.createPullRequest(OPTS, {
+  const result = await pr.createPullRequest(opts, {
     hasGh: () => false,
     env: { GITHUB_TOKEN: "ghp_test" },
     execFile: exec,
     fetchImpl: async (url, init) => {
-      assert.equal(pushed, true, "git push must run before REST create");
       fetchCalls.push({ url: String(url), init });
-      return new Response(JSON.stringify({ html_url: "https://github.com/acme/app/pull/3" }), {
-        status: 201,
-      });
+      if (String(url).includes("/pulls")) {
+        assert.equal(pushed, true, "git push must run before REST create");
+      }
+      return restOk(String(url));
     },
   });
-  assert.equal(fetchCalls.length, 1);
-  assert.equal(fetchCalls[0]!.url, "https://api.github.com/repos/acme/app/pulls");
-  assert.equal(fetchCalls[0]!.init?.method, "POST");
-  assert.equal(header(fetchCalls[0]!.init, "authorization"), "Bearer ghp_test");
-  const body = JSON.parse(String(fetchCalls[0]!.init?.body)) as {
+  assert.ok(fetchCalls.some((c) => c.url === "https://api.github.com/repos/acme/app/pulls"));
+  const pull = fetchCalls.find((c) => c.url.endsWith("/pulls"))!;
+  assert.equal(pull.init?.method, "POST");
+  assert.equal(header(pull.init, "authorization"), "Bearer ghp_test");
+  const body = JSON.parse(String(pull.init?.body)) as {
     title: string;
     body: string;
     head: string;
     base: string;
   };
-  assert.equal(body.title, OPTS.title);
-  assert.equal(body.body, OPTS.body);
-  assert.equal(body.head, OPTS.branch);
+  assert.equal(body.title, opts.title);
+  assert.equal(body.body, opts.body);
+  assert.equal(body.head, opts.branch);
   assert.equal(body.base, "main");
+  const labelApply = fetchCalls.find((c) => c.url.includes("/issues/3/labels"));
+  assert.ok(labelApply, "expected REST label apply");
+  assert.deepEqual(JSON.parse(String(labelApply.init?.body)), { labels: ["slim", "slim:replace"] });
   assert.ok(calls.some((c) => c[0] === "git" && c[1] === "push"));
   assert.equal(calls.some((c) => c[0] === "gh"), false);
   assert.equal(result.local, false);
@@ -329,9 +327,10 @@ test("GITHUB_TOKEN: REST POST /repos/{owner}/{repo}/pulls after git push", async
 });
 
 test("gh and REST send equivalent title, body, base, head, and repo", async () => {
-  const ghExec = makeExec();
+  const opts = plantReplaceTxn();
+  const ghExec = makeExec({ files: opts.files, message: opts.title });
   await withStderr(() =>
-    pr.createPullRequest(OPTS, {
+    pr.createPullRequest(opts, {
       hasGh: () => true,
       env: {},
       execFile: ghExec.execFile,
@@ -347,18 +346,17 @@ test("gh and REST send equivalent title, body, base, head, and repo", async () =
   const title = ghPr[ghPr.indexOf("--title") + 1];
   const body = ghPr[ghPr.indexOf("--body") + 1];
 
-  const restExec = makeExec({ origin: "git@github.com:acme/app.git" });
+  const restExec = makeExec({ origin: "git@github.com:acme/app.git", files: opts.files, message: opts.title });
   let restPayload: { title: string; body: string; head: string; base: string } | null = null;
-  await pr.createPullRequest(OPTS, {
+  await pr.createPullRequest(opts, {
     hasGh: () => false,
     env: { GITHUB_TOKEN: "t" },
     execFile: restExec.execFile,
     fetchImpl: async (url, init) => {
-      assert.equal(String(url), "https://api.github.com/repos/acme/app/pulls");
-      restPayload = JSON.parse(String(init?.body)) as typeof restPayload;
-      return new Response(JSON.stringify({ html_url: "https://github.com/acme/app/pull/1" }), {
-        status: 201,
-      });
+      if (String(url).includes("/pulls")) {
+        restPayload = JSON.parse(String(init?.body)) as typeof restPayload;
+      }
+      return restOk(String(url), "https://github.com/acme/app/pull/1", 1);
     },
   });
   assert.ok(restPayload);
@@ -367,37 +365,73 @@ test("gh and REST send equivalent title, body, base, head, and repo", async () =
   assert.equal(restPayload.body, body);
   assert.equal(restPayload.head, head);
   assert.equal(restPayload.base, base);
-  assert.equal(title, OPTS.title);
-  assert.equal(body, OPTS.body);
-  assert.equal(head, OPTS.branch);
+  assert.equal(title, opts.title);
+  assert.equal(body, opts.body);
+  assert.equal(head, opts.branch);
   assert.equal(base, "main");
 });
 
 test("GH_TOKEN works when GITHUB_TOKEN is unset; ssh origin parses owner/repo", async () => {
-  const { execFile } = makeExec({ origin: "git@github.com:octo/widgets.git", base: "master" });
-  const result = await pr.createPullRequest(OPTS, {
+  const opts = plantReplaceTxn();
+  const { execFile } = makeExec({
+    origin: "git@github.com:octo/widgets.git",
+    base: "master",
+    files: opts.files,
+    message: opts.title,
+  });
+  const result = await pr.createPullRequest(opts, {
     hasGh: () => false,
     env: { GH_TOKEN: "ghp_alt" },
     execFile,
     fetchImpl: async (url, init) => {
-      assert.equal(String(url), "https://api.github.com/repos/octo/widgets/pulls");
-      assert.equal(header(init, "authorization"), "Bearer ghp_alt");
-      const body = JSON.parse(String(init?.body)) as { base: string };
-      assert.equal(body.base, "master");
-      return new Response(JSON.stringify({ html_url: "https://github.com/octo/widgets/pull/1" }), {
-        status: 201,
-      });
+      if (String(url).includes("/pulls")) {
+        assert.equal(String(url), "https://api.github.com/repos/octo/widgets/pulls");
+        assert.equal(header(init, "authorization"), "Bearer ghp_alt");
+        const body = JSON.parse(String(init?.body)) as { base: string };
+        assert.equal(body.base, "master");
+      }
+      return restOk(String(url), "https://github.com/octo/widgets/pull/1", 1);
     },
   });
   assert.equal(result.url, "https://github.com/octo/widgets/pull/1");
 });
 
+test("fork origin is targeted, not an unused upstream parent remote", async () => {
+  const opts = plantReplaceTxn();
+  const { execFile, calls } = makeExec({
+    origin: "git@github.com:fork-user/app.git",
+    files: opts.files,
+    message: opts.title,
+  });
+  await withStderr(() =>
+    pr.createPullRequest(opts, {
+      hasGh: () => true,
+      env: {},
+      execFile,
+      fetchImpl: async () => {
+        throw new Error("no fetch");
+      },
+    }),
+  );
+  const ghPr = calls.find((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "create")!;
+  assert.equal(ghPr[ghPr.indexOf("--repo") + 1], "fork-user/app");
+  assert.equal(
+    calls.some((c) => c.join(" ").includes("acme/app")),
+    false,
+  );
+});
+
 test("git push failure throws EXIT_FAIL when gh or token exist", async () => {
-  const { execFile } = makeExec({ pushError: "Permission denied" });
+  const opts = plantReplaceTxn();
+  const { execFile, calls } = makeExec({
+    pushError: "Permission denied",
+    files: opts.files,
+    message: opts.title,
+  });
   await assert.rejects(
     () =>
       withStderr(() =>
-        pr.createPullRequest(OPTS, {
+        pr.createPullRequest(opts, {
           hasGh: () => true,
           env: { GITHUB_TOKEN: "ghp_test" },
           execFile,
@@ -408,14 +442,21 @@ test("git push failure throws EXIT_FAIL when gh or token exist", async () => {
       ),
     (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /git push failed/i.test(err.message),
   );
+  assert.ok(calls.some((c) => c[0] === "git" && c[1] === "branch" && c.includes("-D")));
+  assert.equal(calls.some((c) => c[0] === "gh" && c[1] === "pr"), false);
 });
 
 test("gh pr create failure throws EXIT_FAIL", async () => {
-  const { execFile } = makeExec({ ghError: "GraphQL: Resource not accessible by integration" });
+  const opts = plantReplaceTxn();
+  const { execFile, calls } = makeExec({
+    ghError: "GraphQL: Resource not accessible by integration",
+    files: opts.files,
+    message: opts.title,
+  });
   await assert.rejects(
     () =>
       withStderr(() =>
-        pr.createPullRequest(OPTS, {
+        pr.createPullRequest(opts, {
           hasGh: () => true,
           env: {},
           execFile,
@@ -427,33 +468,47 @@ test("gh pr create failure throws EXIT_FAIL", async () => {
     (err: unknown) =>
       err instanceof SlimExit && err.code === EXIT_FAIL && /gh pr create failed/i.test(err.message),
   );
+  assert.ok(calls.some((c) => c[0] === "git" && c[1] === "push" && c.includes("--delete")));
+  assert.ok(calls.some((c) => c[0] === "git" && c[1] === "branch" && c.includes("-D")));
 });
 
 test("REST PR create failure throws EXIT_FAIL", async () => {
-  const { execFile } = makeExec({ origin: "https://github.com/acme/app.git" });
+  const opts = plantReplaceTxn();
+  const { execFile, calls } = makeExec({
+    origin: "https://github.com/acme/app.git",
+    files: opts.files,
+    message: opts.title,
+  });
   await assert.rejects(
     () =>
       withStderr(() =>
-        pr.createPullRequest(OPTS, {
+        pr.createPullRequest(opts, {
           hasGh: () => false,
           env: { GITHUB_TOKEN: "ghp_test" },
           execFile,
-          fetchImpl: async () => new Response("nope", { status: 403 }),
+          fetchImpl: async (url) => {
+            if (String(url).includes("/pulls")) return new Response("nope", { status: 403 });
+            return restOk(String(url));
+          },
         }),
       ),
     (err: unknown) =>
       err instanceof SlimExit && err.code === EXIT_FAIL && /REST PR create failed/i.test(err.message),
   );
+  assert.ok(calls.some((c) => c[0] === "git" && c[1] === "push" && c.includes("--delete")));
 });
 
 test("commit failure is EXIT_FAIL and does not create a PR", async () => {
+  const opts = plantReplaceTxn();
   const { execFile, calls } = makeExec({
     commitError: "nothing to commit, working tree clean",
+    files: opts.files,
+    message: opts.title,
   });
   await assert.rejects(
     () =>
       withStderr(() =>
-        pr.createPullRequest(OPTS, {
+        pr.createPullRequest(opts, {
           hasGh: () => true,
           env: {},
           execFile,
@@ -470,10 +525,11 @@ test("commit failure is EXIT_FAIL and does not create a PR", async () => {
 });
 
 test("malformed origin is EXIT_ENV", async () => {
-  const { execFile } = makeExec({ origin: "git@gitlab.com:acme/app.git" });
+  const opts = plantReplaceTxn();
+  const { execFile } = makeExec({ origin: "git@gitlab.com:acme/app.git", files: opts.files, message: opts.title });
   await assert.rejects(
     () =>
-      pr.createPullRequest(OPTS, {
+      pr.createPullRequest(opts, {
         hasGh: () => true,
         env: {},
         execFile,
@@ -485,10 +541,11 @@ test("malformed origin is EXIT_ENV", async () => {
 });
 
 test("missing origin remote is EXIT_ENV", async () => {
-  const { execFile } = makeExec({ remoteError: "No such remote 'origin'" });
+  const opts = plantReplaceTxn();
+  const { execFile } = makeExec({ remoteError: "No such remote 'origin'", files: opts.files, message: opts.title });
   await assert.rejects(
     () =>
-      pr.createPullRequest(OPTS, {
+      pr.createPullRequest(opts, {
         hasGh: () => true,
         env: {},
         execFile,
@@ -498,9 +555,12 @@ test("missing origin remote is EXIT_ENV", async () => {
   );
 });
 
-test("PR body sent to gh and REST includes required evidence fields", async () => {
+test("PR body sent to gh includes required evidence fields and matching hashes", async () => {
+  const opts = plantReplaceTxn();
   const required = [
     /Envelope hash:/i,
+    /Evidence hash:/i,
+    /Module digest:/i,
     /Package: /,
     /Symbols:/,
     /Unknowns:/,
@@ -513,11 +573,11 @@ test("PR body sent to gh and REST includes required evidence fields", async () =
     /Upstream pin/i,
     /How to revert/i,
   ];
-  for (const re of required) assert.match(OPTS.body, re);
+  for (const re of required) assert.match(opts.body, re);
 
-  const { execFile, calls } = makeExec();
+  const { execFile, calls } = makeExec({ files: opts.files, message: opts.title });
   await withStderr(() =>
-    pr.createPullRequest(OPTS, {
+    pr.createPullRequest(opts, {
       hasGh: () => true,
       env: {},
       execFile,
@@ -531,15 +591,105 @@ test("PR body sent to gh and REST includes required evidence fields", async () =
   for (const re of required) assert.match(body, re);
 });
 
+test("tampered envelope hash in the PR body blocks commit and push", async () => {
+  const opts = plantReplaceTxn();
+  opts.body = opts.body.replace(/Envelope hash: `([0-9a-f]+)`/, "Envelope hash: `" + "a".repeat(64) + "`");
+  const { execFile, calls } = makeExec({ files: opts.files, message: opts.title });
+  await assert.rejects(
+    () =>
+      pr.createPullRequest(opts, {
+        hasGh: () => true,
+        env: {},
+        execFile,
+        fetchImpl: async () => new Response("no"),
+      }),
+    (err: unknown) =>
+      err instanceof SlimExit && err.code === EXIT_FAIL && /envelope hash/i.test(err.message),
+  );
+  assert.equal(calls.some((c) => c[0] === "git" && c[1] === "commit-tree"), false);
+  assert.equal(calls.some((c) => c[0] === "git" && c[1] === "push"), false);
+  assert.equal(calls.some((c) => c[0] === "gh"), false);
+});
+
+test("wrong package version in the PR body blocks push", async () => {
+  const opts = plantReplaceTxn();
+  opts.body = opts.body.replace(/lodash@4\.17\.21/, "lodash@9.9.9");
+  const { execFile, calls } = makeExec({ files: opts.files, message: opts.title });
+  await assert.rejects(
+    () =>
+      pr.createPullRequest(opts, {
+        hasGh: () => true,
+        env: {},
+        execFile,
+        fetchImpl: async () => new Response("no"),
+      }),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /package/i.test(err.message),
+  );
+  assert.equal(calls.some((c) => c[0] === "git" && c[1] === "commit-tree"), false);
+});
+
+test("title that does not name the package blocks push", async () => {
+  const opts = plantReplaceTxn();
+  opts.title = "totally unrelated title";
+  const { execFile, calls } = makeExec({ files: opts.files, message: opts.title });
+  await assert.rejects(
+    () =>
+      pr.createPullRequest(opts, {
+        hasGh: () => true,
+        env: {},
+        execFile,
+        fetchImpl: async () => new Response("no"),
+      }),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /title/i.test(err.message),
+  );
+  assert.equal(calls.some((c) => c[0] === "git" && c[1] === "commit-tree"), false);
+});
+
+test("unrelated extra file in the PR file list is refused", async () => {
+  const opts = plantReplaceTxn();
+  opts.files = [...opts.files, "unrelated.txt"];
+  writeFileSync(join(opts.root, "unrelated.txt"), "nope\n");
+  const { execFile, calls } = makeExec({ files: opts.files, message: opts.title });
+  await assert.rejects(
+    () =>
+      pr.createPullRequest(opts, {
+        hasGh: () => true,
+        env: {},
+        execFile,
+        fetchImpl: async () => new Response("no"),
+      }),
+    (err: unknown) =>
+      err instanceof SlimExit && err.code === EXIT_FAIL && /unrelated path/i.test(err.message),
+  );
+  assert.equal(calls.some((c) => c[0] === "git" && c[1] === "commit-tree"), false);
+});
+
+test("missing evidence.md in the file list is refused", async () => {
+  const opts = plantReplaceTxn();
+  opts.files = opts.files.filter((f) => !f.endsWith("evidence.md"));
+  const { execFile, calls } = makeExec({ files: opts.files, message: opts.title });
+  await assert.rejects(
+    () =>
+      pr.createPullRequest(opts, {
+        hasGh: () => true,
+        env: {},
+        execFile,
+        fetchImpl: async () => new Response("no"),
+      }),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /missing .*evidence\.md/i.test(err.message),
+  );
+  assert.equal(calls.some((c) => c[0] === "git" && c[1] === "commit-tree"), false);
+});
+
 test("prBodyFromEvidence reads evidence.md and rejects a missing file", () => {
-  const root = mkdtempSync(join(tmpdir(), "slim-ev-"));
-  mkdirSync(join(root, ".slim", "lodash"), { recursive: true });
-  writeFileSync(join(root, ".slim", "lodash", "evidence.md"), SAMPLE_BODY);
-  const body = pr.prBodyFromEvidence(root, "lodash");
+  const opts = plantReplaceTxn();
+  const body = pr.prBodyFromEvidence(opts.root, opts.pkg);
   assert.match(body, /Envelope hash:/);
+  assert.match(body, /Evidence hash:/);
+  assert.match(body, /Module digest:/);
   assert.match(body, /Residual risk/);
   assert.throws(
-    () => pr.prBodyFromEvidence(root, "missing-pkg"),
+    () => pr.prBodyFromEvidence(opts.root, "missing-pkg"),
     (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /missing/i.test(err.message),
   );
 });
@@ -555,11 +705,12 @@ test("incomplete evidence.md is EXIT_FAIL", () => {
 });
 
 test("empty files list is EXIT_FAIL before git mutations", async () => {
-  const { execFile, calls } = makeExec();
+  const opts = plantReplaceTxn();
+  const { execFile, calls } = makeExec({ files: opts.files, message: opts.title });
   await assert.rejects(
     () =>
       pr.createPullRequest(
-        { ...OPTS, files: [] },
+        { ...opts, files: [] },
         { hasGh: () => true, env: {}, execFile, fetchImpl: async () => new Response("no") },
       ),
     (err: unknown) =>

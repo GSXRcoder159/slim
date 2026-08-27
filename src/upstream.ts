@@ -9,7 +9,7 @@ import { loadConfig } from "./config.ts";
 import { queryOsv, type OsvVuln } from "./upstream/osv.ts";
 import { npmLatest } from "./upstream/npm.ts";
 import { sliceExposure } from "./upstream/slice.ts";
-import { createPullRequest, probeGithubAvailability } from "./github/pr.ts";
+import { createPullRequest, probeGithubAvailability, UPSTREAM_PR_LABELS } from "./github/pr.ts";
 import {
   applyUpstreamFix,
   canFuzzOracle,
@@ -310,6 +310,8 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
       body,
       branch: "slim/upstream",
       files: upstreamPrFiles(project.root, man, fixResults),
+      labels: [...UPSTREAM_PR_LABELS],
+      kind: "upstream",
     });
   }
 

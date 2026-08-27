@@ -29,7 +29,7 @@ import { removeDependencyKey } from "./rewrite/packagejson.ts";
 import { installCommandFor, refreshLockfile, shouldRefreshLockfile } from "./rewrite/lockfile.ts";
 import { writeEvidence } from "./evidence/report.ts";
 import { emitHardenedGetSetTest, emitStandingTests } from "./evidence/emit-tests.ts";
-import { maybeCreatePullRequest, prBodyFromEvidence } from "./github/pr.ts";
+import { maybeCreatePullRequest, prBodyFromEvidence, REPLACE_PR_LABELS } from "./github/pr.ts";
 import { detectRunner } from "./trace/runners.ts";
 import { runTraces, withLocalBinPath, writeTracesMeta } from "./trace/run.ts";
 import { MutationTxn, lockfilePath } from "./rewrite/transaction.ts";
@@ -431,6 +431,9 @@ export async function runReplace(args: CliArgs): Promise<number> {
       body: prBodyFromEvidence(project.root, env.package.name),
       branch: `slim/${fileBase(env.package.name)}`,
       files: slimFiles,
+      labels: [...REPLACE_PR_LABELS],
+      kind: "replace",
+      pkg: env.package.name,
     });
     if (pr?.url) process.stdout.write(pr.url + "\n");
   }

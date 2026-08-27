@@ -1,176 +1,218 @@
-import { test } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as pr from "../../src/github/pr.ts";
+import { canonicalInventory } from "../../src/support/inventory.ts";
+import { githubReceipt, writeReceipt } from "../../src/support/receipts.ts";
+import { installFixture, packSlim, ROOT, runSlim } from "../helpers/llm-replace.ts";
 
-const live = process.env.SLIM_PR_LIVE === "1";
-const TMP = tmpdir();
+const LIVE = process.env.SLIM_PR_LIVE === "1";
+const FIXTURE = "ms";
 
-const BODY = `# EVIDENCE, NOT PROOF
+let packDir = "";
+let tarball = "";
+let npmDigest: string | null = null;
 
-## 2. What was used
+before(() => {
+  if (!LIVE) return;
+  const packed = packSlim();
+  packDir = packed.packDir;
+  tarball = packed.tarball;
+  npmDigest = createHash("sha256").update(readFileSync(tarball)).digest("hex");
+});
 
-- Package: \`ms@2.1.3\` (family \`ms\`)
-- Symbols: \`ms\`
-- Unknowns: 0
-- Envelope hash: \`deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef\`
+after(() => {
+  if (packDir) rmSync(packDir, { recursive: true, force: true });
+});
 
-## 3. Byte delta
-
-1000 B estimated original min → 100 B replacement
-
-## 5. Fuzz
-
-- cases: 1
-- comparisons: 1
-- disagreements: 0
-- seed: 1
-
-## 6. Coverage holes
-
-- (none recorded)
-
-## 7. Upstream pin
-
-Slim will watch this slice via \`slim upstream\` / osv.dev.
-
-## 8. How to revert
-
-1. Restore \`ms@2.1.3\` in package.json.
-
-## Residual risk
-
-- Differential fuzzing is evidence, not proof.
-`;
-
-if (live) {
-  test("live disposable repo PR contains only Slim files and is cleaned up", async () => {
-    mkdirSync(TMP, { recursive: true });
-    const stamp = Date.now().toString(36);
-    const name = `slim-pr-live-${stamp}`;
-    const root = mkdtempSync(join(TMP, "slim-pr-live-"));
-    execFileSync("git", ["init", "--template=", "-b", "main"], { cwd: root, encoding: "utf8" });
-    execFileSync("git", ["config", "user.email", "slim@test"], { cwd: root });
-    execFileSync("git", ["config", "user.name", "slim"], { cwd: root });
-    writeFileSync(join(root, "README.md"), "live\n");
-    writeFileSync(join(root, "unrelated.txt"), "do-not-commit\n");
-    execFileSync("git", ["add", "README.md"], { cwd: root });
-    execFileSync("git", ["commit", "-m", "init"], { cwd: root });
-    mkdirSync(join(root, "src", "slim"), { recursive: true });
-    mkdirSync(join(root, ".slim", "ms"), { recursive: true });
-    writeFileSync(join(root, "src", "slim", "ms.ts"), "export function ms() { return 1; }\n");
-    writeFileSync(join(root, ".slim", "ms", "evidence.md"), BODY);
-
-    execFileSync("gh", ["repo", "create", name, "--private", "--source", root, "--remote", "origin", "--push"], {
-      cwd: root,
-      encoding: "utf8",
-    });
-    try {
-      const result = await pr.createPullRequest({
-        root,
-        title: "slim: replace ms with a verified slice",
-        body: BODY,
-        branch: "slim/ms",
-        files: ["src/slim/ms.ts", ".slim/ms/evidence.md"],
-      });
-      assert.ok(result.url && result.url.startsWith("https://"), result.url);
-      const files = execFileSync("gh", ["pr", "diff", "1", "--name-only"], {
-        cwd: root,
-        encoding: "utf8",
-      });
-      assert.match(files, /src\/slim\/ms\.ts/);
-      assert.match(files, /\.slim\/ms\/evidence\.md/);
-      assert.equal(files.includes("unrelated.txt"), false);
-      execFileSync("gh", ["pr", "close", "1", "--delete-branch"], { cwd: root });
-    } finally {
-      try {
-        execFileSync("gh", ["repo", "delete", name, "--yes"], { encoding: "utf8" });
-      } catch {
-        /* best-effort cleanup */
-      }
-      rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test("packed CLI replace --pr opens a scoped PR and is cleaned up", { timeout: 300_000 }, () => {
-    mkdirSync(TMP, { recursive: true });
-    execFileSync("npm", ["run", "build"], {
-      cwd: join(dirname(fileURLToPath(import.meta.url)), "../.."),
-      encoding: "utf8",
-      timeout: 60_000,
-    });
-    const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
-    const packDir = mkdtempSync(join(TMP, "slim-pr-pack-"));
-    const tgz = execFileSync("npm", ["pack", "--silent", `--pack-destination=${packDir}`], {
-      cwd: ROOT,
-      encoding: "utf8",
-      timeout: 60_000,
-    }).trim();
-    const tarball = join(packDir, tgz.split("\n").pop() ?? tgz);
-    const stamp = Date.now().toString(36);
-    const name = `slim-pr-packed-${stamp}`;
-    const root = mkdtempSync(join(TMP, "slim-pr-packed-"));
-    mkdirSync(join(root, "src"), { recursive: true });
-    writeFileSync(
-      join(root, "package.json"),
-      JSON.stringify({
-        name,
-        private: true,
-        type: "module",
-        scripts: { test: "node --experimental-strip-types --test src/index.test.ts" },
-        dependencies: { ms: "2.1.3" },
-        devDependencies: { typescript: "^5.9.2" },
-      }) + "\n",
-    );
-    writeFileSync(
-      join(root, "src", "index.ts"),
-      `import ms from "ms";\nexport function hourMs(): number { return ms("1h") as number; }\n`,
-    );
-    writeFileSync(
-      join(root, "src", "index.test.ts"),
-      `import { test } from "node:test";\nimport assert from "node:assert/strict";\nimport { hourMs } from "./index.ts";\ntest("hour", () => assert.equal(hourMs(), 3600000));\n`,
-    );
-    writeFileSync(join(root, ".gitignore"), "node_modules\n");
-    execFileSync("npm", ["install", tarball], { cwd: root, encoding: "utf8", timeout: 120_000 });
-    execFileSync("git", ["init", "--template=", "-b", "main"], { cwd: root, encoding: "utf8" });
-    execFileSync("git", ["config", "user.email", "slim@test"], { cwd: root });
-    execFileSync("git", ["config", "user.name", "slim"], { cwd: root });
-    execFileSync("git", ["add", "package.json", "src", ".gitignore"], { cwd: root });
-    execFileSync("git", ["commit", "-m", "init"], { cwd: root });
-    execFileSync("gh", ["repo", "create", name, "--private", "--source", root, "--remote", "origin", "--push"], {
-      cwd: root,
-      encoding: "utf8",
-    });
-    try {
-      const slimJs = join(root, "node_modules", "slim", "dist", "main.js");
-      const env: NodeJS.ProcessEnv = { ...process.env, CI: "1" };
-      delete env.NODE_TEST_CONTEXT;
-      delete env.NODE_CHANNEL_FD;
-      execFileSync(process.execPath, [slimJs, "replace", "ms", "--seed", "1", "--budget-ms", "800", "--workers", "1"], {
-        cwd: root,
-        encoding: "utf8",
-        timeout: 180_000,
-        env,
-      });
-      const files = execFileSync("gh", ["pr", "diff", "1", "--name-only"], {
-        cwd: root,
-        encoding: "utf8",
-      });
-      assert.match(files, /src\/slim\/ms\.ts/);
-      assert.match(files, /\.slim\/ms\/evidence\.md/);
-      assert.equal(files.includes("unrelated.txt"), false);
-      execFileSync("gh", ["pr", "close", "1", "--delete-branch"], { cwd: root });
-    } finally {
-      try {
-        execFileSync("gh", ["repo", "delete", name, "--yes"], { encoding: "utf8" });
-      } catch {
-        /* best-effort cleanup */
-      }
-      rmSync(root, { recursive: true, force: true });
-      rmSync(packDir, { recursive: true, force: true });
-    }
-  });
+function hasGh(): boolean {
+  try {
+    execFileSync("gh", ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
 }
+
+function gitToken(): string | undefined {
+  return process.env.GITHUB_TOKEN || process.env.GH_TOKEN || undefined;
+}
+
+function gh(args: string[], cwd?: string): string {
+  return execFileSync("gh", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function currentGhUser(): string {
+  return JSON.parse(gh(["api", "user"])).login as string;
+}
+
+function deleteOrTransferRepo(name: string, owner: string): void {
+  try {
+    gh(["repo", "delete", `${owner}/${name}`, "--yes"]);
+    return;
+  } catch (err) {
+    const dest = process.env.SLIM_PR_TRANSFER_OWNER;
+    if (!dest) {
+      throw new Error(
+        `leftover disposable repository ${owner}/${name} (gh repo delete failed: ${err instanceof Error ? err.message : String(err)}). Set SLIM_PR_TRANSFER_OWNER or grant delete_repo.`,
+      );
+    }
+    const res = execFileSync(
+      "gh",
+      ["api", "-X", "POST", `repos/${owner}/${name}/transfer`, "-f", `new_owner=${dest}`],
+      { encoding: "utf8" },
+    );
+    if (!res) {
+      throw new Error(`leftover disposable repository ${owner}/${name}: transfer to ${dest} failed`);
+    }
+  }
+}
+
+function writeMsFixture(dest: string, name: string): void {
+  mkdirSync(join(dest, "src"), { recursive: true });
+  writeFileSync(
+    join(dest, "package.json"),
+    JSON.stringify({
+      name,
+      private: true,
+      type: "module",
+      scripts: { test: "node --experimental-strip-types --test src/index.test.ts" },
+      dependencies: { ms: "2.1.3" },
+      devDependencies: { typescript: "^5.9.2" },
+    }) + "\n",
+  );
+  writeFileSync(
+    join(dest, "src", "index.ts"),
+    `import ms from "ms";\nexport function hourMs(): number { return ms("1h") as number; }\n`,
+  );
+  writeFileSync(
+    join(dest, "src", "index.test.ts"),
+    `import { test } from "node:test";\nimport assert from "node:assert/strict";\nimport { hourMs } from "./index.ts";\ntest("hour", () => assert.equal(hourMs(), 3600000));\n`,
+  );
+  writeFileSync(join(dest, ".gitignore"), "node_modules\n");
+}
+
+test("support inventory advertises github as a required live external service", () => {
+  const github = canonicalInventory().entries.find((e) => e.id === "externalService.github");
+  assert.ok(github);
+  assert.equal(github.kind, "externalService");
+  assert.equal(github.name, "github");
+  assert.equal(github.receiptClass, "live");
+  assert.equal(github.checkId, "test/github/pr-live.test.ts");
+});
+
+test("live packed replace opens a scoped GitHub PR and cleans up", { timeout: 300_000 }, async () => {
+  if (!LIVE) {
+    assert.equal(process.env.SLIM_PR_LIVE ?? "", "", "live tests stay registered when SLIM_PR_LIVE is unset");
+    return;
+  }
+  assert.ok(hasGh() || gitToken(), "gh or GITHUB_TOKEN is required when SLIM_PR_LIVE=1");
+  assert.ok(hasGh(), "gh is required to create and delete the disposable live repository");
+
+  const stamp = Date.now().toString(36);
+  const name = `slim-pr-live-${stamp}`;
+  const dest = mkdtempSync(join(tmpdir(), "slim-pr-packed-"));
+  let owner = "";
+  let leftover: string | null = null;
+  const startedAt = new Date();
+  try {
+    writeMsFixture(dest, name);
+    const slimJs = installFixture(dest, tarball);
+    execFileSync("git", ["init", "--template=", "-b", "main"], { cwd: dest, encoding: "utf8" });
+    execFileSync("git", ["config", "user.email", "slim@test"], { cwd: dest });
+    execFileSync("git", ["config", "user.name", "slim"], { cwd: dest });
+    execFileSync("git", ["add", "package.json", "src", ".gitignore"], { cwd: dest });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: dest });
+    gh(["repo", "create", name, "--private", "--source", dest, "--remote", "origin", "--push"], dest);
+    leftover = name;
+    owner = currentGhUser();
+
+    const extra: NodeJS.ProcessEnv = { CI: "1" };
+    const out = await runSlim(
+      slimJs,
+      ["replace", "ms", "--seed", "1", "--budget-ms", "800", "--workers", "1"],
+      dest,
+      extra,
+      180_000,
+    );
+    assert.equal(out.status, 0, `${out.stdout}\n${out.stderr}`);
+
+    const view = JSON.parse(
+      gh(["pr", "view", "1", "--json", "title,baseRefName,headRefName,labels,files,url,body"], dest),
+    ) as {
+      title: string;
+      baseRefName: string;
+      headRefName: string;
+      labels: { name: string }[];
+      files: { path: string }[];
+      url: string;
+      body: string;
+    };
+    assert.match(view.title, /ms/);
+    assert.equal(view.headRefName, "slim/ms");
+    const labelNames = view.labels.map((l) => l.name).sort();
+    assert.ok(labelNames.includes("slim"));
+    assert.ok(labelNames.includes("slim:replace"));
+    const files = view.files.map((f) => f.path);
+    assert.ok(files.some((f) => f.includes("src/slim/ms")));
+    assert.ok(files.some((f) => f.includes(".slim/ms/evidence.md")));
+    assert.equal(files.includes("unrelated.txt"), false);
+    for (const f of files) {
+      const slimOnly =
+        f.startsWith("src/slim/") ||
+        f.startsWith(".slim/") ||
+        f === "package.json" ||
+        f === "slim.json" ||
+        /^(package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)$/.test(f) ||
+        f.startsWith("src/");
+      assert.equal(slimOnly, true, `unexpected PR file ${f}`);
+    }
+    const evidence = readFileSync(join(dest, ".slim", "ms", "evidence.md"), "utf8");
+    const envHash = evidence.match(/Envelope hash:\s+`([0-9a-f]+)`/i)?.[1];
+    const evidenceHash = evidence.match(/Evidence hash:\s+`([0-9a-f]+)`/i)?.[1];
+    const moduleDigest = evidence.match(/Module digest:\s+`([0-9a-f]+)`/i)?.[1];
+    assert.ok(envHash && evidenceHash && moduleDigest);
+    assert.match(view.body, new RegExp(`Envelope hash:\\s+\`${envHash}\``, "i"));
+    assert.match(view.body, new RegExp(`Evidence hash:\\s+\`${evidenceHash}\``, "i"));
+    assert.match(view.body, new RegExp(`Module digest:\\s+\`${moduleDigest}\``, "i"));
+    assert.match(view.body, /Package:\s+`ms@/);
+
+    gh(["pr", "close", "1", "--delete-branch"], dest);
+    deleteOrTransferRepo(name, owner);
+    leftover = null;
+
+    const receiptsDir = process.env.SLIM_RECEIPTS_DIR;
+    if (receiptsDir) {
+      const commit =
+        process.env.SLIM_CANDIDATE_COMMIT ??
+        execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
+      writeReceipt(
+        receiptsDir,
+        "externalService.github",
+        githubReceipt({
+          fixture: FIXTURE,
+          commit,
+          npmDigest: process.env.SLIM_NPM_DIGEST ?? npmDigest,
+          startedAt,
+          endedAt: new Date(),
+          log: `${view.url}:${view.headRefName}:${out.status}`,
+          workflowRun: process.env.SLIM_WORKFLOW_RUN ?? null,
+        }),
+      );
+    }
+  } finally {
+    if (leftover && owner) {
+      try {
+        deleteOrTransferRepo(leftover, owner);
+        leftover = null;
+      } catch (err) {
+        process.stderr.write(String(err) + "\n");
+      }
+    }
+    rmSync(dest, { recursive: true, force: true });
+  }
+  assert.equal(leftover, null, leftover ? `leftover disposable repository ${owner}/${leftover}` : "");
+});

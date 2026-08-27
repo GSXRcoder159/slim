@@ -234,7 +234,7 @@ export function canonicalInventory(): SupportInventory {
       kind: "externalService",
       name: "github",
       docs: ["docs/dx.md", "README.md"],
-      checkId: "test/github/pr.test.ts",
+      checkId: "test/github/pr-live.test.ts",
       receiptClass: "live",
     }),
   );

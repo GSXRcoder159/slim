@@ -41,17 +41,25 @@ function packTarball(): { dir: string; tarball: string } {
     execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
   }
   const dir = mkdtempSync(join(TMP, "slim-matrix-pack-"));
-  const tgz = execFileSync(
-    "npm",
-    ["pack", "--silent", "--ignore-scripts", `--pack-destination=${dir}`],
-    {
-      cwd: ROOT,
-      encoding: "utf8",
-      timeout: 60_000,
-      env: hermeticPmEnv(),
-    },
-  ).trim();
-  return { dir, tarball: join(dir, tgz.split("\n").pop() ?? tgz) };
+  let last: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const tgz = execFileSync(
+        "npm",
+        ["pack", "--ignore-scripts", `--pack-destination=${dir}`],
+        {
+          cwd: ROOT,
+          encoding: "utf8",
+          timeout: 60_000,
+          env: hermeticPmEnv(),
+        },
+      ).trim();
+      return { dir, tarball: join(dir, tgz.split("\n").pop() ?? tgz) };
+    } catch (err) {
+      last = err;
+    }
+  }
+  throw last;
 }
 
 function copyFixture(name: string, dest: string, stripSlim = false): void {

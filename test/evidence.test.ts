@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -257,6 +258,30 @@ test("catalog evidence has kind catalog and empty counterexamples", () => {
   assert.deepEqual(json.generation?.catalogIds, ["lodash.get"]);
   assert.deepEqual(json.generation?.counterexamples, []);
   assert.equal(json.generation?.specSource, "catalog");
+});
+
+test("writeEvidence records evidence hash and module digest in markdown", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-ev-dig-"));
+  mkdirSync(join(root, "src", "slim"), { recursive: true });
+  writeFileSync(join(root, "src", "slim", "lodash.ts"), "export function get() { return 1; }\n");
+  const { mdPath, jsonPath } = writeEvidence({
+    root,
+    env: env(),
+    replacementBytes: 100,
+    originalMin: 1000,
+    fuzz,
+    catalogIds: ["lodash.get"],
+    coverageHoles: [],
+    bundle: null,
+    revert: sampleRevert(),
+  });
+  const md = readFileSync(mdPath, "utf8");
+  const jsonBytes = readFileSync(jsonPath);
+  const modBytes = readFileSync(join(root, "src", "slim", "lodash.ts"));
+  const evidenceHash = createHash("sha256").update(jsonBytes).digest("hex");
+  const moduleDigest = createHash("sha256").update(modBytes).digest("hex");
+  assert.match(md, new RegExp(`Evidence hash: \`${evidenceHash}\``));
+  assert.match(md, new RegExp(`Module digest: \`${moduleDigest}\``));
 });
 
 

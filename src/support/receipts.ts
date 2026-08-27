@@ -105,6 +105,34 @@ export function providerReceipt(opts: {
   };
 }
 
+export function githubReceipt(opts: {
+  fixture: string;
+  commit: string;
+  npmDigest: string | null;
+  startedAt: Date;
+  endedAt: Date;
+  log: string;
+  workflowRun?: string | null;
+}): QualificationReceipt {
+  return {
+    schemaVersion: 1,
+    checkId: "test/github/pr-live.test.ts",
+    command: "replace",
+    fixture: opts.fixture,
+    environment: `${process.platform} node-${process.version}`,
+    provider: null,
+    service: "github",
+    startedAt: opts.startedAt.toISOString(),
+    endedAt: opts.endedAt.toISOString(),
+    outcome: "pass",
+    commit: opts.commit,
+    npmDigest: opts.npmDigest,
+    actionDigest: null,
+    workflowRun: opts.workflowRun ?? null,
+    logDigest: createHash("sha256").update(opts.log).digest("hex"),
+  };
+}
+
 export function sourceReceipt(opts: {
   service: "osv" | "npm-registry";
   fixture: string;

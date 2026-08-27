@@ -3,6 +3,15 @@ import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../exit.ts";
 import { sourceErr, sourceOk, type SourceResult } from "../upstream/status.ts";
+import {
+  REPLACE_PR_LABELS,
+  UPSTREAM_PR_LABELS,
+  assertCommitMatchesTransaction,
+  assertPrMatchesTransaction,
+  type PrKind,
+} from "./pr-transaction.ts";
+
+export { REPLACE_PR_LABELS, UPSTREAM_PR_LABELS } from "./pr-transaction.ts";
 
 export interface PrResult {
   url: string | null;
@@ -28,10 +37,15 @@ export interface CreatePrOpts {
   body: string;
   branch: string;
   files: string[];
+  labels: string[];
+  kind?: PrKind;
+  pkg?: string;
 }
 
 const PR_BODY_FIELDS: { name: string; re: RegExp }[] = [
   { name: "envelope hash", re: /Envelope hash:/i },
+  { name: "evidence hash", re: /Evidence hash:/i },
+  { name: "module digest", re: /Module digest:/i },
   { name: "package", re: /Package: / },
   { name: "symbols", re: /Symbols:/ },
   { name: "unknowns", re: /Unknowns:/ },
@@ -208,6 +222,85 @@ export function commitSlimBranch(
   }
 }
 
+function abandonSlimRef(
+  execFile: ExecFileFn,
+  root: string,
+  branch: string,
+  remote: boolean,
+): void {
+  if (remote) {
+    try {
+      execFile("git", ["push", "origin", "--delete", branch], { cwd: root, encoding: "utf8" });
+    } catch {
+      /* still drop the local ref */
+    }
+  }
+  try {
+    execFile("git", ["branch", "-D", branch], { cwd: root, encoding: "utf8" });
+  } catch {
+    /* already gone */
+  }
+}
+
+function ensureGhLabels(execFile: ExecFileFn, root: string, labels: string[]): void {
+  for (const name of labels) {
+    try {
+      execFile("gh", ["label", "create", name, "--force"], { cwd: root, encoding: "utf8" });
+    } catch {
+      /* --force still fails if the repo cannot create labels; apply may work */
+    }
+  }
+}
+
+async function ensureRestLabels(
+  fetchImpl: typeof fetch,
+  token: string,
+  owner: string,
+  repo: string,
+  labels: string[],
+): Promise<void> {
+  for (const name of labels) {
+    const res = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/labels`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        accept: "application/vnd.github+json",
+        "content-type": "application/json",
+        "user-agent": "slim",
+      },
+      body: JSON.stringify({ name }),
+    });
+    if (!res.ok && res.status !== 422) {
+      const text = await res.text();
+      throw new SlimExit(EXIT_FAIL, `GitHub REST label create failed: ${res.status} ${text.slice(0, 200)}`);
+    }
+  }
+}
+
+async function applyRestLabels(
+  fetchImpl: typeof fetch,
+  token: string,
+  owner: string,
+  repo: string,
+  issue: number,
+  labels: string[],
+): Promise<void> {
+  const res = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${issue}/labels`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      accept: "application/vnd.github+json",
+      "content-type": "application/json",
+      "user-agent": "slim",
+    },
+    body: JSON.stringify({ labels }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new SlimExit(EXIT_FAIL, `GitHub REST label apply failed: ${res.status} ${text.slice(0, 200)}`);
+  }
+}
+
 export async function maybeCreatePullRequest(
   requested: boolean,
   opts: CreatePrOpts,
@@ -221,6 +314,15 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
   if (!opts.files?.length) {
     throw new SlimExit(EXIT_FAIL, "no files to commit for pull request");
   }
+  if (!opts.labels?.length) {
+    throw new SlimExit(EXIT_FAIL, "PR labels must match the accepted transaction");
+  }
+  const kind = opts.kind ?? (opts.branch === "slim/upstream" || opts.labels.includes("slim:upstream")
+    ? "upstream"
+    : "replace");
+  if (kind === "replace") assertPrBodyComplete(opts.body);
+  assertPrMatchesTransaction({ ...opts, kind });
+
   const execFile = deps.execFile ?? defaultExecFile;
   const env = deps.env ?? process.env;
   const fetchImpl = deps.fetchImpl ?? fetch;
@@ -275,9 +377,17 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
   }
 
   const base = detectBaseBranch(execFile, opts.root);
-  commitSlimBranch(
+  const head = gitOut(execFile, opts.root, ["rev-parse", "HEAD"]);
+  const sha = commitSlimBranch(
     { root: opts.root, branch: opts.branch, files: opts.files, message: opts.title },
     execFile,
+  );
+  assertCommitMatchesTransaction(
+    (args) => gitOut(execFile, opts.root, args),
+    sha,
+    opts.files,
+    opts.title,
+    head,
   );
 
   try {
@@ -286,48 +396,57 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
       encoding: "utf8",
     });
   } catch (err) {
+    abandonSlimRef(execFile, opts.root, opts.branch, false);
     process.stderr.write(`git push failed: ${errText(err)}\n`);
     throw new SlimExit(EXIT_FAIL, `git push failed: ${errText(err)}`);
   }
 
-  if (gh) {
-    const ghArgs = [
-      "pr",
-      "create",
-      "--repo",
-      `${owner}/${repo}`,
-      "--base",
-      base,
-      "--head",
-      opts.branch,
-      "--title",
-      opts.title,
-      "--body",
-      opts.body,
-    ];
-    process.stderr.write(`gh ${ghArgs.join(" ")}\n`);
-    try {
-      const out = String(
-        execFile("gh", ghArgs, {
-          cwd: opts.root,
-          encoding: "utf8",
-        }),
-      );
-      const url = out.trim().split(/\s+/).find((t) => t.startsWith("http")) ?? out.trim();
-      return { url, local: false };
-    } catch (err) {
-      process.stderr.write(`gh pr create failed: ${errText(err)}\n`);
-      throw new SlimExit(EXIT_FAIL, `gh pr create failed: ${errText(err)}`);
+  try {
+    if (gh) {
+      ensureGhLabels(execFile, opts.root, opts.labels);
+      const ghArgs = [
+        "pr",
+        "create",
+        "--repo",
+        `${owner}/${repo}`,
+        "--base",
+        base,
+        "--head",
+        opts.branch,
+        "--title",
+        opts.title,
+        "--body",
+        opts.body,
+        ...opts.labels.flatMap((l) => ["--label", l]),
+      ];
+      process.stderr.write(`gh ${ghArgs.join(" ")}\n`);
+      try {
+        const out = String(
+          execFile("gh", ghArgs, {
+            cwd: opts.root,
+            encoding: "utf8",
+          }),
+        );
+        const url = out.trim().split(/\s+/).find((t) => t.startsWith("http")) ?? out.trim();
+        return { url, local: false };
+      } catch (err) {
+        process.stderr.write(`gh pr create failed: ${errText(err)}\n`);
+        throw new SlimExit(EXIT_FAIL, `gh pr create failed: ${errText(err)}`);
+      }
     }
-  }
 
-  return createPullRequestRest(opts, {
-    fetchImpl,
-    token: token!,
-    owner,
-    repo,
-    base,
-  });
+    return await createPullRequestRest(opts, {
+      fetchImpl,
+      token: token!,
+      owner,
+      repo,
+      base,
+    });
+  } catch (err) {
+    abandonSlimRef(execFile, opts.root, opts.branch, true);
+    if (err instanceof SlimExit) throw err;
+    throw new SlimExit(EXIT_FAIL, `pull request failed: ${errText(err)}`);
+  }
 }
 
 async function createPullRequestRest(
@@ -340,6 +459,7 @@ async function createPullRequestRest(
     base: string;
   },
 ): Promise<PrResult> {
+  await ensureRestLabels(ctx.fetchImpl, ctx.token, ctx.owner, ctx.repo, opts.labels);
   const url = `https://api.github.com/repos/${ctx.owner}/${ctx.repo}/pulls`;
   try {
     const res = await ctx.fetchImpl(url, {
@@ -362,7 +482,11 @@ async function createPullRequestRest(
       process.stderr.write(`GitHub REST PR create failed: ${res.status} ${text.slice(0, 400)}\n`);
       throw new SlimExit(EXIT_FAIL, `GitHub REST PR create failed: ${res.status}`);
     }
-    const json = (await res.json()) as { html_url?: string };
+    const json = (await res.json()) as { html_url?: string; number?: number };
+    if (json.number == null) {
+      throw new SlimExit(EXIT_FAIL, "GitHub REST PR create returned no issue number");
+    }
+    await applyRestLabels(ctx.fetchImpl, ctx.token, ctx.owner, ctx.repo, json.number, opts.labels);
     return { url: json.html_url ?? null, local: false };
   } catch (err) {
     if (err instanceof SlimExit) throw err;

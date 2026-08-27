@@ -14,6 +14,7 @@ import {
   writeTracesMeta,
 } from "../src/replace.ts";
 import type { TraceEvent } from "../src/envelope/types.ts";
+import { plantReplaceTxn } from "./helpers/pr-txn.ts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -173,11 +174,12 @@ test("get/set traces without __proto__ do not fail", () => {
 
 test("PR requested without gh or token is EXIT_ENV after local writes", async () => {
   assert.equal(typeof githubPr.maybeCreatePullRequest, "function");
+  const opts = plantReplaceTxn();
   await assert.rejects(
     () =>
       githubPr.maybeCreatePullRequest(
         true,
-        { root: "/tmp", title: "t", body: "b", branch: "slim/x", files: ["src/slim/x.ts"] },
+        opts,
         {
           hasGh: () => false,
           env: {},
@@ -205,7 +207,7 @@ test("--no-pr never attempts PR and does not throw EXIT_ENV", async () => {
   assert.equal(typeof githubPr.maybeCreatePullRequest, "function");
   const result = await githubPr.maybeCreatePullRequest(
     false,
-    { root: "/tmp", title: "t", body: "b", branch: "slim/x", files: ["src/slim/x.ts"] },
+    { root: "/tmp", title: "t", body: "b", branch: "slim/x", files: ["src/slim/x.ts"], labels: ["slim", "slim:replace"] },
     {
       hasGh: () => false,
       env: {},

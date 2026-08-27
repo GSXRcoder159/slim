@@ -10,6 +10,7 @@ import {
   qualifyInventory,
   receiptFileName,
   sourceReceipt,
+  githubReceipt,
   writeReceipt,
 } from "../src/support/receipts.ts";
 
@@ -158,6 +159,24 @@ test("sourceReceipt is schema-valid with service identity", () => {
   assert.equal(parsed.provider, null);
   assert.equal(parsed.outcome, "pass");
   assert.match(parsed.environment ?? "", /node-/);
+});
+
+test("githubReceipt is schema-valid with github service identity", () => {
+  const rec = githubReceipt({
+    fixture: "ms",
+    commit: COMMIT,
+    npmDigest: NPM,
+    startedAt: new Date("2026-08-27T14:00:00.000Z"),
+    endedAt: new Date("2026-08-27T14:00:01.000Z"),
+    log: "https://github.com/example/slim-pr/pull/1",
+  });
+  const parsed = parseReceipt(rec);
+  assert.equal(parsed.checkId, "test/github/pr-live.test.ts");
+  assert.equal(parsed.command, "replace");
+  assert.equal(parsed.service, "github");
+  assert.equal(parsed.provider, null);
+  assert.equal(parsed.outcome, "pass");
+  assert.doesNotMatch(JSON.stringify(parsed), /token|ghp_|github_pat/i);
 });
 
 test("qualify missing externalService.osv receipt fails closed", () => {

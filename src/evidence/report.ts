@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Envelope } from "../envelope/types.ts";
 import { hashEnvelope } from "../envelope/hash.ts";
@@ -94,11 +95,16 @@ export function writeEvidence(opts: {
     generation,
   };
   assertDocument("evidence", json);
-  const md = renderEvidenceMd(json, opts.env, opts.catalogIds);
-  const mdPath = join(dir, "evidence.md");
   const jsonPath = join(dir, "evidence.json");
-  writeFileSync(mdPath, md);
+  const mdPath = join(dir, "evidence.md");
   writeFileSync(jsonPath, JSON.stringify(json, null, 2) + "\n");
+  const evidenceHash = createHash("sha256").update(readFileSync(jsonPath)).digest("hex");
+  const moduleAbs = join(opts.root, opts.revert.module);
+  const moduleDigest = existsSync(moduleAbs)
+    ? createHash("sha256").update(readFileSync(moduleAbs)).digest("hex")
+    : undefined;
+  const md = renderEvidenceMd(json, opts.env, opts.catalogIds, { evidenceHash, moduleDigest });
+  writeFileSync(mdPath, md);
   return { mdPath, jsonPath, residualRisk: residual };
 }
 
@@ -123,7 +129,12 @@ function completeGeneration(
   };
 }
 
-export function renderEvidenceMd(json: EvidenceJson, env: Envelope, catalogIds: string[] = []): string {
+export function renderEvidenceMd(
+  json: EvidenceJson,
+  env: Envelope,
+  catalogIds: string[] = [],
+  digests: { evidenceHash?: string; moduleDigest?: string } = {},
+): string {
   const orig = json.byteDelta.originalMin;
   const delta =
     orig != null
@@ -154,7 +165,7 @@ Differential fuzzing over the inferred envelope is strong evidence, not proof.
 - Call sites: ${json.callSites}
 - Unknowns: ${json.unknowns}
 - Catalog: ${catalogIds.join(", ") || json.generation?.catalogIds.join(", ") || "LLM"}
-- Envelope hash: \`${json.envelopeHash}\`${generationMd(json)}
+- Envelope hash: \`${json.envelopeHash}\`${digestMd(digests)}${generationMd(json)}
 
 ## 3. Byte delta
 
@@ -190,6 +201,13 @@ ${formatRevert(json.revert)}
 
 ${json.residualRisk.map((x) => `- ${x}`).join("\n")}
 `;
+}
+
+function digestMd(digests: { evidenceHash?: string; moduleDigest?: string }): string {
+  const lines: string[] = [];
+  if (digests.evidenceHash) lines.push(`- Evidence hash: \`${digests.evidenceHash}\``);
+  if (digests.moduleDigest) lines.push(`- Module digest: \`${digests.moduleDigest}\``);
+  return lines.length ? `\n${lines.join("\n")}` : "";
 }
 
 function generationMd(json: EvidenceJson): string {

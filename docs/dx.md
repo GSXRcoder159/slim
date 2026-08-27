@@ -113,7 +113,7 @@ Steps, in order, stop on first failure. After the first project write, failure *
 7. Write slice (and a `.cjs` companion when CJS `require()` sites exist). Rewrite imports/requires to the slice. Remove only the replaced package and family siblings that have import sites in this envelope.
 8. Refresh the lockfile with `npm install` / `pnpm install` / `yarn install` / `bun install`. Package-manager caches go to a temp dir (`os.tmpdir()/slim-pm-cache`); Slim does not create a store inside the target unless the project already had one. Failure → exit 1 (or 4 if the package manager is missing) and rollback, then a frozen install to restore `node_modules`. `--no-install` skips this. `--keep-original` skips package.json and lockfile changes.
 9. Write evidence (including revert steps), standing tests, manifest, envelope. Run merge-gate (`testCommand` or `scripts.test`). Failure → rollback.
-10. Unless `--no-pr`: after merge-gate, create `slim/<pkg>` from `HEAD` without switching the user's branch or writing `.git/index`. Commit only Slim files, `git push` without `--force`, then `gh pr create --repo --base --head` or GitHub REST with `GITHUB_TOKEN`/`GH_TOKEN`. PRs target origin (not a fork parent). Local or remote branch collision, commit failure, push failure, and `gh`/REST failure are nonzero; the user's branch and index stay recoverable. No `gh` and no token → exit 4 after local writes, with no git refs created. `--no-pr` performs no branch, commit, push, or network.
+10. Unless `--no-pr`: after merge-gate, create `slim/<pkg>` from `HEAD` without switching the user's branch or writing `.git/index`. Cross-check title, body (package, versions, envelope/evidence/module digests, fuzz stats), files, base, head, and labels (`slim`, `slim:replace`) against the accepted evidence before any push. Commit only Slim files, `git push` without `--force`, then `gh pr create --repo --base --head --label` or GitHub REST with `GITHUB_TOKEN`/`GH_TOKEN`. PRs target origin (not a fork parent). Local or remote branch collision, commit failure, push failure, and `gh`/REST failure are nonzero; the user's branch and index stay recoverable. Push failure deletes the local Slim branch; PR API failure also deletes the remote Slim branch. No `gh` and no token → exit 4 after local writes, with no git refs created. `--no-pr` performs no branch, commit, push, or network.
 
 Default without `--no-pr`: attempt a PR after a successful merge-gate. There is no TTY confirm and no `--yes` / `--no-commit` flag.
 
@@ -243,7 +243,7 @@ package.json     - lodash
   .slim/lodash/evidence.md
 
 Open PR after merge-gate (no TTY confirm)
-branch  slim/replace-lodash
+branch  slim/lodash
 pr      https://github.com/acme/edge-api/pull/842
 
 Read .slim/lodash/evidence.md (~90s) and src/slim/lodash.ts
@@ -252,7 +252,7 @@ then merge. This is evidence, not proof.
 
 ### Evidence (what they actually read)
 
-See §8. They open `.slim/lodash/evidence.md`, then the ~250-line file. The PR body is the first screen of that report plus the URL to the file. Worker-shaped golden fixture: `fixtures/lodash-get-debounce/`.
+See §8. They open `.slim/lodash/evidence.md`, then the ~250-line file. The PR body is the full evidence report. Worker-shaped golden fixture: `fixtures/lodash-get-debounce/`.
 
 ### Cold-start framing (print this, don’t overclaim)
 
@@ -403,6 +403,8 @@ Consulted OSV/npm `sources.*.status` values: `success`, `unavailable` (HTTP/netw
 
 Live packed `slim upstream` proof for advertised sources is `SLIM_UPSTREAM_LIVE=1`. Missing or stale `externalService.osv` / `externalService.npm-registry` receipts fail `npm run qualify`; they do not vanish from `npm test`. Set `SLIM_RECEIPTS_DIR` to write those receipts (commit + tarball digest).
 
+Live packed `slim replace` PR proof is `SLIM_PR_LIVE=1` (GitHub CLI with repo create/push/PR plus `delete_repo`, or `SLIM_PR_TRANSFER_OWNER` to transfer leftovers). Missing or stale `externalService.github` receipts fail `npm run qualify`. Unset `SLIM_PR_LIVE` still registers the live test (it returns; it does not skip off the suite).
+
 GitHub Advisory GraphQL and OSV `querybatch` are later-scope; OSV already mirrors GHSA ids. No NVD key. No Slim servers.
 
 ### What each slice stores
@@ -420,7 +422,7 @@ For each advisory whose affected range includes the sliced version:
 
 Routine npm releases that are not advisories are notes, not security conclusions. Unmapped routine releases do not claim “not exposed.”
 
-Regenerate PR branch: `slim/upstream-lodash-…`. Body = new evidence. We do **not** auto-merge.
+Regenerate PR branch: `slim/upstream`. Body = new evidence. We do **not** auto-merge.
 
 ---
 
