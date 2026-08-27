@@ -16,7 +16,10 @@ export function attributeTraces(env: Envelope, traces: TraceEvent[], root: strin
     if (parent?.callSiteId) {
       return { ...t, callSiteId: parent.callSiteId, unmatched: false };
     }
-    return t.unmatched ? t : { ...t, unmatched: true, callSiteId: t.callSiteId ?? null };
+    if (parent && parent.unmatched) {
+      return { ...t, unmatched: true, callSiteId: t.callSiteId ?? null };
+    }
+    return attributeOne({ ...t, parentOriginId: undefined }, sites, root);
   });
 }
 
@@ -35,6 +38,12 @@ function attributeOne(
 }
 
 export function symbolMatches(exportName: string, symbol: string): boolean {
+  if (matchesExport(exportName, symbol)) return true;
+  if (symbol.startsWith("default.")) return matchesExport(exportName, symbol.slice("default.".length));
+  return false;
+}
+
+function matchesExport(exportName: string, symbol: string): boolean {
   return (
     symbol === exportName ||
     symbol === `${exportName}()` ||

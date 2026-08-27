@@ -4,8 +4,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { TraceEvent } from "../envelope/types.ts";
 import { siblingModule } from "../runtime-path.ts";
 import { wrapExports } from "./proxy.ts";
-import { matchesTracedUrl, packageFromUrl, extractEsmExportNames } from "./hook.ts";
-import { sessionLine } from "./session.ts";
+import { matchesTracedUrl, packageFromUrl } from "./hook.ts";
+import { extractCjsExportNames, extractEsmExportNames } from "./esm-names.ts";
+import { errorLine, sessionLine, type TraceErrorRecord } from "./session.ts";
 
 export { wrapExports };
 
@@ -76,6 +77,7 @@ import { wrapExports } from ${spec};
 const wrapped = wrapExports(orig, {
   packageName: ${JSON.stringify(packageName)},
   onEvent: (e) => { globalThis.__slimTraceOnEvent && globalThis.__slimTraceOnEvent(e); },
+  onError: (e) => { globalThis.__slimTraceOnError && globalThis.__slimTraceOnError(e); },
 });
 export default wrapped.default !== undefined ? wrapped.default : wrapped;
 ${named}
@@ -101,10 +103,7 @@ export function slimVitest(opts?: { packages?: string[] }): SlimVitestPlugin {
     },
     load(id: string) {
       if (id.includes("slim-orig")) return null;
-      const hit =
-        matchesTracedUrl(id, packages) ||
-        packages.some((p) => id.includes(`/node_modules/${p}/`));
-      if (!hit) return null;
+      if (!matchesTracedUrl(id, packages)) return null;
       const pkg =
         packageFromUrl(id, packages) ??
         packages.find((p) => id.includes(`/node_modules/${p}`)) ??
@@ -130,10 +129,22 @@ function namesFromId(id: string): string[] {
   if (!existsSync(file)) return [];
   try {
     const src = readFileSync(file, "utf8");
-    const names = new Set(extractEsmExportNames(src));
-    for (const m of src.matchAll(/\bexports\.([A-Za-z_$][\w$]*)\s*=/g)) {
-      if (m[1]) names.add(m[1]);
-    }
+    const parentUrl = pathToFileURL(file).href;
+    const names = new Set(
+      extractEsmExportNames(src, {
+        parentUrl,
+        onUnresolvedStar: (spec) => {
+          const outPath = process.env.SLIM_TRACE_OUT;
+          if (!outPath) return;
+          mkdirSync(dirname(outPath), { recursive: true });
+          if (!existsSync(outPath) || readFileSync(outPath, "utf8").length === 0) {
+            writeFileSync(outPath, sessionLine());
+          }
+          appendFileSync(outPath, errorLine("unresolved-star", spec));
+        },
+      }),
+    );
+    for (const n of extractCjsExportNames(src)) names.add(n);
     return [...names];
   } catch {
     return [];
@@ -144,6 +155,7 @@ export default slimVitest;
 
 type SlimGlobal = typeof globalThis & {
   __slimTraceOnEvent?: (e: TraceEvent) => void;
+  __slimTraceOnError?: (e: TraceErrorRecord) => void;
 };
 
 function ensureVitestSink(): void {
@@ -156,6 +168,10 @@ function ensureVitestSink(): void {
   g.__slimTraceOnEvent = (e: TraceEvent) => {
     mkdirSync(dirname(outPath), { recursive: true });
     appendFileSync(outPath, JSON.stringify(e) + "\n");
+  };
+  g.__slimTraceOnError = (e) => {
+    mkdirSync(dirname(outPath), { recursive: true });
+    appendFileSync(outPath, errorLine(e.kind, e.message));
   };
 }
 

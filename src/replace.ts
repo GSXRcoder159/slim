@@ -70,7 +70,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
     }
     env = closeEnvelope(env, { allowUnknown: args.allowUnknown });
   } else {
-    env = closeEnvelope(env, { allowUnknown: args.allowUnknown });
+    env = closeEnvelope(env, { allowUnknown: args.allowUnknown, staticOnly: true });
   }
   assertNoPollutionDependence(env.traces);
 
@@ -519,5 +519,8 @@ function writeSlimJson(root: string, env: Envelope, modulePath: string): void {
 function printDryRun(env: Envelope, source: string, ids: string[]): void {
   process.stdout.write(`dry-run ${env.package.name} symbols=${env.symbols.map((s) => s.exportName).join(",")}\n`);
   process.stdout.write(`catalog ${ids.join(",") || "llm"}\n`);
+  if (env.closure.reason.includes("--no-trace")) {
+    process.stdout.write("static-only --no-trace (cannot claim trace-closed)\n");
+  }
   process.stdout.write(`---\n${source.slice(0, 2000)}\n`);
 }

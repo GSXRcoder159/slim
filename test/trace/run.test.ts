@@ -21,8 +21,8 @@ function emptyEnv(): Envelope {
         packages: [],
         callSites: [
           {
-            id: "call:src/index.js:1",
-            loc: { file: "src/index.js", line: 1, column: 1, endLine: 1, endColumn: 10 },
+            id: "call:src/index.test.js:4",
+            loc: { file: "src/index.test.js", line: 4, column: 1, endLine: 4, endColumn: 40 },
             exportName: "add",
             memberPath: [],
             thisBinding: { kind: "unbound" },
@@ -42,9 +42,9 @@ function emptyEnv(): Envelope {
     closure: {
       confidence: "closed",
       readyToGenerate: true,
-      staticCallSiteIds: ["call:src/index.js:1"],
+      staticCallSiteIds: ["call:src/index.test.js:4"],
       tracedCallSiteIds: [],
-      untracedCallSiteIds: ["call:src/index.js:1"],
+      untracedCallSiteIds: ["call:src/index.test.js:4"],
       reason: "",
     },
     slimmable: { score: 80, verdict: "slim", blockers: [], reasons: [] },

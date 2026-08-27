@@ -5,7 +5,12 @@ import { siblingModule } from "../runtime-path.ts";
 import { registerHooks } from "node:module";
 import type { TraceEvent } from "../envelope/types.ts";
 import { wrapExports } from "./proxy.ts";
-import { sessionLine } from "./session.ts";
+import { errorLine, sessionLine, type TraceErrorRecord } from "./session.ts";
+import { extractCjsExportNames, extractEsmExportNames } from "./esm-names.ts";
+import { Worker as NodeWorker } from "node:worker_threads";
+import { createRequire } from "node:module";
+
+export { extractEsmExportNames };
 
 type LoadResult = {
   format?: string | null;
@@ -22,6 +27,7 @@ type NextLoad = (url: string, context?: LoadContext) => LoadResult;
 
 type SlimGlobal = typeof globalThis & {
   __slimTraceOnEvent?: (e: TraceEvent) => void;
+  __slimTraceOnError?: (e: TraceErrorRecord) => void;
   __slimWrapExports?: typeof wrapExports;
 };
 
@@ -42,7 +48,11 @@ export function matchesTracedUrl(url: string, packages: string[]): boolean {
     const idx = pathname.indexOf(needle);
     if (idx === -1) continue;
     const after = pathname.slice(idx + needle.length);
-    if (after === "" || after.startsWith("/") || after.startsWith(".")) return true;
+    if (after === "" || after.startsWith(".")) return true;
+    if (!after.startsWith("/")) continue;
+    const first = after.slice(1).split("/")[0] ?? "";
+    if (first === "node_modules") continue;
+    return true;
   }
   return false;
 }
@@ -110,27 +120,68 @@ function siblingHref(name: string): string {
   return pathToFileURL(siblingModule(import.meta.url, name)).href;
 }
 
-export function extractEsmExportNames(source: string): string[] {
-  const names = new Set<string>();
-  for (const m of source.matchAll(
-    /\bexport\s+(?:async\s+)?(?:function\*?|class)\s+([A-Za-z_$][\w$]*)/g,
-  )) {
-    if (m[1]) names.add(m[1]);
+function reportTraceError(kind: string, message?: string): void {
+  const outPath = process.env.SLIM_TRACE_OUT;
+  if (!outPath) return;
+  ensureSessionFile(outPath);
+  appendFileSync(outPath, errorLine(kind, message));
+}
+
+function hookExecArgv(): string[] {
+  const extra: string[] = [];
+  try {
+    if (fileURLToPath(import.meta.url).endsWith(".ts")) extra.push("--experimental-strip-types");
+  } catch {
+    /* ignore */
   }
-  for (const m of source.matchAll(/\bexport\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)/g)) {
-    if (m[1]) names.add(m[1]);
-  }
-  for (const m of source.matchAll(/\bexport\s*\{([^}]+)\}/g)) {
-    const body = m[1] ?? "";
-    for (const part of body.split(",")) {
-      const bits = part.trim();
-      if (!bits || bits === "default") continue;
-      const asMatch = bits.match(/\bas\s+([A-Za-z_$][\w$]*)\s*$/);
-      const name = asMatch?.[1] ?? bits.split(/\s+/)[0];
-      if (name && name !== "default" && /^[A-Za-z_$][\w$]*$/.test(name)) names.add(name);
+  extra.push("--import", import.meta.url);
+  return extra;
+}
+
+function mergeExecArgv(user: string[] | undefined, extra: string[]): string[] {
+  const base = user === undefined ? process.execArgv : [...user];
+  const out = [...base];
+  for (let i = 0; i < extra.length; i++) {
+    const flag = extra[i]!;
+    if (flag === "--import") {
+      const href = extra[++i];
+      if (!href) continue;
+      const already = out.some((x, idx) => x === "--import" && out[idx + 1] === href);
+      if (!already) out.push("--import", href);
+      continue;
     }
+    if (!out.includes(flag)) out.push(flag);
   }
-  return [...names];
+  return out;
+}
+
+function patchWorkers(): void {
+  const extra = hookExecArgv();
+  const importHref = extra[extra.length - 1] ?? "";
+  try {
+    const req = createRequire(import.meta.url);
+    const wt = req("node:worker_threads") as { Worker: typeof NodeWorker };
+    const Orig = wt.Worker;
+    if ((Orig as { __slimPatched?: boolean }).__slimPatched) return;
+    class SlimWorker extends Orig {
+      constructor(
+        filename: string | URL,
+        options: { execArgv?: string[]; env?: NodeJS.ProcessEnv } = {},
+      ) {
+        const execArgv = mergeExecArgv(options.execArgv, extra);
+        const env: NodeJS.ProcessEnv = { ...process.env, ...(options.env ?? {}) };
+        if (importHref && !String(env.NODE_OPTIONS ?? "").includes(importHref)) {
+          const nodeOpts = extra.join(" ");
+          env.NODE_OPTIONS = env.NODE_OPTIONS ? `${env.NODE_OPTIONS} ${nodeOpts}` : nodeOpts;
+        }
+        super(filename, { ...options, execArgv, env });
+      }
+    }
+    (SlimWorker as { __slimPatched?: boolean }).__slimPatched = true;
+    Object.defineProperty(wt, "Worker", { value: SlimWorker, configurable: true, writable: true });
+  } catch {
+    /* builtin export may be read-only */
+  }
 }
 
 function cjsTrailer(packageName: string): string {
@@ -142,6 +193,7 @@ function cjsTrailer(packageName: string): string {
     module.exports = g.__slimWrapExports(module.exports, {
       packageName: ${JSON.stringify(packageName)},
       onEvent: (e) => { if (typeof g.__slimTraceOnEvent === "function") g.__slimTraceOnEvent(e); },
+      onError: (e) => { if (typeof g.__slimTraceOnError === "function") g.__slimTraceOnError(e); },
     });
   }
 })();
@@ -159,6 +211,7 @@ import { wrapExports } from ${JSON.stringify(siblingHref("proxy"))};
 const __slim_wrapped = wrapExports(__slim_orig, {
   packageName: ${JSON.stringify(packageName)},
   onEvent: (e) => { globalThis.__slimTraceOnEvent && globalThis.__slimTraceOnEvent(e); },
+  onError: (e) => { globalThis.__slimTraceOnError && globalThis.__slimTraceOnError(e); },
 });
 
 export default __slim_wrapped.default !== undefined ? __slim_wrapped.default : __slim_wrapped;
@@ -192,11 +245,16 @@ function loadHook(url: string, context: LoadContext, nextLoad: NextLoad): LoadRe
   if (/\.json$/i.test(pathForFormat)) return result;
 
   if (isEsmFormat(format) || /\.m[jt]s$/i.test(pathForFormat)) {
-    const names = extractEsmExportNames(sourceToString(result.source, url));
+    const src = sourceToString(result.source, url);
+    const names = extractEsmExportNames(src, {
+      parentUrl: stripQuery(url),
+      onUnresolvedStar: (spec) => reportTraceError("unresolved-star", spec),
+    });
+    for (const n of extractCjsExportNames(src)) names.push(n);
     return {
       format: "module",
       shortCircuit: true,
-      source: esmWrapper(addSlimOrig(url), names, pkg),
+      source: esmWrapper(addSlimOrig(url), [...new Set(names)], pkg),
     };
   }
 
@@ -213,6 +271,8 @@ function loadHook(url: string, context: LoadContext, nextLoad: NextLoad): LoadRe
 function installHooks(): void {
   slimGlobal().__slimWrapExports = wrapExports;
   slimGlobal().__slimTraceOnEvent = dispatchEvent;
+  slimGlobal().__slimTraceOnError = (e) => reportTraceError(e.kind, e.message);
+  patchWorkers();
   if (hooksInstalled) return;
   hooksInstalled = true;
   registerHooks({

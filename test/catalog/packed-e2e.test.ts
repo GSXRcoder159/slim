@@ -99,14 +99,20 @@ export function badDebounce(): ReturnType<typeof _.debounce> {
 }
 
 test("packed CLI replace → standing tests → slim check for every registered catalog package", { timeout: 720_000 }, () => {
-  execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+  if (!existsSync(join(ROOT, "dist", ".slim-build.json"))) {
+    execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+  }
   mkdirSync(TMP, { recursive: true });
   const packDir = mkdtempSync(join(TMP, "slim-catalog-pack-"));
-  const tgz = execFileSync("npm", ["pack", "--silent", `--pack-destination=${packDir}`], {
-    cwd: ROOT,
-    encoding: "utf8",
-    timeout: 60_000,
-  }).trim();
+  const tgz = execFileSync(
+    "npm",
+    ["pack", "--silent", "--ignore-scripts", `--pack-destination=${packDir}`],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      timeout: 60_000,
+    },
+  ).trim();
   const tarball = join(packDir, tgz.split("\n").pop() ?? tgz);
   const tmp = mkdtempSync(join(TMP, "slim-catalog-e2e-"));
   try {

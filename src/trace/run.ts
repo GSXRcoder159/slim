@@ -12,7 +12,7 @@ import {
   buildTraceSpawn,
   traceEnv,
 } from "./runners.ts";
-import { isSessionRecord } from "./session.ts";
+import { isErrorRecord, isSessionRecord, type TraceErrorRecord } from "./session.ts";
 
 export const TRACE_TIMEOUT_MS = 120_000;
 export const MAX_TRACE_BYTES = 32 * 1024 * 1024;
@@ -129,11 +129,34 @@ export function runTraces(
       `trace hook did not load (missing session header). Check slim/hooks or slim/vitest resolution.${detail ? `\n${detail}` : ""}`,
     );
   }
-  if (!parsed.events.length) return env;
-  return mergeTraces(env, parsed.events, { root });
+  if (parsed.errors.length) {
+    const first = parsed.errors[0]!;
+    throw new SlimExit(
+      EXIT_FAIL,
+      `trace ${first.kind}${first.message ? `: ${first.message}` : ""}`,
+    );
+  }
+  if (!parsed.events.length) {
+    throw new SlimExit(
+      EXIT_FAIL,
+      "zero package events; runtime not observed. Pass --no-trace for static-only evidence (cannot claim trace closure).",
+    );
+  }
+  const merged = mergeTraces(env, parsed.events, { root });
+  if (merged.traces.some((t) => t.unmatched)) {
+    throw new SlimExit(
+      EXIT_FAIL,
+      "unmatched trace events; cannot attribute runtime observations to static call sites",
+    );
+  }
+  return merged;
 }
 
-export function readTraceFile(path: string): { sawSession: boolean; events: TraceEvent[] } {
+export function readTraceFile(path: string): {
+  sawSession: boolean;
+  events: TraceEvent[];
+  errors: TraceErrorRecord[];
+} {
   if (!existsSync(path)) {
     throw new SlimExit(EXIT_FAIL, `trace file missing: ${path}`);
   }
@@ -144,6 +167,7 @@ export function readTraceFile(path: string): { sawSession: boolean; events: Trac
   const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
   let sawSession = false;
   const events: TraceEvent[] = [];
+  const errors: TraceErrorRecord[] = [];
   for (const line of lines) {
     let parsed: unknown;
     try {
@@ -155,10 +179,23 @@ export function readTraceFile(path: string): { sawSession: boolean; events: Trac
       sawSession = true;
       continue;
     }
-    events.push(parsed as TraceEvent);
+    if (isErrorRecord(parsed)) {
+      errors.push(parsed);
+      continue;
+    }
+    if (!isTraceEvent(parsed)) {
+      throw new SlimExit(EXIT_FAIL, `malformed trace JSONL: ${line.slice(0, 120)}`);
+    }
+    events.push(parsed);
     if (events.length > MAX_TRACE_EVENTS) {
       throw new SlimExit(EXIT_FAIL, `trace event count exceeds ${MAX_TRACE_EVENTS}`);
     }
   }
-  return { sawSession, events };
+  return { sawSession, events, errors };
+}
+
+function isTraceEvent(v: unknown): v is TraceEvent {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.symbol === "string" && Array.isArray(o.args);
 }

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { TraceEvent } from "../envelope/types.ts";
+import type { TraceErrorRecord } from "./session.ts";
 import {
   createWalker,
   mutatedArgIndexes,
@@ -11,6 +12,7 @@ import { captureUserSite } from "./stack.ts";
 export interface WrapOpts {
   packageName: string;
   onEvent: (e: TraceEvent) => void;
+  onError?: (e: TraceErrorRecord) => void;
 }
 
 type WrapMeta = {
@@ -29,7 +31,9 @@ const SKIP_PROPS = new Set([
 ]);
 
 const wrappedObjects = new WeakSet<object>();
-const fnCache = new WeakMap<object, (...args: unknown[]) => unknown>();
+const fnCache = new WeakMap<object, Map<string, (...args: unknown[]) => unknown>>();
+const wrapperSymbol = new WeakMap<object, string>();
+let recordDepth = 0;
 
 let sessionId = "";
 let sessionStartMs = 0;
@@ -78,18 +82,64 @@ function wrapFn(
   propParent: string,
   meta: WrapMeta,
 ): (...args: unknown[]) => unknown {
+  if (wrapperSymbol.get(fn) === symbol) return fn;
   if (!meta.parentOriginId) {
-    const cached = fnCache.get(fn);
+    const bySymbol = fnCache.get(fn);
+    const cached = bySymbol?.get(symbol);
     if (cached) return cached;
+    const existing = bySymbol?.values().next().value;
+    if (existing) return aliasWrapped(existing, fn, symbol, opts, meta);
+  }
+  if (wrapperSymbol.has(fn)) {
+    return aliasWrapped(fn, fn, symbol, opts, meta);
   }
 
+  const wrapped = makeCallWrapper(fn, symbol, opts, meta);
+  cacheWrapper(fn, symbol, wrapped);
+  copyFnProps(wrapped, fn, propParent, opts, meta);
+  return wrapped;
+}
+
+function aliasWrapped(
+  inner: (...args: unknown[]) => unknown,
+  cacheKey: object,
+  symbol: string,
+  opts: WrapOpts,
+  meta: WrapMeta,
+): (...args: unknown[]) => unknown {
+  const wrapped = makeCallWrapper(inner, symbol, opts, meta);
+  cacheWrapper(cacheKey, symbol, wrapped);
+  return wrapped;
+}
+
+function cacheWrapper(
+  fn: object,
+  symbol: string,
+  wrapped: (...args: unknown[]) => unknown,
+): void {
+  let bySymbol = fnCache.get(fn);
+  if (!bySymbol) {
+    bySymbol = new Map();
+    fnCache.set(fn, bySymbol);
+  }
+  bySymbol.set(symbol, wrapped);
+  wrapperSymbol.set(wrapped, symbol);
+  wrappedObjects.add(wrapped);
+  fnCache.set(wrapped, bySymbol);
+}
+
+function makeCallWrapper(
+  fn: (...args: unknown[]) => unknown,
+  symbol: string,
+  opts: WrapOpts,
+  meta: WrapMeta,
+): (...args: unknown[]) => unknown {
   const wrapped = function (this: unknown, ...args: unknown[]) {
     if (new.target) {
       return recordConstruct(fn, args, new.target as Function, symbol, opts, meta);
     }
     return recordCall(fn, this, args, symbol, opts, meta);
   };
-
   try {
     Object.defineProperty(wrapped, "name", { value: fn.name, configurable: true });
     Object.defineProperty(wrapped, "length", { value: fn.length, configurable: true });
@@ -106,13 +156,6 @@ function wrapFn(
   } catch {
     /* ignore */
   }
-
-  if (!meta.parentOriginId) {
-    fnCache.set(fn, wrapped);
-    fnCache.set(wrapped, wrapped);
-  }
-  wrappedObjects.add(wrapped);
-  copyFnProps(wrapped, fn, propParent, opts, meta);
   return wrapped;
 }
 
@@ -158,6 +201,15 @@ function copyFnProps(
   }
 }
 
+function emitSerializeError(opts: WrapOpts, err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  opts.onError?.({ t: "error", kind: "serialize", message });
+}
+
+function isPackageInternal(file: string): boolean {
+  return /(?:^|\/)node_modules\//.test(file.replace(/\\/g, "/"));
+}
+
 function recordConstruct(
   fn: Function,
   args: unknown[],
@@ -170,49 +222,66 @@ function recordConstruct(
   const originId = randomUUID();
   const tRelMs = Date.now() - sessionStartMs;
   const site = captureUserSite();
-  const walker = createWalker();
-  const beforeLive = args.map((a) => walker.value(a));
-  const beforeSnap = snapshot(args);
+  const nested = recordDepth > 0;
+  recordDepth++;
   try {
-    const result = Reflect.construct(fn, args, newTarget);
-    const afterSnap = snapshot(args);
-    const recorded = wrapResult(result, symbol, opts, originId);
-    const event: TraceEvent = {
-      symbol,
-      originId,
-      argc: args.length,
-      args: beforeLive,
-      result: walker.value(recorded),
-      mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
-      truncated: walker.truncated,
-      tRelMs,
-      sessionId,
-    };
-    if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
-    if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
-    if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
-    if (site) event.site = site;
-    opts.onEvent(event);
-    return recorded;
-  } catch (err) {
-    const afterSnap = snapshot(args);
-    const event: TraceEvent = {
-      symbol,
-      originId,
-      argc: args.length,
-      args: beforeLive,
-      threw: threwShape(err),
-      mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
-      truncated: walker.truncated,
-      tRelMs,
-      sessionId,
-    };
-    if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
-    if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
-    if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
-    if (site) event.site = site;
-    opts.onEvent(event);
-    throw err;
+    if (nested || (site && isPackageInternal(site.file))) {
+      return wrapResult(Reflect.construct(fn, args, newTarget), symbol, opts, originId);
+    }
+    let walker: ReturnType<typeof createWalker>;
+    let beforeLive: ReturnType<typeof serialize>[];
+    let beforeSnap: ReturnType<typeof snapshot>;
+    try {
+      walker = createWalker();
+      beforeLive = args.map((a) => walker.value(a));
+      beforeSnap = snapshot(args);
+    } catch (err) {
+      emitSerializeError(opts, err);
+      return wrapResult(Reflect.construct(fn, args, newTarget), symbol, opts, originId);
+    }
+    try {
+      const result = Reflect.construct(fn, args, newTarget);
+      const afterSnap = snapshot(args);
+      const recorded = wrapResult(result, symbol, opts, originId);
+      const event: TraceEvent = {
+        symbol,
+        originId,
+        argc: args.length,
+        args: beforeLive,
+        result: walker.value(recorded),
+        mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
+        truncated: walker.truncated,
+        tRelMs,
+        sessionId,
+      };
+      if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
+      if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
+      if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
+      if (site) event.site = site;
+      opts.onEvent(event);
+      return recorded;
+    } catch (err) {
+      const afterSnap = snapshot(args);
+      const event: TraceEvent = {
+        symbol,
+        originId,
+        argc: args.length,
+        args: beforeLive,
+        threw: threwShape(err),
+        mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
+        truncated: walker.truncated,
+        tRelMs,
+        sessionId,
+      };
+      if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
+      if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
+      if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
+      if (site) event.site = site;
+      opts.onEvent(event);
+      throw err;
+    }
+  } finally {
+    recordDepth--;
   }
 }
 
@@ -228,58 +297,77 @@ function recordCall(
   const originId = randomUUID();
   const tRelMs = Date.now() - sessionStartMs;
   const site = captureUserSite();
-  const walker = createWalker();
-  const beforeLive = args.map((a) => walker.value(a));
-  const thisSv = shouldRecordThis(thisArg) ? walker.value(thisArg) : undefined;
-  const beforeSnap = snapshot(args);
+  const nested = recordDepth > 0;
+  recordDepth++;
   try {
-    const result = fn.apply(thisArg, args);
-    const afterSnap = snapshot(args);
-    const recorded = wrapResult(result, symbol, opts, originId);
-    const event: TraceEvent = {
-      symbol,
-      originId,
-      argc: args.length,
-      args: beforeLive,
-      result: walker.value(recorded),
-      mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
-      truncated: walker.truncated,
-      tRelMs,
-      sessionId,
-    };
-    if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
-    if (thisSv !== undefined) {
-      event.thisArg = thisSv;
-      event.thisAfter = serialize(thisArg);
+    if (nested || (site && isPackageInternal(site.file))) {
+      return wrapResult(fn.apply(thisArg, args), symbol, opts, originId);
     }
-    if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
-    if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
-    if (site) event.site = site;
-    opts.onEvent(event);
-    return recorded;
-  } catch (err) {
-    const afterSnap = snapshot(args);
-    const event: TraceEvent = {
-      symbol,
-      originId,
-      argc: args.length,
-      args: beforeLive,
-      threw: threwShape(err),
-      mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
-      truncated: walker.truncated,
-      tRelMs,
-      sessionId,
-    };
-    if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
-    if (thisSv !== undefined) {
-      event.thisArg = thisSv;
-      event.thisAfter = serialize(thisArg);
+    let walker: ReturnType<typeof createWalker>;
+    let beforeLive: ReturnType<typeof serialize>[];
+    let thisSv: ReturnType<typeof serialize> | undefined;
+    let beforeSnap: ReturnType<typeof snapshot>;
+    try {
+      walker = createWalker();
+      beforeLive = args.map((a) => walker.value(a));
+      thisSv = shouldRecordThis(thisArg) ? walker.value(thisArg) : undefined;
+      beforeSnap = snapshot(args);
+    } catch (err) {
+      emitSerializeError(opts, err);
+      const result = fn.apply(thisArg, args);
+      return wrapResult(result, symbol, opts, originId);
     }
-    if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
-    if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
-    if (site) event.site = site;
-    opts.onEvent(event);
-    throw err;
+    try {
+      const result = fn.apply(thisArg, args);
+      const afterSnap = snapshot(args);
+      const recorded = wrapResult(result, symbol, opts, originId);
+      const event: TraceEvent = {
+        symbol,
+        originId,
+        argc: args.length,
+        args: beforeLive,
+        result: walker.value(recorded),
+        mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
+        truncated: walker.truncated,
+        tRelMs,
+        sessionId,
+      };
+      if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
+      if (thisSv !== undefined) {
+        event.thisArg = thisSv;
+        event.thisAfter = serialize(thisArg);
+      }
+      if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
+      if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
+      if (site) event.site = site;
+      opts.onEvent(event);
+      return recorded;
+    } catch (err) {
+      const afterSnap = snapshot(args);
+      const event: TraceEvent = {
+        symbol,
+        originId,
+        argc: args.length,
+        args: beforeLive,
+        threw: threwShape(err),
+        mutatedArgIndexes: mutatedArgIndexes(beforeSnap, afterSnap),
+        truncated: walker.truncated,
+        tRelMs,
+        sessionId,
+      };
+      if ((event.mutatedArgIndexes ?? []).length) event.argsAfter = afterSnap;
+      if (thisSv !== undefined) {
+        event.thisArg = thisSv;
+        event.thisAfter = serialize(thisArg);
+      }
+      if (meta.parentOriginId) event.parentOriginId = meta.parentOriginId;
+      if (meta.resultMember !== undefined) event.resultMember = meta.resultMember;
+      if (site) event.site = site;
+      opts.onEvent(event);
+      throw err;
+    }
+  } finally {
+    recordDepth--;
   }
 }
 
@@ -289,13 +377,43 @@ function wrapResult(
   opts: WrapOpts,
   parentOriginId: string,
 ): unknown {
-  if (typeof result !== "function") return result;
-  return wrapFn(
-    result as (...args: unknown[]) => unknown,
-    `${symbol}()`,
-    opts,
-    symbol,
-    { parentOriginId, resultMember: "" },
+  if (typeof result === "function") {
+    return wrapFn(
+      result as (...args: unknown[]) => unknown,
+      `${symbol}()`,
+      opts,
+      symbol,
+      { parentOriginId, resultMember: "" },
+    );
+  }
+  if (result instanceof Promise) {
+    return result.then((v) => wrapResult(v, symbol, opts, parentOriginId));
+  }
+  if (isThenable(result)) {
+    const orig = result;
+    return {
+      then(
+        onFulfilled?: (value: unknown) => unknown,
+        onRejected?: (reason: unknown) => unknown,
+      ) {
+        return orig.then(
+          (v) => {
+            const next = wrapResult(v, symbol, opts, parentOriginId);
+            return onFulfilled ? onFulfilled(next) : next;
+          },
+          onRejected,
+        );
+      },
+    };
+  }
+  return result;
+}
+
+function isThenable(v: unknown): v is PromiseLike<unknown> {
+  return Boolean(
+    v &&
+      (typeof v === "object" || typeof v === "function") &&
+      typeof (v as { then?: unknown }).then === "function",
   );
 }
 

@@ -3,7 +3,10 @@ import type { Envelope, Confidence } from "./types.ts";
 const NO_TRACES =
   "no traces — generators are static-shape plus catalog mutations, not your runtime distribution";
 
-export function closeEnvelope(env: Envelope, opts?: { allowUnknown?: boolean }): Envelope {
+export function closeEnvelope(
+  env: Envelope,
+  opts?: { allowUnknown?: boolean; staticOnly?: boolean },
+): Envelope {
   const staticCallSiteIds = env.symbols.flatMap((s) => s.callSites.map((c) => c.id));
   const staticSet = new Set(staticCallSiteIds);
   const tracedCallSiteIds = [
@@ -47,6 +50,11 @@ export function closeEnvelope(env: Envelope, opts?: { allowUnknown?: boolean }):
     reason = "dynamic members closed by traces (--allow-unknown)";
   }
 
+  if (opts?.staticOnly && confidence === "trace-closed") {
+    confidence = "closed";
+    reason = "static envelope closed";
+  }
+
   if (unmatched.length && confidence === "trace-closed") {
     confidence = "open";
     reason = "unmatched trace events block trace closure";
@@ -62,6 +70,9 @@ export function closeEnvelope(env: Envelope, opts?: { allowUnknown?: boolean }):
   if (env.traces.length === 0) {
     if (!reason.includes(NO_TRACES)) {
       reason = reason ? `${reason}; ${NO_TRACES}` : NO_TRACES;
+    }
+    if (opts?.staticOnly && !reason.includes("--no-trace")) {
+      reason += "; --no-trace (static-only, cannot claim trace-closed)";
     }
   } else if (untraced.length && ready && !reason.includes("untraced")) {
     reason += `; ${untraced.length} static call site(s) untraced`;

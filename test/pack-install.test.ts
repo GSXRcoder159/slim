@@ -37,9 +37,15 @@ function run(
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
+function ensureDist(): void {
+  if (!existsSync(join(ROOT, "dist", ".slim-build.json"))) {
+    execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+  }
+}
+
 test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tests", { timeout: 120_000 }, () => {
-  execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
-  const pack = execFileSync("npm", ["pack", "--dry-run", "--json"], {
+  ensureDist();
+  const pack = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
     cwd: ROOT,
     encoding: "utf8",
     timeout: 30_000,
@@ -77,8 +83,8 @@ test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tes
 });
 
 test("npm publish --dry-run lists the same production files", { timeout: 120_000 }, () => {
-  execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
-  const out = execFileSync("npm", ["publish", "--dry-run", "--json"], {
+  ensureDist();
+  const out = execFileSync("npm", ["publish", "--dry-run", "--json", "--ignore-scripts"], {
     cwd: ROOT,
     encoding: "utf8",
     timeout: 60_000,
@@ -96,13 +102,17 @@ test("npm publish --dry-run lists the same production files", { timeout: 120_000
 });
 
 test("installed tarball CLI matches source for help, doctor, scan --json, inspect, replace --dry-run", { timeout: 180_000 }, () => {
-  execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+  ensureDist();
   const packDir = mkdtempSync(join(tmpdir(), "slim-install-pack-"));
-  const tgz = execFileSync("npm", ["pack", "--silent", `--pack-destination=${packDir}`], {
-    cwd: ROOT,
-    encoding: "utf8",
-    timeout: 60_000,
-  }).trim();
+  const tgz = execFileSync(
+    "npm",
+    ["pack", "--silent", "--ignore-scripts", `--pack-destination=${packDir}`],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      timeout: 60_000,
+    },
+  ).trim();
   const tarball = join(packDir, tgz.split("\n").pop() ?? tgz);
   const tmp = mkdtempSync(join(tmpdir(), "slim-install-"));
   try {
@@ -228,6 +238,35 @@ test("add", () => { assert.equal(add(2, 3), 5); });
     const pkgEvents = captureHook(hookJs, captureDir, join(captureDir, "traces-pkg.jsonl"), []);
     assert.deepEqual(pkgEvents, srcEvents);
 
+    const starDir = join(tmp, "trace-star");
+    mkdirSync(join(starDir, "node_modules", "tiny-trace-star"), { recursive: true });
+    mkdirSync(join(starDir, "src"), { recursive: true });
+    cpSync(join(ROOT, "test/fixtures/trace/esm-star"), join(starDir, "node_modules", "tiny-trace-star"), {
+      recursive: true,
+    });
+    writeFileSync(join(starDir, "package.json"), JSON.stringify({ name: "app", type: "module" }));
+    writeFileSync(
+      join(starDir, "src", "index.test.js"),
+      `import { test } from "node:test";
+import assert from "node:assert/strict";
+import { add } from "tiny-trace-star";
+test("add", () => { assert.equal(add(2, 3), 5); });
+`,
+    );
+    const srcStar = captureHook(
+      srcHook,
+      starDir,
+      join(starDir, "traces-src.jsonl"),
+      ["--experimental-strip-types"],
+      "tiny-trace-star",
+    );
+    const pkgStar = captureHook(hookJs, starDir, join(starDir, "traces-pkg.jsonl"), [], "tiny-trace-star");
+    assert.deepEqual(pkgStar, srcStar);
+    assert.equal(
+      srcStar.some((e) => typeof e === "object" && e !== null && (e as { symbol?: string }).symbol === "add"),
+      true,
+    );
+
     const vitestLoad = run(
       process.execPath,
       [
@@ -302,12 +341,13 @@ function captureHook(
   cwd: string,
   outPath: string,
   extraArgs: string[],
+  pkg = "tiny-trace-cjs",
 ): unknown[] {
   const r = run(
     process.execPath,
     [...extraArgs, "--import", pathToFileURL(hookPath).href, "--test", "src/index.test.js"],
     cwd,
-    { SLIM_TRACE_PACKAGES: "tiny-trace-cjs", SLIM_TRACE_OUT: outPath },
+    { SLIM_TRACE_PACKAGES: pkg, SLIM_TRACE_OUT: outPath },
   );
   assert.equal(r.status, 0, r.stderr + r.stdout);
   return canonicalizeTraces(readFileSync(outPath, "utf8"));

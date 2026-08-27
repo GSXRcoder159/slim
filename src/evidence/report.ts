@@ -211,6 +211,9 @@ function residualRisk(env: Envelope, fuzz: EvidenceJson["fuzz"]): string[] {
   if (!fuzz.tracesReplayed || env.traces.length === 0) {
     r.push("No runtime traces. Generators are static-shape plus catalog mutations, not your runtime distribution.");
   }
+  if (env.closure.reason.includes("--no-trace")) {
+    r.push("--no-trace: static-only evidence; runtime distribution was not observed and cannot claim trace closure.");
+  }
   if (env.closure.confidence === "trace-closed" && env.traces.length === 0) {
     r.push("Static-only evidence cannot claim trace closure.");
   }

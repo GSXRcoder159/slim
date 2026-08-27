@@ -33,13 +33,19 @@ function run(
 
 function packTarball(): { dir: string; tarball: string } {
   mkdirSync(TMP, { recursive: true });
-  execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+  if (!existsSync(join(ROOT, "dist", ".slim-build.json"))) {
+    execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+  }
   const dir = mkdtempSync(join(TMP, "slim-matrix-pack-"));
-  const tgz = execFileSync("npm", ["pack", "--silent", `--pack-destination=${dir}`], {
-    cwd: ROOT,
-    encoding: "utf8",
-    timeout: 60_000,
-  }).trim();
+  const tgz = execFileSync(
+    "npm",
+    ["pack", "--silent", "--ignore-scripts", `--pack-destination=${dir}`],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      timeout: 60_000,
+    },
+  ).trim();
   return { dir, tarball: join(dir, tgz.split("\n").pop() ?? tgz) };
 }
 

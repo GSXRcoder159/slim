@@ -100,6 +100,21 @@ test("slim/vitest plugin is duck-typed and skips slim-orig", () => {
   assert.equal(plugin.transform?.("", wrapId) ?? null, null);
 });
 
+test("slim/vitest wrapper for export * barrel emits named export const", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-vitest-star-"));
+  const pkgDir = join(dir, "node_modules", "tiny-trace-star");
+  mkdirSync(pkgDir, { recursive: true });
+  cpSync(join(dirname(fileURLToPath(import.meta.url)), "../fixtures/trace/esm-star"), pkgDir, {
+    recursive: true,
+  });
+  const plugin = slimVitest({ packages: ["tiny-trace-star"] });
+  const wrapId = join(pkgDir, "index.js");
+  const wrapped = String(plugin.load?.(wrapId) ?? "");
+  assert.match(wrapped, /export const add = wrapped\["add"\]/);
+  assert.match(wrapped, /export const get = wrapped\["get"\]/);
+  assert.doesNotMatch(wrapped, /export \* from/);
+});
+
 test("registerHooks wraps a tiny ESM package under --import", () => {
   const dir = mkdtempSync(join(tmpdir(), "slim-hook-esm-"));
   const pkgDir = join(dir, "node_modules", "tiny-trace-esm");

@@ -139,6 +139,24 @@ test("debounce cancel inherits parent call site", () => {
   assert.equal(attributed[1]!.unmatched, false);
 });
 
+test("default.resolve attributes to the named export and orphan children still match", () => {
+  const root = tmpRoot();
+  const r = site("call:src/a.ts:4", "src/a.ts", 4, "resolve");
+  const base = env(root, [r]);
+  const traces: TraceEvent[] = [
+    {
+      symbol: "default.resolve",
+      originId: "child",
+      parentOriginId: "missing-parent",
+      args: [],
+      site: { file: join(root, "src", "a.ts"), line: 4, column: 10 },
+    },
+  ];
+  const attributed = attributeTraces(base, traces, root);
+  assert.equal(attributed[0]!.unmatched, false);
+  assert.equal(attributed[0]!.callSiteId, r.id);
+});
+
 test("dynamic-member observations attach only to the matching unknown", () => {
   const root = tmpRoot();
   const a = site("call:src/a.ts:1", "src/a.ts", 1, "get");
