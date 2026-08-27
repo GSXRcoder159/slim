@@ -42,6 +42,8 @@ slim doctor [--strict] [--json]
 
 Exit codes: `0` ok · `1` fail · `2` usage · `3` refused / no catalog and no LLM key · `4` environment
 
+`--json` is not global. It is supported on `scan`, `inspect`, `check`, `upstream`/`watch`, and `doctor`. `replace --json` is usage (exit 2). The advertised surface is [`docs/support-inventory.json`](docs/support-inventory.json).
+
 ## How it works
 
 1. **Envelope** — the target repo's `typescript` walks imports and call sites. Unknowns (`_[k]()`, `eval`, `arr.map(get)`) are recorded, never guessed.

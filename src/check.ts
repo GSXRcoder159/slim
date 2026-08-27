@@ -8,6 +8,7 @@ import { loadConfig } from "./config.ts";
 import { analyzePackage } from "./analyze/index.ts";
 import { withLocalBinPath } from "./replace.ts";
 import { JSON_SCHEMA_VERSION, statusFromExit, writeJson } from "./json.ts";
+import { assertDocument, readDocument } from "./schema/documents.ts";
 import { diffEnvelope, type EnvelopeDrift } from "./envelope/drift.ts";
 import { hashEnvelope, type Envelope } from "./envelope/types.ts";
 import { checkContracts } from "./generate/exports.ts";
@@ -175,25 +176,12 @@ export function runConfiguredTestCommand(
 function residualRiskFor(root: string, pkg: string): string[] {
   const p = join(root, ".slim", pkg, "evidence.json");
   if (!existsSync(p)) return [];
-  try {
-    const json = JSON.parse(readFileSync(p, "utf8")) as { residualRisk?: unknown };
-    return Array.isArray(json.residualRisk) ? json.residualRisk.map(String) : [];
-  } catch {
-    return [];
-  }
+  const json = readDocument("evidence", p, "evidence.json") as { residualRisk?: unknown };
+  return Array.isArray(json.residualRisk) ? json.residualRisk.map(String) : [];
 }
 
 function readEnvelope(path: string): Envelope {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    throw new SlimExit(EXIT_FAIL, `malformed envelope ${path}`);
-  }
-  if (!raw || typeof raw !== "object") {
-    throw new SlimExit(EXIT_FAIL, `malformed envelope ${path}`);
-  }
-  return raw as Envelope;
+  return readDocument("envelope", path, `envelope ${path}`) as Envelope;
 }
 
 function hashMismatches(root: string, pkg: string, saved: Envelope): EnvelopeDrift[] {
@@ -206,27 +194,19 @@ function hashMismatches(root: string, pkg: string, saved: Envelope): EnvelopeDri
   }
   const evidencePath = join(root, ".slim", pkg, "evidence.json");
   if (existsSync(evidencePath)) {
-    try {
-      const ev = JSON.parse(readFileSync(evidencePath, "utf8")) as { envelopeHash?: string };
-      if (ev.envelopeHash && ev.envelopeHash !== expected) {
-        drift.push({ kind: "hash", detail: "evidence.json envelopeHash does not match envelope" });
-      }
-    } catch {
-      drift.push({ kind: "hash", detail: "malformed evidence.json" });
+    const ev = readDocument("evidence", evidencePath) as { envelopeHash?: string };
+    if (ev.envelopeHash && ev.envelopeHash !== expected) {
+      drift.push({ kind: "hash", detail: "evidence.json envelopeHash does not match envelope" });
     }
   }
   const manPath = join(root, ".slim", "manifest.json");
   if (existsSync(manPath)) {
-    try {
-      const man = JSON.parse(readFileSync(manPath, "utf8")) as {
-        replacements?: Record<string, { envelopeHash?: string; version?: string }>;
-      };
-      const rec = man.replacements?.[pkg];
-      if (rec?.envelopeHash && rec.envelopeHash !== expected) {
-        drift.push({ kind: "hash", detail: "manifest envelopeHash does not match envelope" });
-      }
-    } catch {
-      drift.push({ kind: "hash", detail: "malformed manifest.json" });
+    const man = readDocument("manifest", manPath) as {
+      replacements?: Record<string, { envelopeHash?: string; version?: string }>;
+    };
+    const rec = man.replacements?.[pkg];
+    if (rec?.envelopeHash && rec.envelopeHash !== expected) {
+      drift.push({ kind: "hash", detail: "manifest envelopeHash does not match envelope" });
     }
   }
   return drift;
@@ -266,16 +246,16 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
         status: "ok",
         packages: [],
       };
-      if (args.json) writeJson(empty);
+      if (args.json) {
+        assertDocument("check", empty);
+        writeJson(empty);
+      }
       else process.stdout.write("no Slim replacements recorded. Run slim replace <pkg> first.\n");
       return EXIT_OK;
     }
-    let json: { replacements?: Record<string, unknown> };
-    try {
-      json = JSON.parse(readFileSync(man, "utf8")) as { replacements?: Record<string, unknown> };
-    } catch {
-      throw new SlimExit(EXIT_FAIL, "malformed .slim/manifest.json");
-    }
+    const json = readDocument("manifest", man, ".slim/manifest.json") as {
+      replacements?: Record<string, unknown>;
+    };
     names.push(...Object.keys(json.replacements ?? {}));
   }
   if (args.pkg) {
@@ -408,7 +388,10 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
     status: statusFromExit(exit),
     packages,
   };
-  if (args.json) writeJson(report);
+  if (args.json) {
+    assertDocument("check", report);
+    writeJson(report);
+  }
   if (failed) throw new SlimExit(EXIT_FAIL, "slim check failed", { skipJson: args.json });
   return EXIT_OK;
 }

@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { parseCli } from "../src/cli.ts";
 import { runCheck, runStandingTests, type CheckSpawn } from "../src/check.ts";
 import { EXIT_FAIL, EXIT_OK, SlimExit } from "../src/exit.ts";
+import { minimalEnvelope, minimalEvidence } from "./helpers/documents.ts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -21,12 +22,7 @@ function linkTypescript(root: string) {
 function writeEnvelope(root: string, pkg: string, exportNames: string[]) {
   const dir = join(root, ".slim", pkg);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, "envelope.json"),
-    JSON.stringify({
-      symbols: exportNames.map((exportName) => ({ exportName })),
-    }),
-  );
+  writeFileSync(join(dir, "envelope.json"), JSON.stringify(minimalEnvelope(pkg, exportNames)));
 }
 
 function fixture(opts: {
@@ -239,7 +235,9 @@ test("hash mismatch vs evidence.json fails check", async () => {
     files: {
       "ok.js": "process.exit(0);\n",
       "src/slim/lodash.ts": "export function get() { return 1; }\n",
-      ".slim/lodash/evidence.json": JSON.stringify({ envelopeHash: "not-the-real-hash", residualRisk: [] }),
+      ".slim/lodash/evidence.json": JSON.stringify(
+        minimalEvidence(minimalEnvelope("lodash", ["get"]), { envelopeHash: "0".repeat(64) }),
+      ),
     },
   });
   await assert.rejects(

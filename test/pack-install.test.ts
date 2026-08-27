@@ -67,6 +67,7 @@ test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tes
     "slim.schema.json",
     "docs/scan.schema.json",
     "docs/error.schema.json",
+    "docs/support-inventory.json",
     "CHANGELOG.md",
     "package.json",
     "README.md",

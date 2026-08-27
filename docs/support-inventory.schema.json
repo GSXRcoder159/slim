@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/support-inventory.schema.json",
+  "title": "Slim support inventory",
+  "description": "Authoritative advertised product surface. Documentation and help may name only these entries. schemaVersion 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "entries"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "entries": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "docs", "checkId", "receiptClass"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "command",
+            "jsonCommand",
+            "package",
+            "alias",
+            "symbol",
+            "runtime",
+            "osNode",
+            "packageManager",
+            "provider",
+            "externalService",
+            "action"
+          ]
+        },
+        "docs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "checkId": { "type": "string", "minLength": 1 },
+        "receiptClass": { "type": "string", "enum": ["local", "live"] },
+        "command": { "type": "string" },
+        "json": { "type": "boolean" },
+        "aliasOf": { "type": "string" },
+        "name": { "type": "string" },
+        "os": { "type": "string" },
+        "node": { "type": "string" }
+      }
+    }
+  }
+}

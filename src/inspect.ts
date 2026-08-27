@@ -6,6 +6,8 @@ import { loadProject } from "./project.ts";
 import { loadConfig } from "./config.ts";
 import { analyzePackage } from "./analyze/index.ts";
 import { hashEnvelope, envelopeForDisk } from "./envelope/types.ts";
+import { assertDocument } from "./schema/documents.ts";
+import { JSON_SCHEMA_VERSION } from "./json.ts";
 import { refusePackage, formatRefuse } from "./scan/refuse.ts";
 import { EXIT_REFUSED } from "./exit.ts";
 
@@ -24,17 +26,21 @@ export async function runInspect(args: CliArgs): Promise<number> {
   });
   const dir = join(project.root, ".slim", env.package.name);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, "envelope.json"), JSON.stringify(envelopeForDisk(env), null, 2) + "\n");
+  const disk = envelopeForDisk(env);
+  assertDocument("envelope", disk);
+  writeFileSync(join(dir, "envelope.json"), JSON.stringify(disk, null, 2) + "\n");
 
   const decision = env.closure.readyToGenerate ? "try" : "refuse";
   if (args.json) {
-    process.stdout.write(
-      JSON.stringify(
-        { envelope: env, hash: hashEnvelope(env), decision, reason: env.closure.reason },
-        null,
-        2,
-      ) + "\n",
-    );
+    const doc = {
+      schemaVersion: JSON_SCHEMA_VERSION,
+      envelope: disk,
+      hash: hashEnvelope(env),
+      decision,
+      reason: env.closure.reason,
+    };
+    assertDocument("inspect", doc);
+    process.stdout.write(JSON.stringify(doc, null, 2) + "\n");
   } else {
     process.stdout.write(`package     ${env.package.name}@${env.package.version}  family=${env.package.family}\n`);
     process.stdout.write(`confidence  ${env.closure.confidence}  ready=${env.closure.readyToGenerate}\n`);

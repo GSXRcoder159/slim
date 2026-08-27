@@ -10,8 +10,9 @@ import { loadConfig } from "../src/config.ts";
 import { EXIT_FAIL, EXIT_OK, EXIT_USAGE, SlimExit } from "../src/exit.ts";
 import { existsSync, symlinkSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { ENVELOPE_VERSION, emptyHyrum, hashEnvelope } from "../src/envelope/types.ts";
+import { ENVELOPE_VERSION, emptyHyrum } from "../src/envelope/types.ts";
 import { sourceOk } from "../src/upstream/status.ts";
+import { minimalEnvelope, minimalEvidence, minimalManifest } from "./helpers/documents.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -106,7 +107,7 @@ test("check --json failure is still one document", async () => {
     }),
   );
   mkdirSync(join(root, ".slim", "lodash"), { recursive: true });
-  writeFileSync(join(root, ".slim", "lodash", "envelope.json"), JSON.stringify({ symbols: [{ exportName: "get" }] }));
+  writeFileSync(join(root, ".slim", "lodash", "envelope.json"), JSON.stringify(minimalEnvelope("lodash", ["get"])));
   writeFileSync(join(root, "fail-evidence.js"), "process.exit(1);\n");
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "src", "index.ts"), "export const n = 1;\n");
@@ -135,6 +136,28 @@ test("malformed slim.json throws SlimExit", () => {
   assert.throws(
     () => loadConfig(root),
     (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /malformed slim\.json/.test(err.message),
+  );
+});
+
+test("slim.json extra properties are refused", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-extra-cfg-"));
+  writeFileSync(join(root, "package.json"), "{}");
+  writeFileSync(join(root, "slim.json"), JSON.stringify({ outDir: "src/slim", fuzzIterations: 3 }));
+  assert.throws(
+    () => loadConfig(root),
+    (err: unknown) =>
+      err instanceof SlimExit && err.code === EXIT_FAIL && /malformed|additional property/.test(err.message),
+  );
+});
+
+test("slim.json schemaVersion other than 1 is incompatible", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-ver-cfg-"));
+  writeFileSync(join(root, "package.json"), "{}");
+  writeFileSync(join(root, "slim.json"), JSON.stringify({ schemaVersion: 9, outDir: "src/slim" }));
+  assert.throws(
+    () => loadConfig(root),
+    (err: unknown) =>
+      err instanceof SlimExit && err.code === EXIT_FAIL && /incompatible-version/.test(err.message),
   );
 });
 
@@ -207,18 +230,10 @@ test("upstream --json failure is one document with findings, human on stderr", a
     clock: false,
     cryptoRandom: false,
   };
-  const hash = hashEnvelope(env);
-  writeFileSync(
-    join(root, ".slim", "manifest.json"),
-    JSON.stringify({
-      replacements: {
-        lodash: { version: "4.17.21", envelopeHash: hash, symbols: ["get"], module: "src/slim/lodash.ts" },
-      },
-    }),
-  );
+  writeFileSync(join(root, ".slim", "manifest.json"), JSON.stringify(minimalManifest(env, "src/slim/lodash.ts")));
   writeFileSync(join(root, "src", "slim", "lodash.ts"), "export function get() {}\n");
   writeFileSync(join(root, ".slim", "lodash", "envelope.json"), JSON.stringify(env));
-  writeFileSync(join(root, ".slim", "lodash", "evidence.json"), JSON.stringify({ envelopeHash: hash }));
+  writeFileSync(join(root, ".slim", "lodash", "evidence.json"), JSON.stringify(minimalEvidence(env)));
   writeFileSync(join(root, "src", "slim", "lodash.test.ts"), `import { test } from "node:test";\ntest("standing", () => {});\n`);
   const { runUpstream } = await import("../src/upstream.ts");
   const { code, stdout, stderr } = await capture(async () => {

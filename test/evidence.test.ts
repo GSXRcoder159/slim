@@ -67,6 +67,7 @@ const fuzz: EvidenceJson["fuzz"] = {
 
 test("evidence markdown has sections 1 through 8 in order", () => {
   const json: EvidenceJson = {
+    schemaVersion: 1,
     slogan: "EVIDENCE, NOT PROOF",
     package: env().package,
     envelopeHash: "abc",
@@ -95,6 +96,7 @@ test("evidence markdown has sections 1 through 8 in order", () => {
 test("Edge is n/a for non-lodash families", () => {
   const e = env("ms");
   const json: EvidenceJson = {
+    schemaVersion: 1,
     slogan: "EVIDENCE, NOT PROOF",
     package: e.package,
     envelopeHash: "abc",
@@ -113,6 +115,7 @@ test("Edge is n/a for non-lodash families", () => {
 
 test("byte delta includes esbuild dry-run line when bundle is present", () => {
   const json: EvidenceJson = {
+    schemaVersion: 1,
     slogan: "EVIDENCE, NOT PROOF",
     package: env().package,
     envelopeHash: "abc",

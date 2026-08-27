@@ -34,6 +34,24 @@ Shipped catalog packages only. Slice sizes are estimates except where `docs/meas
 
 Golden fixture: `fixtures/lodash-get-debounce/`.
 
+### Registered catalog symbols
+
+Every registered `allCatalogEntries()` id (typical-slice column above may stay short):
+
+| Package | Symbols |
+| --- | --- |
+| lodash | `get`, `set`, `has`, `debounce`, `throttle`, `once`, `isEmpty`, `isNil`, `isEqual`, `pick`, `omit`, `clone`, `cloneDeep`, `map`, `filter`, `groupBy`, `uniq`, `compact`, `flatten`, `camelCase`, `kebabCase`, `snakeCase`, `identity`, `noop`, `defaultTo`, `chunk`, `take`, `head`, `first`, `last`, `keys`, `values`, `assign` |
+| moment | `default`, `moment`, `createMoment` |
+| uuid | `v4` |
+| ms | `default`, `ms` |
+| nanoid | `nanoid`, `customAlphabet`, `default` |
+| clsx | `clsx`, `default` |
+| whatwg-url | `URL`, `URLSearchParams`, `default` |
+| bluebird | `resolve`, `reject`, `all`, `race`, `delay`, `promisify`, `Promise`, `default` |
+| mime-types | `lookup`, `extension` |
+
+Advertised aliases: `lodash-es`, `underscore`, `classnames`, `mime-db`, `mime`, `url-parse`, plus `lodash.<symbol>` per lodash symbol. `qs` / `query-string` are scan-family grouping only, not catalog.
+
 ### What “typical slice” is allowed to miss
 
 v1 generators implement the options **observed at call sites**, not the README.

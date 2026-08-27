@@ -74,10 +74,12 @@ test("golden fixture envelope has relative locs, no traces, no bind.placeholder"
 
 test("golden fixture evidence replays traces and has sections 2-8", () => {
   const json = JSON.parse(readFileSync(join(root, ".slim/lodash/evidence.json"), "utf8")) as {
+    schemaVersion: number;
     package: { version: string };
     fuzz: { tracesReplayed: number };
     residualRisk: string[];
   };
+  assert.equal(json.schemaVersion, 1);
   const md = readFileSync(join(root, ".slim/lodash/evidence.md"), "utf8");
   assert.ok(json.fuzz.tracesReplayed > 0, `tracesReplayed=${json.fuzz.tracesReplayed}`);
   assert.ok(json.residualRisk.length > 0);

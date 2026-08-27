@@ -1,0 +1,1466 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "id": "command.scan",
+      "kind": "command",
+      "command": "scan",
+      "json": true,
+      "docs": [
+        "docs/help.txt",
+        "docs/dx.md",
+        "README.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/cli.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "command.inspect",
+      "kind": "command",
+      "command": "inspect",
+      "json": true,
+      "docs": [
+        "docs/help.txt",
+        "docs/dx.md",
+        "README.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/cli.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "command.replace",
+      "kind": "command",
+      "command": "replace",
+      "json": false,
+      "docs": [
+        "docs/help.txt",
+        "docs/dx.md",
+        "README.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/cli.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "command.check",
+      "kind": "command",
+      "command": "check",
+      "json": true,
+      "docs": [
+        "docs/help.txt",
+        "docs/dx.md",
+        "README.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/cli.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "command.upstream",
+      "kind": "command",
+      "command": "upstream",
+      "json": true,
+      "docs": [
+        "docs/help.txt",
+        "docs/dx.md",
+        "README.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/cli.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "command.doctor",
+      "kind": "command",
+      "command": "doctor",
+      "json": true,
+      "docs": [
+        "docs/help.txt",
+        "docs/dx.md",
+        "README.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/cli.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "command.watch",
+      "kind": "command",
+      "command": "watch",
+      "aliasOf": "upstream",
+      "json": true,
+      "docs": [
+        "docs/help.txt",
+        "docs/dx.md",
+        "README.md"
+      ],
+      "checkId": "test/cli.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "jsonCommand.scan",
+      "kind": "jsonCommand",
+      "command": "scan",
+      "json": true,
+      "docs": [
+        "docs/scan.schema.json",
+        "docs/dx.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/json-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "jsonCommand.inspect",
+      "kind": "jsonCommand",
+      "command": "inspect",
+      "json": true,
+      "docs": [
+        "docs/inspect.schema.json",
+        "docs/dx.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/json-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "jsonCommand.check",
+      "kind": "jsonCommand",
+      "command": "check",
+      "json": true,
+      "docs": [
+        "docs/check.schema.json",
+        "docs/dx.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/json-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "jsonCommand.upstream",
+      "kind": "jsonCommand",
+      "command": "upstream",
+      "json": true,
+      "docs": [
+        "docs/upstream.schema.json",
+        "docs/dx.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/json-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "jsonCommand.doctor",
+      "kind": "jsonCommand",
+      "command": "doctor",
+      "json": true,
+      "docs": [
+        "docs/doctor.schema.json",
+        "docs/dx.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/json-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "package.lodash",
+      "kind": "package",
+      "name": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "package.moment",
+      "kind": "package",
+      "name": "moment",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "package.uuid",
+      "kind": "package",
+      "name": "uuid",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "package.ms",
+      "kind": "package",
+      "name": "ms",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "package.nanoid",
+      "kind": "package",
+      "name": "nanoid",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "package.clsx",
+      "kind": "package",
+      "name": "clsx",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "package.whatwg-url",
+      "kind": "package",
+      "name": "whatwg-url",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "package.bluebird",
+      "kind": "package",
+      "name": "bluebird",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "package.mime-types",
+      "kind": "package",
+      "name": "mime-types",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash-es",
+      "kind": "alias",
+      "name": "lodash-es",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/packed-e2e.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.underscore",
+      "kind": "alias",
+      "name": "underscore",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/packed-e2e.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.classnames",
+      "kind": "alias",
+      "name": "classnames",
+      "aliasOf": "clsx",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/packed-e2e.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.mime-db",
+      "kind": "alias",
+      "name": "mime-db",
+      "aliasOf": "mime-types",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/packed-e2e.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.mime",
+      "kind": "alias",
+      "name": "mime",
+      "aliasOf": "mime-types",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/packed-e2e.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.url-parse",
+      "kind": "alias",
+      "name": "url-parse",
+      "aliasOf": "whatwg-url",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/packed-e2e.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.get",
+      "kind": "alias",
+      "name": "lodash.get",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.set",
+      "kind": "alias",
+      "name": "lodash.set",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.has",
+      "kind": "alias",
+      "name": "lodash.has",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.debounce",
+      "kind": "alias",
+      "name": "lodash.debounce",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.throttle",
+      "kind": "alias",
+      "name": "lodash.throttle",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.once",
+      "kind": "alias",
+      "name": "lodash.once",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.isEmpty",
+      "kind": "alias",
+      "name": "lodash.isEmpty",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.isNil",
+      "kind": "alias",
+      "name": "lodash.isNil",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.isEqual",
+      "kind": "alias",
+      "name": "lodash.isEqual",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.pick",
+      "kind": "alias",
+      "name": "lodash.pick",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.omit",
+      "kind": "alias",
+      "name": "lodash.omit",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.clone",
+      "kind": "alias",
+      "name": "lodash.clone",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.cloneDeep",
+      "kind": "alias",
+      "name": "lodash.cloneDeep",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.map",
+      "kind": "alias",
+      "name": "lodash.map",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.filter",
+      "kind": "alias",
+      "name": "lodash.filter",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.groupBy",
+      "kind": "alias",
+      "name": "lodash.groupBy",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.uniq",
+      "kind": "alias",
+      "name": "lodash.uniq",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.compact",
+      "kind": "alias",
+      "name": "lodash.compact",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.flatten",
+      "kind": "alias",
+      "name": "lodash.flatten",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.camelCase",
+      "kind": "alias",
+      "name": "lodash.camelCase",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.kebabCase",
+      "kind": "alias",
+      "name": "lodash.kebabCase",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.snakeCase",
+      "kind": "alias",
+      "name": "lodash.snakeCase",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.identity",
+      "kind": "alias",
+      "name": "lodash.identity",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.noop",
+      "kind": "alias",
+      "name": "lodash.noop",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.defaultTo",
+      "kind": "alias",
+      "name": "lodash.defaultTo",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.chunk",
+      "kind": "alias",
+      "name": "lodash.chunk",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.take",
+      "kind": "alias",
+      "name": "lodash.take",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.head",
+      "kind": "alias",
+      "name": "lodash.head",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.first",
+      "kind": "alias",
+      "name": "lodash.first",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.last",
+      "kind": "alias",
+      "name": "lodash.last",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.keys",
+      "kind": "alias",
+      "name": "lodash.keys",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.values",
+      "kind": "alias",
+      "name": "lodash.values",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "alias.lodash.assign",
+      "kind": "alias",
+      "name": "lodash.assign",
+      "aliasOf": "lodash",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/index.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.moment.default",
+      "kind": "symbol",
+      "name": "moment.default",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.moment.moment",
+      "kind": "symbol",
+      "name": "moment.moment",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.moment.createMoment",
+      "kind": "symbol",
+      "name": "moment.createMoment",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.uuid.v4",
+      "kind": "symbol",
+      "name": "uuid.v4",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.ms.default",
+      "kind": "symbol",
+      "name": "ms.default",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.ms.ms",
+      "kind": "symbol",
+      "name": "ms.ms",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.nanoid.nanoid",
+      "kind": "symbol",
+      "name": "nanoid.nanoid",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.nanoid.customAlphabet",
+      "kind": "symbol",
+      "name": "nanoid.customAlphabet",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.nanoid.default",
+      "kind": "symbol",
+      "name": "nanoid.default",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.clsx.clsx",
+      "kind": "symbol",
+      "name": "clsx.clsx",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.clsx.default",
+      "kind": "symbol",
+      "name": "clsx.default",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.whatwg-url.URL",
+      "kind": "symbol",
+      "name": "whatwg-url.URL",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.whatwg-url.URLSearchParams",
+      "kind": "symbol",
+      "name": "whatwg-url.URLSearchParams",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.whatwg-url.default",
+      "kind": "symbol",
+      "name": "whatwg-url.default",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.bluebird.resolve",
+      "kind": "symbol",
+      "name": "bluebird.resolve",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.bluebird.reject",
+      "kind": "symbol",
+      "name": "bluebird.reject",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.bluebird.all",
+      "kind": "symbol",
+      "name": "bluebird.all",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.bluebird.race",
+      "kind": "symbol",
+      "name": "bluebird.race",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.bluebird.delay",
+      "kind": "symbol",
+      "name": "bluebird.delay",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.bluebird.promisify",
+      "kind": "symbol",
+      "name": "bluebird.promisify",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.bluebird.Promise",
+      "kind": "symbol",
+      "name": "bluebird.Promise",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.bluebird.default",
+      "kind": "symbol",
+      "name": "bluebird.default",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.mime-types.lookup",
+      "kind": "symbol",
+      "name": "mime-types.lookup",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.mime-types.extension",
+      "kind": "symbol",
+      "name": "mime-types.extension",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.get",
+      "kind": "symbol",
+      "name": "lodash.get",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.set",
+      "kind": "symbol",
+      "name": "lodash.set",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.has",
+      "kind": "symbol",
+      "name": "lodash.has",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.debounce",
+      "kind": "symbol",
+      "name": "lodash.debounce",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.throttle",
+      "kind": "symbol",
+      "name": "lodash.throttle",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.once",
+      "kind": "symbol",
+      "name": "lodash.once",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.isEmpty",
+      "kind": "symbol",
+      "name": "lodash.isEmpty",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.isNil",
+      "kind": "symbol",
+      "name": "lodash.isNil",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.isEqual",
+      "kind": "symbol",
+      "name": "lodash.isEqual",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.pick",
+      "kind": "symbol",
+      "name": "lodash.pick",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.omit",
+      "kind": "symbol",
+      "name": "lodash.omit",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.clone",
+      "kind": "symbol",
+      "name": "lodash.clone",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.cloneDeep",
+      "kind": "symbol",
+      "name": "lodash.cloneDeep",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.map",
+      "kind": "symbol",
+      "name": "lodash.map",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.filter",
+      "kind": "symbol",
+      "name": "lodash.filter",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.groupBy",
+      "kind": "symbol",
+      "name": "lodash.groupBy",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.uniq",
+      "kind": "symbol",
+      "name": "lodash.uniq",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.compact",
+      "kind": "symbol",
+      "name": "lodash.compact",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.flatten",
+      "kind": "symbol",
+      "name": "lodash.flatten",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.camelCase",
+      "kind": "symbol",
+      "name": "lodash.camelCase",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.kebabCase",
+      "kind": "symbol",
+      "name": "lodash.kebabCase",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.snakeCase",
+      "kind": "symbol",
+      "name": "lodash.snakeCase",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.identity",
+      "kind": "symbol",
+      "name": "lodash.identity",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.noop",
+      "kind": "symbol",
+      "name": "lodash.noop",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.defaultTo",
+      "kind": "symbol",
+      "name": "lodash.defaultTo",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.chunk",
+      "kind": "symbol",
+      "name": "lodash.chunk",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.take",
+      "kind": "symbol",
+      "name": "lodash.take",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.head",
+      "kind": "symbol",
+      "name": "lodash.head",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.first",
+      "kind": "symbol",
+      "name": "lodash.first",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.last",
+      "kind": "symbol",
+      "name": "lodash.last",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.keys",
+      "kind": "symbol",
+      "name": "lodash.keys",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.values",
+      "kind": "symbol",
+      "name": "lodash.values",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "symbol.lodash.assign",
+      "kind": "symbol",
+      "name": "lodash.assign",
+      "docs": [
+        "docs/packages.md"
+      ],
+      "checkId": "test/catalog/qualify-matrix.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "runtime.node",
+      "kind": "runtime",
+      "name": ">=22.18.0",
+      "docs": [
+        "README.md",
+        "docs/dx.md"
+      ],
+      "checkId": "test/docs-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "osNode.ubuntu-latest.22.18",
+      "kind": "osNode",
+      "os": "ubuntu-latest",
+      "node": "22.18",
+      "docs": [
+        "README.md",
+        ".github/workflows/ci.yml"
+      ],
+      "checkId": "test/docs-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "osNode.ubuntu-latest.24",
+      "kind": "osNode",
+      "os": "ubuntu-latest",
+      "node": "24",
+      "docs": [
+        "README.md",
+        ".github/workflows/ci.yml"
+      ],
+      "checkId": "test/docs-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "osNode.macos-latest.22.18",
+      "kind": "osNode",
+      "os": "macos-latest",
+      "node": "22.18",
+      "docs": [
+        "README.md",
+        ".github/workflows/ci.yml"
+      ],
+      "checkId": "test/docs-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "osNode.macos-latest.24",
+      "kind": "osNode",
+      "os": "macos-latest",
+      "node": "24",
+      "docs": [
+        "README.md",
+        ".github/workflows/ci.yml"
+      ],
+      "checkId": "test/docs-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "osNode.windows-latest.22.18",
+      "kind": "osNode",
+      "os": "windows-latest",
+      "node": "22.18",
+      "docs": [
+        "README.md",
+        ".github/workflows/ci.yml"
+      ],
+      "checkId": "test/docs-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "osNode.windows-latest.24",
+      "kind": "osNode",
+      "os": "windows-latest",
+      "node": "24",
+      "docs": [
+        "README.md",
+        ".github/workflows/ci.yml"
+      ],
+      "checkId": "test/docs-contract.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "packageManager.npm",
+      "kind": "packageManager",
+      "name": "npm",
+      "docs": [
+        "docs/dx.md"
+      ],
+      "checkId": "test/replace-lockfile-pm.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "packageManager.pnpm",
+      "kind": "packageManager",
+      "name": "pnpm",
+      "docs": [
+        "docs/dx.md"
+      ],
+      "checkId": "test/replace-lockfile-pm.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "packageManager.yarn",
+      "kind": "packageManager",
+      "name": "yarn",
+      "docs": [
+        "docs/dx.md"
+      ],
+      "checkId": "test/replace-lockfile-pm.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "packageManager.bun",
+      "kind": "packageManager",
+      "name": "bun",
+      "docs": [
+        "docs/dx.md"
+      ],
+      "checkId": "test/replace-lockfile-pm.test.ts",
+      "receiptClass": "local"
+    },
+    {
+      "id": "provider.anthropic",
+      "kind": "provider",
+      "name": "anthropic",
+      "docs": [
+        "README.md",
+        "docs/dx.md"
+      ],
+      "checkId": "test/llm-live.test.ts",
+      "receiptClass": "live"
+    },
+    {
+      "id": "provider.openai",
+      "kind": "provider",
+      "name": "openai",
+      "docs": [
+        "README.md",
+        "docs/dx.md"
+      ],
+      "checkId": "test/llm-live.test.ts",
+      "receiptClass": "live"
+    },
+    {
+      "id": "externalService.osv",
+      "kind": "externalService",
+      "name": "osv",
+      "docs": [
+        "docs/dx.md"
+      ],
+      "checkId": "test/upstream-live.test.ts",
+      "receiptClass": "live"
+    },
+    {
+      "id": "externalService.npm-registry",
+      "kind": "externalService",
+      "name": "npm-registry",
+      "docs": [
+        "docs/dx.md"
+      ],
+      "checkId": "test/upstream-live.test.ts",
+      "receiptClass": "live"
+    },
+    {
+      "id": "externalService.github",
+      "kind": "externalService",
+      "name": "github",
+      "docs": [
+        "docs/dx.md",
+        "README.md"
+      ],
+      "checkId": "test/github/pr.test.ts",
+      "receiptClass": "live"
+    },
+    {
+      "id": "action.check",
+      "kind": "action",
+      "name": "check",
+      "docs": [
+        "action/check/action.yml",
+        "docs/dx.md"
+      ],
+      "checkId": "test/pack-install.test.ts",
+      "receiptClass": "live"
+    },
+    {
+      "id": "action.bloat",
+      "kind": "action",
+      "name": "bloat",
+      "docs": [
+        "action/bloat/action.yml",
+        "docs/dx.md"
+      ],
+      "checkId": "test/pack-install.test.ts",
+      "receiptClass": "live"
+    },
+    {
+      "id": "action.upstream",
+      "kind": "action",
+      "name": "upstream",
+      "docs": [
+        "action/upstream/action.yml",
+        "docs/dx.md"
+      ],
+      "checkId": "test/pack-install.test.ts",
+      "receiptClass": "live"
+    }
+  ]
+}

@@ -7,6 +7,11 @@
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1,
+      "description": "Optional. Absent means 1. Any other value is incompatible."
+    },
     "outDir": {
       "type": "string",
       "default": "src/slim",

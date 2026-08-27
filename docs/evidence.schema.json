@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/evidence.schema.json",
+  "title": "Slim replacement evidence.json",
+  "description": "Written by slim replace. schemaVersion 1. Never contains credentials, prompts, raw traces, or oracle source.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "slogan",
+    "package",
+    "envelopeHash",
+    "symbols",
+    "callSites",
+    "unknowns",
+    "byteDelta",
+    "fuzz",
+    "coverageHoles",
+    "residualRisk",
+    "revert"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "slogan": { "type": "string", "const": "EVIDENCE, NOT PROOF" },
+    "package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version", "family", "subpath"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" },
+        "family": { "type": "string" },
+        "subpath": { "type": "string" }
+      }
+    },
+    "envelopeHash": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "symbols": { "type": "array", "items": { "type": "string" } },
+    "callSites": { "type": "integer", "minimum": 0 },
+    "unknowns": { "type": "integer", "minimum": 0 },
+    "byteDelta": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["originalMin", "replacement", "gzipOriginal"],
+      "properties": {
+        "originalMin": { "type": ["integer", "null"] },
+        "replacement": { "type": "integer" },
+        "gzipOriginal": { "type": ["integer", "null"] },
+        "bundle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tool", "bytes", "entry"],
+          "properties": {
+            "tool": { "type": "string", "enum": ["wrangler", "esbuild"] },
+            "bytes": { "type": "integer" },
+            "entry": { "type": "string" }
+          }
+        }
+      }
+    },
+    "fuzz": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cases", "comparisons", "timerCases", "tracesReplayed", "wallMs", "seed", "disagreements"],
+      "properties": {
+        "cases": { "type": "integer", "minimum": 0 },
+        "comparisons": { "type": "integer", "minimum": 0 },
+        "timerCases": { "type": "integer", "minimum": 0 },
+        "tracesReplayed": { "type": "integer", "minimum": 0 },
+        "wallMs": { "type": "integer", "minimum": 0 },
+        "seed": { "type": "integer" },
+        "disagreements": { "type": "integer", "minimum": 0 },
+        "allowFlaky": { "type": "boolean" }
+      }
+    },
+    "coverageHoles": { "type": "array", "items": { "type": "string" } },
+    "residualRisk": { "type": "array", "items": { "type": "string" } },
+    "revert": { "$ref": "#/$defs/revert" },
+    "generation": { "$ref": "#/$defs/generation" }
+  },
+  "$defs": {
+    "revert": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["package", "version", "module", "tests", "cjsCompanion", "rewrites", "lockfile", "installCommand"],
+      "properties": {
+        "package": { "type": "string" },
+        "version": { "type": "string" },
+        "module": { "type": "string" },
+        "tests": { "type": "string" },
+        "cjsCompanion": { "type": ["string", "null"] },
+        "rewrites": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["file", "original", "replacement"],
+            "properties": {
+              "file": { "type": "string" },
+              "original": { "type": "string" },
+              "replacement": { "type": "string" }
+            }
+          }
+        },
+        "lockfile": { "type": ["string", "null"], "enum": ["npm", "pnpm", "yarn", "bun", null] },
+        "installCommand": { "type": "string" }
+      }
+    },
+    "generation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "catalogIds", "attempts", "specSource", "counterexamples"],
+      "properties": {
+        "kind": { "type": "string", "enum": ["catalog", "llm"] },
+        "catalogIds": { "type": "array", "items": { "type": "string" } },
+        "provider": { "type": "string", "enum": ["anthropic", "openai"] },
+        "model": { "type": "string" },
+        "promptHash": { "type": "string" },
+        "attempts": { "type": "integer", "minimum": 1 },
+        "specSource": {
+          "type": "string",
+          "enum": ["bundled-dts", "types-package", "subpath-dts", "readme", "envelope-only", "catalog"]
+        },
+        "limitation": { "type": "string" },
+        "counterexamples": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

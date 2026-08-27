@@ -1,6 +1,7 @@
 import { parseArgs } from "node:util";
 import { EXIT_FAIL, EXIT_OK, EXIT_USAGE, SlimExit } from "./exit.ts";
-import { errorDocument, writeJson } from "./json.ts";
+import { errorDocument, writeErrorJson, writeJson } from "./json.ts";
+import { assertDocument } from "./schema/documents.ts";
 
 const HELP = `slim — delete your dependencies
 
@@ -36,6 +37,9 @@ Replace options:
 
 Doctor options:
   --strict            dirty working tree exits 4 (default: list it, still 0 if Node/hooks ok)
+
+--json is supported on scan, inspect, check, upstream/watch, and doctor only.
+replace does not support --json; machine output is .slim/<pkg>/evidence.json and .slim/manifest.json.
 
 Exit codes: 0 ok  1 fail  2 usage  3 refused  4 environment
 Streams: JSON and human reports on stdout. Progress, warnings, and errors on stderr.
@@ -149,6 +153,57 @@ function emptyArgs(over: Partial<CliArgs>): CliArgs {
   };
 }
 
+export const COMMAND_FLAGS: Record<string, ReadonlySet<string>> = {
+  scan: new Set(["json", "help"]),
+  inspect: new Set(["json", "help", "allow-unknown"]),
+  replace: new Set([
+    "help",
+    "budget-ms",
+    "no-trace",
+    "no-pr",
+    "allow-unknown",
+    "force",
+    "out",
+    "dry-run",
+    "template-only",
+    "llm",
+    "keep-original",
+    "no-install",
+    "allow-flaky",
+    "workers",
+    "seed",
+    "max-attempts",
+  ]),
+  check: new Set(["json", "help"]),
+  upstream: new Set(["json", "help", "pr"]),
+  doctor: new Set(["json", "help", "strict"]),
+};
+
+export function flagsPresent(argv: string[]): string[] {
+  const flags: string[] = [];
+  for (const a of argv) {
+    if (a === "--") break;
+    if (a === "-h" || a === "--help") flags.push("help");
+    else if (a.startsWith("--")) flags.push(a.slice(2).split("=")[0]!);
+  }
+  return flags;
+}
+
+export function assertCommandFlags(command: string, flags: string[]): void {
+  const allowed = COMMAND_FLAGS[command];
+  if (!allowed) return;
+  for (const flag of flags) {
+    if (allowed.has(flag)) continue;
+    if (command === "replace" && flag === "json") {
+      throw new SlimExit(
+        EXIT_USAGE,
+        "replace does not support --json; machine output is .slim/<pkg>/evidence.json and .slim/manifest.json",
+      );
+    }
+    throw new SlimExit(EXIT_USAGE, `${command} does not support --${flag}`);
+  }
+}
+
 export function helpText(): string {
   return HELP;
 }
@@ -171,9 +226,10 @@ export async function runCli(argv: string[]): Promise<number> {
     if (!known.includes(args.command)) {
       const msg = `unknown command: ${args.command}`;
       process.stderr.write(`${msg}\n\n${HELP}`);
-      if (args.json) writeJson(errorDocument(EXIT_USAGE, msg));
+      if (args.json) writeErrorJson(EXIT_USAGE, msg);
       return EXIT_USAGE;
     }
+    assertCommandFlags(args.command, flagsPresent(argv.slice(1)));
     switch (args.command) {
       case "doctor":
         return await (await import("./doctor.ts")).runDoctor(args);
@@ -193,14 +249,17 @@ export async function runCli(argv: string[]): Promise<number> {
   } catch (err) {
     if (err instanceof SlimExit) {
       process.stderr.write(err.message + "\n");
+      if (err.code === EXIT_USAGE) process.stderr.write(`\n${HELP}`);
       if (args.json && !err.skipJson) {
-        writeJson(err.json ?? errorDocument(err.code, err.message));
+        const doc = err.json ?? errorDocument(err.code, err.message);
+        assertDocument("error", doc);
+        writeJson(doc);
       }
       return err.code;
     }
     const msg = err instanceof Error ? err.stack ?? err.message : String(err);
     process.stderr.write(msg + "\n");
-    if (args.json) writeJson(errorDocument(EXIT_FAIL, err instanceof Error ? err.message : String(err)));
+    if (args.json) writeErrorJson(EXIT_FAIL, err instanceof Error ? err.message : String(err));
     return EXIT_FAIL;
   }
 }

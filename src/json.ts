@@ -1,4 +1,5 @@
 import { EXIT_ENV, EXIT_OK, EXIT_REFUSED, EXIT_USAGE } from "./exit.ts";
+import { assertDocument } from "./schema/documents.ts";
 
 export const JSON_SCHEMA_VERSION = 1 as const;
 
@@ -14,6 +15,12 @@ export function statusFromExit(code: number): CliStatus {
 
 export function writeJson(value: unknown): void {
   process.stdout.write(JSON.stringify(value) + "\n");
+}
+
+export function writeErrorJson(exit: number, error: string): void {
+  const doc = errorDocument(exit, error);
+  assertDocument("error", doc);
+  writeJson(doc);
 }
 
 export function errorDocument(exit: number, error: string): {

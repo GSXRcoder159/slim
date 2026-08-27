@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/receipt.schema.json",
+  "title": "Slim qualification receipt",
+  "description": "Machine-validated record for one support-inventory check. Never contains credentials, prompts, raw traces, or oracle source. schemaVersion 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "checkId",
+    "command",
+    "fixture",
+    "environment",
+    "provider",
+    "service",
+    "startedAt",
+    "endedAt",
+    "outcome",
+    "commit",
+    "npmDigest",
+    "actionDigest",
+    "workflowRun",
+    "logDigest"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "checkId": { "type": "string", "minLength": 1 },
+    "command": { "type": ["string", "null"] },
+    "fixture": { "type": "string", "minLength": 1 },
+    "environment": { "type": ["string", "null"] },
+    "provider": { "type": ["string", "null"] },
+    "service": { "type": ["string", "null"] },
+    "startedAt": { "type": "string", "minLength": 20 },
+    "endedAt": { "type": "string", "minLength": 20 },
+    "outcome": {
+      "type": "string",
+      "enum": ["pass", "fail", "refused", "blocked", "unavailable", "not-observed", "not-verified"]
+    },
+    "commit": { "type": "string", "minLength": 40, "maxLength": 40 },
+    "npmDigest": { "type": ["string", "null"] },
+    "actionDigest": { "type": ["string", "null"] },
+    "workflowRun": { "type": ["string", "null"] },
+    "logDigest": { "type": "string", "minLength": 64, "maxLength": 64 }
+  }
+}

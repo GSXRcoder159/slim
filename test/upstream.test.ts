@@ -11,6 +11,7 @@ import { sliceExposure } from "../src/upstream/slice.ts";
 import { runUpstream, type UpstreamDeps } from "../src/upstream.ts";
 import type { OsvVuln } from "../src/upstream/osv.ts";
 import { sourceErr, sourceOk } from "../src/upstream/status.ts";
+import { minimalEvidence, minimalManifest } from "./helpers/documents.ts";
 
 test("CWE-1321 with get in envelope is exposed", () => {
   const exp = sliceExposure(
@@ -108,7 +109,6 @@ function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: strin
   const symbols = opts?.symbols ?? ["get", "set"];
   const version = opts?.version ?? "4.17.21";
   const env = minimalEnvelope(pkg, symbols, version);
-  const hash = hashEnvelope(env);
   const root = mkdtempSync(join(tmpdir(), "slim-up-"));
   writeFileSync(
     join(root, "package.json"),
@@ -117,21 +117,10 @@ function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: strin
   mkdirSync(join(root, ".slim", pkg), { recursive: true });
   mkdirSync(join(root, "src", "slim"), { recursive: true });
   const moduleRel = `src/slim/${pkg.replace(/\//g, "-")}.ts`;
-  writeFileSync(
-    join(root, ".slim", "manifest.json"),
-    JSON.stringify(
-      {
-        replacements: {
-          [pkg]: { version, envelopeHash: hash, symbols, module: moduleRel },
-        },
-      },
-      null,
-      2,
-    ),
-  );
+  writeFileSync(join(root, ".slim", "manifest.json"), JSON.stringify(minimalManifest(env, moduleRel), null, 2));
   writeFileSync(join(root, moduleRel), "export function get() {}\nexport function set(o: unknown) { return o; }\n");
   writeFileSync(join(root, ".slim", pkg, "envelope.json"), JSON.stringify(env, null, 2));
-  writeFileSync(join(root, ".slim", pkg, "evidence.json"), JSON.stringify({ envelopeHash: hash }));
+  writeFileSync(join(root, ".slim", pkg, "evidence.json"), JSON.stringify(minimalEvidence(env)));
   writeFileSync(
     join(root, "src", "slim", `${pkg.replace(/\//g, "-")}.test.ts`),
     `import { test } from "node:test";\ntest("standing", () => {});\n`,
@@ -380,7 +369,7 @@ test("missing oracle for one exposed package blocks every rewrite", async () => 
     `import { test } from "node:test";\ntest("standing", () => {});\n`,
   );
   writeFileSync(join(root, ".slim/underscore/envelope.json"), JSON.stringify(env2, null, 2));
-  writeFileSync(join(root, ".slim/underscore/evidence.json"), JSON.stringify({ envelopeHash: hash2 }));
+  writeFileSync(join(root, ".slim/underscore/evidence.json"), JSON.stringify(minimalEvidence(env2)));
   const man = JSON.parse(readFileSync(join(root, ".slim/manifest.json"), "utf8")) as {
     replacements: Record<string, { version: string; envelopeHash: string; symbols: string[]; module: string }>;
   };
@@ -606,7 +595,11 @@ test("missing envelope blocks automatic action", async () => {
 
 test("hash mismatch blocks automatic action", async () => {
   const { root } = writeFixture();
-  writeFileSync(join(root, ".slim", "lodash", "evidence.json"), JSON.stringify({ envelopeHash: "nope" }));
+  const env = JSON.parse(readFileSync(join(root, ".slim", "lodash", "envelope.json"), "utf8")) as Envelope;
+  writeFileSync(
+    join(root, ".slim", "lodash", "evidence.json"),
+    JSON.stringify(minimalEvidence(env, { envelopeHash: "0".repeat(64) })),
+  );
   await assert.rejects(
     () => runUpstream(parseCli(["upstream"]), baseDeps({ cwd: root })),
     (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /envelopeHash/i.test(err.message),
@@ -629,6 +622,6 @@ test("schema-incompatible envelope blocks automatic action", async () => {
   writeFileSync(join(root, ".slim", "lodash", "envelope.json"), JSON.stringify(env));
   await assert.rejects(
     () => runUpstream(parseCli(["upstream"]), baseDeps({ cwd: root })),
-    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /schema-incompatible/i.test(err.message),
+    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /stale-version|schema-incompatible|schemaVersion/.test(err.message),
   );
 });

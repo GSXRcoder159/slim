@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_ENV, EXIT_FAIL, EXIT_OK, SlimExit } from "./exit.ts";
 import { JSON_SCHEMA_VERSION, statusFromExit, writeJson } from "./json.ts";
+import { assertDocument, readDocument } from "./schema/documents.ts";
 import { loadProject } from "./project.ts";
 import { loadConfig } from "./config.ts";
 import { queryOsv, type OsvVuln } from "./upstream/osv.ts";
@@ -89,11 +90,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
     );
   }
   let man: Manifest;
-  try {
-    man = JSON.parse(readFileSync(manPath, "utf8")) as Manifest;
-  } catch {
-    throw new SlimExit(EXIT_FAIL, "malformed .slim/manifest.json");
-  }
+  man = readDocument("manifest", manPath, ".slim/manifest.json") as Manifest;
 
   const names = Object.keys(man.replacements ?? {});
   for (const name of names) {
@@ -311,7 +308,10 @@ function finish(
   humanOk: string | null,
   failMsg?: string,
 ): number {
-  if (args.json) writeJson(doc);
+  if (args.json) {
+    assertDocument("upstream", doc);
+    writeJson(doc);
+  }
   if (doc.exit !== EXIT_OK) {
     throw new SlimExit(doc.exit, failMsg || doc.error || "upstream failed", { skipJson: args.json });
   }

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/manifest.schema.json",
+  "title": ".slim/manifest.json",
+  "description": "Replacement index written by slim replace. Distinct from slim.json. schemaVersion 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "replacements"],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "replacements": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["version", "envelopeHash", "symbols", "module"],
+        "properties": {
+          "version": { "type": "string" },
+          "envelopeHash": { "type": "string", "minLength": 64, "maxLength": 64 },
+          "symbols": { "type": "array", "items": { "type": "string" } },
+          "module": { "type": "string" }
+        }
+      }
+    }
+  }
+}

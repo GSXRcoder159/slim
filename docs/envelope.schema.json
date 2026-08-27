@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://unpkg.com/slim/docs/envelope.schema.json",
   "title": "Slim envelope",
-  "description": "Closed or open static envelope. inspect --json stdout is { envelope, hash, decision, reason }. schemaVersion 1.",
+  "description": "Closed or open static envelope. inspect --json stdout is { schemaVersion, envelope, hash, decision, reason }. schemaVersion 1.",
   "type": "object",
   "additionalProperties": false,
   "required": [

@@ -24,7 +24,7 @@ test("docs/slim.schema.json matches config.ts fields", () => {
     properties: Record<string, { default?: unknown }>;
   };
   const keys = Object.keys(schema.properties).filter((k) => k !== "$schema").sort();
-  assert.deepEqual(keys, [...CONFIG_FIELDS].sort());
+  assert.deepEqual(keys, [...CONFIG_FIELDS, "schemaVersion"].sort());
   assert.equal(schema.properties.outDir?.default, "src/slim");
   assert.equal("dir" in schema.properties, false);
   assert.equal("fuzzIterations" in schema.properties, false);
@@ -165,7 +165,7 @@ test("command result schemas exist with required fields", () => {
   const inspect = JSON.parse(readFileSync(join(ROOT, "docs/inspect.schema.json"), "utf8")) as {
     required: string[];
   };
-  assert.deepEqual(inspect.required.sort(), ["decision", "envelope", "hash", "reason"].sort());
+  assert.deepEqual(inspect.required.sort(), ["decision", "envelope", "hash", "reason", "schemaVersion"].sort());
   const doctor = JSON.parse(readFileSync(join(ROOT, "docs/doctor.schema.json"), "utf8")) as {
     required: string[];
   };
@@ -176,6 +176,31 @@ test("command result schemas exist with required fields", () => {
     required: string[];
   };
   assert.deepEqual(upstream.required.sort(), ["conclusion", "exit", "findings", "ok", "schemaVersion", "sources", "status"].sort());
+});
+
+test("evidence, manifest, inventory, and receipt schemas are versioned", () => {
+  const evidence = JSON.parse(readFileSync(join(ROOT, "docs/evidence.schema.json"), "utf8")) as {
+    required: string[];
+    properties: { schemaVersion: { const: number } };
+  };
+  assert.equal(evidence.properties.schemaVersion.const, 1);
+  assert.ok(evidence.required.includes("schemaVersion"));
+  const man = JSON.parse(readFileSync(join(ROOT, "docs/manifest.schema.json"), "utf8")) as {
+    required: string[];
+  };
+  assert.deepEqual(man.required.sort(), ["replacements", "schemaVersion"].sort());
+  const inv = JSON.parse(readFileSync(join(ROOT, "docs/support-inventory.schema.json"), "utf8")) as {
+    required: string[];
+  };
+  assert.deepEqual(inv.required.sort(), ["entries", "schemaVersion"].sort());
+  const rec = JSON.parse(readFileSync(join(ROOT, "docs/receipt.schema.json"), "utf8")) as {
+    required: string[];
+    additionalProperties: boolean;
+  };
+  assert.equal(rec.additionalProperties, false);
+  for (const key of ["schemaVersion", "checkId", "commit", "outcome", "logDigest"]) {
+    assert.ok(rec.required.includes(key), key);
+  }
 });
 
 test("friday walkthrough documents --no-install", () => {

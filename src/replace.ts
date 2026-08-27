@@ -12,6 +12,7 @@ import { closeEnvelope } from "./envelope/close.ts";
 import { hashEnvelope } from "./envelope/hash.ts";
 import { envelopeForDisk } from "./envelope/types.ts";
 import type { Envelope, SlimValue, TraceEvent } from "./envelope/types.ts";
+import { assertDocument } from "./schema/documents.ts";
 import { refusePackage, formatRefuse } from "./scan/refuse.ts";
 import { estimatePackageSize } from "./size/estimate.ts";
 import { matchCatalog } from "./generate/catalog/index.ts";
@@ -384,7 +385,9 @@ export async function runReplace(args: CliArgs): Promise<number> {
 
     const pkgSlimDir = join(project.root, ".slim", env.package.name);
     txn.prepareWrite(join(pkgSlimDir, "envelope.json"));
-    writeFileSync(join(pkgSlimDir, "envelope.json"), JSON.stringify(envelopeForDisk(env), null, 2) + "\n");
+    const disk = envelopeForDisk(env);
+    assertDocument("envelope", disk);
+    writeFileSync(join(pkgSlimDir, "envelope.json"), JSON.stringify(disk, null, 2) + "\n");
     txn.prepareWrite(join(pkgSlimDir, "traces.meta.json"));
     writeTracesMeta(pkgSlimDir);
     injectFail("after-manifest");
@@ -505,10 +508,17 @@ function coverageHoles(env: Envelope): string[] {
 
 function writeManifest(root: string, env: Envelope, modulePath: string): void {
   const p = join(root, ".slim", "manifest.json");
-  let man: { replacements: Record<string, unknown> } = { replacements: {} };
+  let man: { schemaVersion: 1; replacements: Record<string, unknown> } = {
+    schemaVersion: 1,
+    replacements: {},
+  };
   if (existsSync(p)) {
     try {
-      man = JSON.parse(readFileSync(p, "utf8")) as typeof man;
+      const raw = JSON.parse(readFileSync(p, "utf8")) as Partial<typeof man>;
+      man = {
+        schemaVersion: 1,
+        replacements: raw.replacements && typeof raw.replacements === "object" ? raw.replacements : {},
+      };
     } catch {
       /* reset */
     }
@@ -520,6 +530,7 @@ function writeManifest(root: string, env: Envelope, modulePath: string): void {
     module: relative(root, modulePath),
   };
   mkdirSync(dirname(p), { recursive: true });
+  assertDocument("manifest", man);
   writeFileSync(p, JSON.stringify(man, null, 2) + "\n");
 }
 
@@ -543,6 +554,7 @@ function writeSlimJson(root: string, env: Envelope, modulePath: string): void {
     envelope: `.slim/${env.package.name}/envelope.json`,
     module: relative(root, modulePath),
   };
+  assertDocument("slim", cur);
   writeFileSync(p, JSON.stringify(cur, null, 2) + "\n");
 }
 

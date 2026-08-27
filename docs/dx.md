@@ -38,14 +38,15 @@ The shipped CLI uses **0–4 only**. SIGINT is the process default (typically 13
 
 `slim-bloat` (the Action) runs the compiled bloat checker (`action/run.mjs bloat`), not `scan --diff`. Default exit 0 when the PR comment path is unused. The action fails (exit 1) when a production `BLOAT_PACKAGES` dependency has no Slim replacement.
 
-### Global flags (every command)
+### Flags
 
-```
--h, --help
-    --json
-```
+`-h` / `--help` is accepted on every command.
 
-`--version`, `--cwd`, `--quiet`, and `--verbose` are **not** shipped. `--help` with a command prints that command’s help and exits 0. Bare `slim` and `slim --help` print top-level help on stdout and exit 0. An unknown command prints `unknown command:` plus help on stderr and exits 2.
+`--json` is **not** global. It is supported on `scan`, `inspect`, `check`, `upstream`/`watch`, and `doctor` only. `replace --json` is a usage error (exit 2): usage on stderr and a `docs/error.schema.json` document on stdout. Successful replace machine output is `.slim/<pkg>/evidence.json`, `.slim/manifest.json`, and `slim.json` replacements.
+
+`--version`, `--cwd`, `--quiet`, and `--verbose` are **not** shipped. `--help` with a command prints that command’s help and exits 0. Bare `slim` and `slim --help` print top-level help on stdout and exit 0. An unknown command prints `unknown command:` plus help on stderr and exits 2. Unsupported flags on a known command are usage (exit 2).
+
+The advertised product surface is [`docs/support-inventory.json`](./support-inventory.json). Help and this file may name only those entries.
 
 Shipped top-level help is the `HELP` string in `src/cli.ts` (`slim --help`). Keep [`help.txt`](./help.txt) equal to that string; `test/cli.test.ts` diffs them.
 
@@ -68,7 +69,7 @@ Does not network. Unpacked or estimated size is local; missing size is `unknown`
 One package. Writes `.slim/<pkg>/envelope.json` (replace depends on it). This is the “should I?” command.
 
 ```
-    --json              One document: { envelope, hash, decision, reason }
+    --json              One document: { schemaVersion, envelope, hash, decision, reason }
     --allow-unknown     Ready despite unknowns; never claims closed
 ```
 

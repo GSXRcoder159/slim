@@ -11,6 +11,7 @@ import { refusePackage, BLOAT_PACKAGES } from "./scan/refuse.ts";
 import { lockfileDirectDeps, type LockfileResult } from "./scan/lockfile-deps.ts";
 import { envelopeForDisk } from "./envelope/types.ts";
 import type { Envelope, ImportSite } from "./envelope/types.ts";
+import { assertDocument } from "./schema/documents.ts";
 
 export const SCAN_SCHEMA_VERSION = 2 as const;
 
@@ -199,6 +200,7 @@ export function scanProject(cwd = process.cwd()): ScanReport {
 }
 
 export function scanReportJson(report: ScanReport): string {
+  assertDocument("scan", report);
   return JSON.stringify(report, null, 2) + "\n";
 }
 
@@ -257,7 +259,9 @@ export function writeEnvelope(root: string, pkg: string, env: Envelope): string 
   const dir = join(root, ".slim", pkg);
   mkdirSync(dir, { recursive: true });
   const p = join(dir, "envelope.json");
-  writeFileSync(p, JSON.stringify(envelopeForDisk(env), null, 2) + "\n");
+  const disk = envelopeForDisk(env);
+  assertDocument("envelope", disk);
+  writeFileSync(p, JSON.stringify(disk, null, 2) + "\n");
   return p;
 }
 

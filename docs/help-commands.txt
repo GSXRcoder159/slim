@@ -16,7 +16,7 @@ slim inspect — show call sites, envelope, and whether Slim will try
 Usage:
   slim inspect <pkg> [--json] [--allow-unknown]
 
-      --json             { envelope, hash, decision, reason } on stdout
+      --json             { schemaVersion, envelope, hash, decision, reason } on stdout
       --allow-unknown    generate-ready despite unknowns (never claimed closed)
 
 Writes .slim/<pkg>/envelope.json. Exit 0 if Slim would try (closed, or
@@ -47,6 +47,7 @@ Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate/rep
       GITHUB_TOKEN when a PR is requested, missing origin, LLM HTTP/timeout,
       missing package manager, or traces required.
       `--force` does not skip tracing.
+      `--json` is not supported. Exit 2 with usage on stderr and docs/error.schema.json on stdout.
 
 Example:  slim replace lodash
 ------------------------------------------------------------------------

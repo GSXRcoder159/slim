@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { EXIT_FAIL, SlimExit } from "./exit.ts";
+import { assertDocument } from "./schema/documents.ts";
 
 export interface SlimConfig {
   outDir: string;
@@ -34,6 +35,7 @@ export function loadConfig(projectRoot: string): SlimConfig {
   } catch {
     throw new SlimExit(EXIT_FAIL, `malformed ${basename(path)}`);
   }
+  assertDocument("slim", raw, basename(path));
   return {
     outDir: raw.outDir ?? DEFAULT_CONFIG.outDir,
     budgetMs: raw.budgetMs ?? DEFAULT_CONFIG.budgetMs,

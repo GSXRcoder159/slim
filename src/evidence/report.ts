@@ -6,6 +6,7 @@ import { gzipGuess } from "../size/estimate.ts";
 import { maybeBundleBytes, type BundleDelta } from "../size/bundle.ts";
 import { formatRevert, type RevertPlan } from "../rewrite/revert.ts";
 import type { SpecSource } from "../generate/public-api.ts";
+import { assertDocument } from "../schema/documents.ts";
 
 const EXAMPLE_CAP = 500;
 
@@ -21,7 +22,10 @@ export interface GenerationEvidence {
   counterexamples: string[];
 }
 
+export const EVIDENCE_SCHEMA_VERSION = 1 as const;
+
 export interface EvidenceJson {
+  schemaVersion: typeof EVIDENCE_SCHEMA_VERSION;
   slogan: "EVIDENCE, NOT PROOF";
   package: Envelope["package"];
   envelopeHash: string;
@@ -70,6 +74,7 @@ export function writeEvidence(opts: {
   const bundle = opts.bundle === undefined ? maybeBundleBytes(opts.root) : opts.bundle;
   const generation = completeGeneration(opts.catalogIds, opts.generation);
   const json: EvidenceJson = {
+    schemaVersion: EVIDENCE_SCHEMA_VERSION,
     slogan: "EVIDENCE, NOT PROOF",
     package: opts.env.package,
     envelopeHash: hash,
@@ -88,6 +93,7 @@ export function writeEvidence(opts: {
     revert: opts.revert,
     generation,
   };
+  assertDocument("evidence", json);
   const md = renderEvidenceMd(json, opts.env, opts.catalogIds);
   const mdPath = join(dir, "evidence.md");
   const jsonPath = join(dir, "evidence.json");
