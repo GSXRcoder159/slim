@@ -162,6 +162,35 @@ export function sourceReceipt(opts: {
   };
 }
 
+export function releaseReceipt(opts: {
+  fixture: string;
+  commit: string;
+  npmDigest: string;
+  actionDigest: string;
+  startedAt: Date;
+  endedAt: Date;
+  log: string;
+  workflowRun?: string | null;
+}): QualificationReceipt {
+  return {
+    schemaVersion: 1,
+    checkId: "test/release-live.test.ts",
+    command: null,
+    fixture: opts.fixture,
+    environment: `${process.platform} node-${process.version}`,
+    provider: null,
+    service: "npm-publish",
+    startedAt: opts.startedAt.toISOString(),
+    endedAt: opts.endedAt.toISOString(),
+    outcome: "pass",
+    commit: opts.commit,
+    npmDigest: opts.npmDigest,
+    actionDigest: opts.actionDigest,
+    workflowRun: opts.workflowRun ?? null,
+    logDigest: createHash("sha256").update(opts.log).digest("hex"),
+  };
+}
+
 export function actionReceipt(opts: {
   command: "check" | "bloat" | "upstream";
   fixture: string;

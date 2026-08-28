@@ -12,6 +12,7 @@ import {
   sourceReceipt,
   githubReceipt,
   actionReceipt,
+  releaseReceipt,
   writeReceipt,
 } from "../src/support/receipts.ts";
 
@@ -250,6 +251,26 @@ test("qualify wrong service on OSV receipt fails closed", () => {
 });
 
 const ACTION = "c".repeat(64);
+
+test("releaseReceipt is schema-valid with npm-publish service and both digests", () => {
+  const rec = releaseReceipt({
+    fixture: "release-rehearse",
+    commit: COMMIT,
+    npmDigest: NPM,
+    actionDigest: ACTION,
+    startedAt: new Date("2026-08-27T14:00:00.000Z"),
+    endedAt: new Date("2026-08-27T14:00:01.000Z"),
+    log: "rehearse:dry-run:ok",
+  });
+  const parsed = parseReceipt(rec);
+  assert.equal(parsed.checkId, "test/release-live.test.ts");
+  assert.equal(parsed.command, null);
+  assert.equal(parsed.service, "npm-publish");
+  assert.equal(parsed.npmDigest, NPM);
+  assert.equal(parsed.actionDigest, ACTION);
+  assert.equal(parsed.outcome, "pass");
+});
+
 const actionEntry: InventoryEntry = {
   id: "action.check",
   kind: "action",

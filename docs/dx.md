@@ -2,7 +2,7 @@
 
 Wedge: a serverless/edge engineer on a Friday. CVE in a library they use two functions of. They run `slim replace lodash`, read a slice readable in one sitting (~250 lines for get+debounce) plus an evidence report, merge before standup.
 
-Money and billing are out of scope. There is no SaaS. Slim is a CLI plus three GitHub Actions that call that CLI.
+Money and billing are out of scope. There is no SaaS. Slim is a CLI plus three GitHub Actions that call that CLI. A `v*` tag publishes only when it matches `package.json` and CHANGELOG; the workflow publishes the packed tarball (never a rebuilt tree) and attaches compiled Action files to that version tag.
 
 Parser: `node:util.parseArgs`. No commander, yargs, cac, meow. Subcommands are a `switch` on `positionals[0]`. Alias `watch` → `upstream`.
 

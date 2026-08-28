@@ -237,6 +237,14 @@ export function canonicalInventory(): SupportInventory {
       checkId: "test/github/pr-live.test.ts",
       receiptClass: "live",
     }),
+    e({
+      id: "externalService.npm-publish",
+      kind: "externalService",
+      name: "npm-publish",
+      docs: ["docs/repo.md", ".github/workflows/release.yml"],
+      checkId: "test/release-live.test.ts",
+      receiptClass: "live",
+    }),
   );
   for (const name of ["check", "bloat", "upstream"] as const) {
     entries.push(

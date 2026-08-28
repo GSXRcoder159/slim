@@ -4,16 +4,24 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      rehearse:
+        description: Rehearse without publishing or pushing tags
+        type: boolean
+        default: true
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "22.18"
@@ -23,18 +31,35 @@ jobs:
           bun-version: latest
       - run: corepack enable
       - run: npm ci
+      - name: identity gate
+        run: node --experimental-strip-types scripts/release-gate.ts --mode identity --registry https://registry.npmjs.org
       - run: npm run build
       - run: npm test
       - name: n-gram similarity gate
         run: node --experimental-strip-types scripts/similarity-gate.ts
-      - name: pack and publish dry-run
+      - name: pack once
         run: |
           PACK_DIR="${RUNNER_TEMP:-$(mktemp -d)}"
-          npm pack --pack-destination "$PACK_DIR"
-          npm publish --dry-run
-          node -e "const {createHash}=require('crypto');const {readFileSync,readdirSync}=require('fs');const dir=process.env.PACK_DIR;const t=readdirSync(dir).find(f=>f.endsWith('.tgz'));if(!t) throw new Error('missing tarball');const p=require('path').join(dir,t);const h=createHash('sha256').update(readFileSync(p)).digest('hex');console.log('artifact',t,'sha256',h);"
-        env:
-          PACK_DIR: ${{ runner.temp }}
-      - run: npm publish --provenance
+          npm pack --ignore-scripts --pack-destination "$PACK_DIR"
+          TAR="$(ls "$PACK_DIR"/*.tgz)"
+          test -n "$TAR"
+          echo "TARBALL=$TAR" >> "$GITHUB_ENV"
+      - name: artifact gate
+        run: node --experimental-strip-types scripts/release-gate.ts --mode artifacts --tarball "$TARBALL" --registry https://registry.npmjs.org --commit "$GITHUB_SHA"
+      - name: rehearse or publish the packed tarball
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          MODE=rehearse
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then MODE=publish; fi
+          if [ "${{ github.event.inputs.rehearse }}" = "false" ]; then MODE=publish; fi
+          EXTRA=()
+          if [ "$MODE" = "publish" ]; then EXTRA+=(--receipts qualification/receipts); fi
+          node --experimental-strip-types scripts/release-gate.ts \
+            --mode "$MODE" \
+            --tarball "$TARBALL" \
+            --registry https://registry.npmjs.org \
+            --commit "$GITHUB_SHA" \
+            --parent-sha "$GITHUB_SHA" \
+            --delete-tarball \
+            "${EXTRA[@]}"

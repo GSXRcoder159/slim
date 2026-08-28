@@ -1,0 +1,411 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { EXIT_ENV, EXIT_FAIL, EXIT_REFUSED, SlimExit } from "../src/exit.ts";
+import { ACTION_WRAPPERS, actionManifest } from "../action/digest.mjs";
+import { actionDigestFromPack, npmContentDigest } from "../src/release/digest.ts";
+import {
+  ADVERTISED_ACTION_TAG,
+  assertCleanTree,
+  assertPackageIdentity,
+  assertRegistry,
+  assertVersionIdentity,
+  assertWorkflowPermissions,
+  changelogVersion,
+  floatingTag,
+  packageVersion,
+  versionTag,
+} from "../src/release/identity.ts";
+import { attachCompiledTree, rollbackAttach } from "../src/release/attach.ts";
+import {
+  assertIdentity,
+  assertTarballMatchesRoot,
+  npmPublishArgs,
+  npmPublishTarball,
+  runReleaseGate,
+} from "../src/release/gate.ts";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const TMP = join(ROOT, ".tmp");
+
+function git(cwd: string, args: string[]): string {
+  return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
+}
+
+function initReleaseFixture(opts?: {
+  version?: string;
+  changelog?: string;
+  name?: string;
+  repository?: string;
+  tag?: string | null;
+}): string {
+  mkdirSync(TMP, { recursive: true });
+  const root = mkdtempSync(join(TMP, "slim-rel-id-"));
+  const version = opts?.version ?? "0.1.0";
+  git(root, ["init", "--template=", "-b", "main"]);
+  git(root, ["config", "user.email", "slim@test"]);
+  git(root, ["config", "user.name", "slim"]);
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify(
+      {
+        name: opts?.name ?? "slim",
+        version,
+        repository: { type: "git", url: opts?.repository ?? "git+https://github.com/slim-hq/slim.git" },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  writeFileSync(join(root, "CHANGELOG.md"), opts?.changelog ?? `# Changelog\n\n## ${version}\n\nNotes.\n`);
+  mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+  writeFileSync(
+    join(root, ".github", "workflows", "release.yml"),
+    `name: release
+on:
+  push:
+    tags: ["v*"]
+permissions:
+  id-token: write
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ok
+`,
+  );
+  git(root, ["add", "package.json", "CHANGELOG.md", ".github"]);
+  git(root, ["commit", "-m", "init"]);
+  if (opts?.tag !== null) {
+    git(root, ["tag", opts?.tag ?? `v${version}`]);
+  }
+  return root;
+}
+
+function writePackTree(dir: string, files: Record<string, string>): void {
+  for (const [rel, body] of Object.entries(files)) {
+    const dest = join(dir, rel);
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, body);
+  }
+}
+
+function tarCreate(work: string, tarball: string): void {
+  execFileSync("tar", ["-czf", tarball, "-C", work, "package"], {
+    encoding: "utf8",
+    env: { ...process.env, COPYFILE_DISABLE: "1" },
+  });
+}
+
+function isSlimExit(err: unknown, code: number, re: RegExp): boolean {
+  return err instanceof SlimExit && err.code === code && re.test(err.message);
+}
+
+test("versionTag and floatingTag for 0.x advertise v1", () => {
+  assert.equal(versionTag("0.1.0"), "v0.1.0");
+  assert.equal(floatingTag("0.1.0"), "v1");
+  assert.equal(ADVERTISED_ACTION_TAG, "v1");
+  assert.equal(floatingTag("1.2.3"), "v1");
+  assert.equal(floatingTag("2.0.0"), "v2");
+});
+
+test("tag that does not exactly match package.json version is refused", () => {
+  const root = initReleaseFixture({ version: "0.1.0" });
+  try {
+    for (const tag of ["v1", "v0.1", "v0.1.0-beta", "0.1.0", "V0.1.0"]) {
+      assert.throws(
+        () => assertVersionIdentity({ root, tag }),
+        (err: unknown) => isSlimExit(err, EXIT_REFUSED, /tag/i),
+        tag,
+      );
+    }
+    assert.equal(packageVersion(root), "0.1.0");
+    assert.equal(changelogVersion(root), "0.1.0");
+    assertVersionIdentity({ root, tag: "v0.1.0" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("changelog heading that does not match package.json version is refused", () => {
+  const root = initReleaseFixture({ version: "0.1.0", changelog: "# Changelog\n\n## 0.2.0\n" });
+  try {
+    assert.equal(changelogVersion(root), "0.2.0");
+    assert.throws(
+      () => assertVersionIdentity({ root, tag: "v0.1.0" }),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /changelog/i),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("dirty and untracked trees are refused", () => {
+  const root = initReleaseFixture();
+  try {
+    assertCleanTree(root);
+    writeFileSync(join(root, "package.json"), readFileSync(join(root, "package.json"), "utf8") + "\n");
+    assert.throws(
+      () => assertCleanTree(root),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /dirty/i),
+    );
+    git(root, ["checkout", "--", "package.json"]);
+    writeFileSync(join(root, "untracked.txt"), "nope\n");
+    assert.throws(
+      () => assertCleanTree(root),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /dirty|untracked/i),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("wrong package name or repository identity is refused", () => {
+  const other = initReleaseFixture({ name: "other" });
+  try {
+    assert.throws(
+      () => assertPackageIdentity(other),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /package|name/i),
+    );
+  } finally {
+    rmSync(other, { recursive: true, force: true });
+  }
+  const repo = initReleaseFixture({ repository: "git+https://github.com/acme/slim.git" });
+  try {
+    assert.throws(
+      () => assertPackageIdentity(repo),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /repository/i),
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+  const ok = initReleaseFixture();
+  try {
+    assertPackageIdentity(ok);
+  } finally {
+    rmSync(ok, { recursive: true, force: true });
+  }
+});
+
+test("non-npmjs registry is refused", () => {
+  assert.throws(
+    () => assertRegistry("https://pkg.example.com"),
+    (err: unknown) => isSlimExit(err, EXIT_REFUSED, /registry/i),
+  );
+  assertRegistry("https://registry.npmjs.org");
+  assertRegistry("https://registry.npmjs.org/");
+});
+
+test("workflow missing provenance or contents permission is refused", () => {
+  const missingId = `name: release
+permissions:
+  contents: write
+jobs: {}
+`;
+  assert.throws(
+    () => assertWorkflowPermissions(missingId),
+    (err: unknown) => isSlimExit(err, EXIT_ENV, /id-token/i),
+  );
+  const missingContents = `name: release
+permissions:
+  id-token: write
+jobs: {}
+`;
+  assert.throws(
+    () => assertWorkflowPermissions(missingContents),
+    (err: unknown) => isSlimExit(err, EXIT_ENV, /contents/i),
+  );
+  assertWorkflowPermissions(`permissions:
+  id-token: write
+  contents: write
+`);
+});
+
+test("npm content digest is stable across tar mtimes and independent of wrapper bytes", () => {
+  const work = mkdtempSync(join(tmpdir(), "slim-rel-tar-"));
+  try {
+    writePackTree(join(work, "package"), {
+      "package.json": '{"name":"slim","version":"0.1.0"}\n',
+      "dist/main.js": "export const n = 1;\n",
+      "README.md": "hi\n",
+    });
+    const a = join(work, "a.tgz");
+    const b = join(work, "b.tgz");
+    tarCreate(work, a);
+    utimesSync(join(work, "package", "dist/main.js"), new Date("2020-01-01"), new Date("2020-01-01"));
+    tarCreate(work, b);
+    const digestA = npmContentDigest(a);
+    const digestB = npmContentDigest(b);
+    assert.match(digestA, /^[0-9a-f]{64}$/);
+    assert.equal(digestA, digestB);
+    const rawA = createHash("sha256").update(readFileSync(a)).digest("hex");
+    const rawB = createHash("sha256").update(readFileSync(b)).digest("hex");
+    assert.notEqual(rawA, rawB, "tar wrapper bytes must not be the identity");
+    writeFileSync(join(work, "package", "dist/main.js"), "export const n = 2;\n");
+    const c = join(work, "c.tgz");
+    tarCreate(work, c);
+    assert.notEqual(npmContentDigest(c), digestA);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test("this repository package.json and CHANGELOG agree on 0.1.0", () => {
+  assert.equal(packageVersion(ROOT), "0.1.0");
+  assert.equal(changelogVersion(ROOT), "0.1.0");
+  assert.equal(versionTag(packageVersion(ROOT)), "v0.1.0");
+  assertPackageIdentity(ROOT);
+});
+
+test("npm publish args always include the tarball path and never a bare publish", () => {
+  const tarball = "/tmp/slim-0.1.0.tgz";
+  assert.deepEqual(npmPublishArgs(tarball, { dryRun: true, provenance: true }), [
+    "publish",
+    tarball,
+    "--dry-run",
+    "--provenance",
+  ]);
+  assert.deepEqual(npmPublishArgs(tarball, { dryRun: false, provenance: true }), [
+    "publish",
+    tarball,
+    "--provenance",
+  ]);
+});
+
+test("npm publish without GITHUB_ACTIONS is refused", () => {
+  const prev = process.env.GITHUB_ACTIONS;
+  delete process.env.GITHUB_ACTIONS;
+  mkdirSync(TMP, { recursive: true });
+  const tarball = join(TMP, "missing-slim.tgz");
+  writeFileSync(tarball, "not-a-real-tarball");
+  try {
+    assert.throws(
+      () => npmPublishTarball(tarball, { dryRun: false, provenance: true, cwd: ROOT }),
+      (err: unknown) => isSlimExit(err, EXIT_ENV, /outside GitHub Actions/),
+    );
+  } finally {
+    rmSync(tarball, { force: true });
+    if (prev === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = prev;
+  }
+});
+
+function writeActionPack(dir: string): string {
+  for (const f of ACTION_WRAPPERS) {
+    const dest = join(dir, f);
+    mkdirSync(dirname(dest), { recursive: true });
+    cpSync(join(ROOT, f), dest);
+  }
+  mkdirSync(join(dir, "dist"), { recursive: true });
+  writeFileSync(join(dir, "dist/main.js"), "export const n = 1;\n");
+  writeFileSync(join(dir, "package.json"), '{"name":"slim","version":"0.1.0"}\n');
+  const sha = actionManifest(dir).sha256;
+  writeFileSync(
+    join(dir, "dist/.slim-build.json"),
+    `${JSON.stringify({ ok: true, files: ["main.js"], sha256: "a".repeat(64), actionSha256: sha }, null, 2)}\n`,
+  );
+  return sha;
+}
+
+test("packed Action digest matches stamp and current tree; a post-pack rewrite fails closed", () => {
+  mkdirSync(TMP, { recursive: true });
+  const work = mkdtempSync(join(TMP, "slim-rel-art-"));
+  try {
+    const packDir = join(work, "package");
+    const sha = writeActionPack(packDir);
+    const tarball = join(work, "slim.tgz");
+    tarCreate(work, tarball);
+    const id = assertTarballMatchesRoot(tarball, packDir);
+    assert.equal(id.actionDigest, sha);
+    assert.equal(id.actionDigest, actionDigestFromPack(packDir));
+    assert.equal(actionManifest(packDir).sha256, actionDigestFromPack(packDir));
+    assert.match(id.npmDigest, /^[0-9a-f]{64}$/);
+    const rewritten = join(work, "rewritten");
+    cpSync(packDir, rewritten, { recursive: true });
+    writeFileSync(join(rewritten, "dist/main.js"), "export const n = 2;\n");
+    assert.throws(
+      () => assertTarballMatchesRoot(tarball, rewritten),
+      (err: unknown) => isSlimExit(err, EXIT_FAIL, /Action digest mismatch/),
+    );
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test("identity gate passes a clean matching fixture and refuses a dirty one", () => {
+  const root = initReleaseFixture();
+  try {
+    assertIdentity(root, "v0.1.0", "https://registry.npmjs.org");
+    const out = runReleaseGate({
+      root,
+      mode: "identity",
+      tag: "v0.1.0",
+      registryUrl: "https://registry.npmjs.org",
+    });
+    assert.equal(out.tag, "v0.1.0");
+    assert.equal(out.floatingTag, "v1");
+    writeFileSync(join(root, "extra.txt"), "nope\n");
+    assert.throws(
+      () =>
+        runReleaseGate({
+          root,
+          mode: "identity",
+          tag: "v0.1.0",
+          registryUrl: "https://registry.npmjs.org",
+        }),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /dirty|untracked/i),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("attachCompiledTree moves version and floating tags onto the pack tree and rollback restores them", () => {
+  const root = initReleaseFixture();
+  mkdirSync(TMP, { recursive: true });
+  const packWork = mkdtempSync(join(TMP, "slim-rel-att-"));
+  try {
+    const packRoot = join(packWork, "package");
+    writeActionPack(packRoot);
+    writeFileSync(join(packRoot, "dist/main.js"), "export const attached = 1;\n");
+    const parent = git(root, ["rev-parse", "HEAD"]);
+    const before = git(root, ["rev-parse", "refs/tags/v0.1.0"]);
+    assert.equal(before, parent);
+    const attached = attachCompiledTree({
+      gitRoot: root,
+      packRoot,
+      parentSha: parent,
+      versionTag: "v0.1.0",
+      floatingTag: "v1",
+      push: false,
+    });
+    assert.match(attached.commit, /^[0-9a-f]{40}$/);
+    assert.equal(git(root, ["rev-parse", "refs/tags/v0.1.0"]), attached.commit);
+    assert.equal(git(root, ["rev-parse", "refs/tags/v1"]), attached.commit);
+    const files = git(root, ["ls-tree", "-r", "--name-only", attached.commit]);
+    assert.match(files, /dist\/main\.js/);
+    assert.match(files, /action\/run\.mjs/);
+    assert.doesNotMatch(files, /^src\//m);
+    rollbackAttach(attached, root);
+    assert.equal(git(root, ["rev-parse", "refs/tags/v0.1.0"]), parent);
+    assert.throws(() => git(root, ["rev-parse", "--verify", "refs/tags/v1"]));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(packWork, { recursive: true, force: true });
+  }
+});

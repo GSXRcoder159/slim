@@ -1,10 +1,10 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { npmContentDigest } from "../src/release/digest.ts";
 import { canonicalInventory } from "../src/support/inventory.ts";
 import { sourceReceipt, writeReceipt } from "../src/support/receipts.ts";
 import { installFixture, packSlim, ROOT, runSlim } from "./helpers/llm-replace.ts";
@@ -22,7 +22,7 @@ before(() => {
   const packed = packSlim();
   packDir = packed.packDir;
   tarball = packed.tarball;
-  npmDigest = createHash("sha256").update(readFileSync(tarball)).digest("hex");
+  npmDigest = npmContentDigest(tarball);
 });
 
 after(() => {

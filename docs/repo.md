@@ -19,7 +19,7 @@ slim/
     replace.ts
     scan.ts / inspect.ts / check.ts
     node-min.ts             # MIN_NODE_LABEL 22.18
-    analyze/ envelope/ fuzz/ generate/ github/ rewrite/ trace/ upstream/ size/ evidence/
+    analyze/ envelope/ fuzz/ generate/ github/ release/ rewrite/ trace/ upstream/ size/ evidence/
   test/                     # node:test, including test/catalog/ and test/github/
   fixtures/
     lodash-get-debounce/    # golden Worker-shaped replace artifact
@@ -28,7 +28,7 @@ slim/
     lodash-dynamic-refuse/ native-addon-refuse/
   action/                   # check, bloat, upstream composites → action/run.mjs
   docs/                     # dx, packages, schemas, examples
-  scripts/                  # build.mjs, similarity-gate, refresh-golden, measure-claims, qualify-receipts
+  scripts/                  # build.mjs, similarity-gate, refresh-golden, measure-claims, qualify-receipts, release-gate
   .github/workflows/        # ci (OS × Node matrix + golden-refresh), release, slim-check, slim-bloat, slim-upstream
 ```
 
@@ -71,7 +71,7 @@ Slice identity is `.slim/<pkg>/envelope.json` plus the module under `src/slim/`.
 - **LICENSE:** MIT for the CLI. Generated slices are SPDX MIT. Do not copy upstream LICENSE files into user trees. n-gram similarity is a CI heuristic, not a legal opinion.
 - **CONTRIBUTING / SECURITY / CODE_OF_CONDUCT:** as in those files. Report Slim bugs privately; a slice mismatch is a Slim bug.
 - **CI:** Linux, macOS, Windows × Node 22.18 and 24, plus a required `golden-refresh` job (`refresh:golden -- --check`). Node 26 Current is not in CI until LTS.
-- **Release:** tag `v*` → test, similarity, pack, `npm publish --dry-run`, sha256, then `npm publish --provenance`.
+- **Release:** tag `vX.Y.Z` must equal `package.json` and the first CHANGELOG `##` heading. The workflow runs identity, test, similarity, then `npm pack --ignore-scripts` once. Dry-run, provenance, and `npm publish` all take that tarball path — never a bare `npm publish` that would rebuild. `workflow_dispatch` rehearses by default (no publish, no tag push). A successful publish attaches the extracted pack as a child commit and moves `vX.Y.Z` plus the advertised Action pin (`v1` during 0.x) onto it so `uses: slim-hq/slim/action/check@v1` has compiled `dist/`.
 - **Actions:** published `uses: slim-hq/slim/action/check@v1` (and bloat/upstream) run only compiled `dist/github/*-action.js`. Missing or stale distributable code exits 4. This repo gitignores `dist/`; dogfood workflows `npm run build` then `uses: ./action/*`. Published tags must include the compiled Action files.
 
 No `packages/` monorepo, no telemetry, no commander/chalk/ora, no hosted advisory proxy.

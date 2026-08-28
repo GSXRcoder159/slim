@@ -47,7 +47,7 @@ Exit codes: `0` ok · `1` fail · `2` usage · `3` refused / no catalog and no L
 
 ## GitHub Actions
 
-Published Actions (`slim-hq/slim/action/check@v1`, `bloat`, `upstream`) run only compiled distributable code. Missing or stale `dist/` is exit 4, not a source fallback.
+Published Actions (`slim-hq/slim/action/check@v1`, `bloat`, `upstream`) run only compiled distributable code. Missing or stale `dist/` is exit 4, not a source fallback. The release workflow publishes the exact packed tarball and attaches that pack to `vX.Y.Z` and `v1` so those tags contain `dist/`.
 
 Every consumer workflow needs checkout, Node `>=22.18`, and `npm ci` before `uses:`. Copy [`docs/examples/slim-check.yml`](docs/examples/slim-check.yml), [`slim-bloat.yml`](docs/examples/slim-bloat.yml), and [`slim-watch.yml`](docs/examples/slim-watch.yml). The upstream Action needs `contents: write` and `pull-requests: write` plus `GITHUB_TOKEN` when it opens a PR.
 

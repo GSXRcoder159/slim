@@ -41,6 +41,7 @@
     "test": "node --experimental-strip-types --test --test-reporter=spec test/*.test.ts test/*/*.test.ts",
     "similarity": "node --experimental-strip-types scripts/similarity-gate.ts",
     "qualify": "node --experimental-strip-types scripts/qualify-receipts.ts",
+    "release:gate": "node --experimental-strip-types scripts/release-gate.ts",
     "slim": "node --experimental-strip-types src/main.ts",
     "refresh:golden": "node --experimental-strip-types scripts/refresh-golden-fixture.ts",
     "measure:claims": "node --experimental-strip-types scripts/measure-claims.ts"

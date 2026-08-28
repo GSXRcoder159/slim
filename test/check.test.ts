@@ -344,10 +344,12 @@ test("release.yml publishes with provenance on v* tags", () => {
   assert.match(yml, /tags:/);
   assert.match(yml, /v\*/);
   assert.match(yml, /id-token:\s*write/);
-  assert.match(yml, /contents:\s*read/);
-  assert.match(yml, /npm publish --provenance/);
+  assert.match(yml, /contents:\s*write/);
+  assert.match(yml, /release-gate/);
+  assert.match(yml, /--tarball/);
   assert.match(yml, /NODE_AUTH_TOKEN:\s*\$\{\{\s*secrets\.NPM_TOKEN\s*\}\}/);
   assert.match(yml, /registry-url:/);
+  assert.doesNotMatch(yml, /^\s+- run: npm publish --provenance\s*$/m);
 });
 
 test("action.yml files invoke action/run.mjs and require Node 22.18", () => {

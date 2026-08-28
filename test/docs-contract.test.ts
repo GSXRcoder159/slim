@@ -184,18 +184,28 @@ test("LLM prompt does not claim not-derived", () => {
 });
 
 
-test("release qualifies before provenance publish", () => {
+test("release qualifies identity and packed tarball before provenance publish", () => {
   const rel = readFileSync(join(ROOT, ".github/workflows/release.yml"), "utf8");
+  assert.match(rel, /release-gate/);
+  assert.match(rel, /--mode identity/);
   assert.match(rel, /npm test/);
   assert.match(rel, /similarity-gate/);
+  assert.match(rel, /ignore-scripts/);
   assert.match(rel, /pack-destination/);
-  assert.match(rel, /npm publish --dry-run/);
-  assert.match(rel, /sha256/);
-  const publish = rel.lastIndexOf("npm publish --provenance");
-  const dry = rel.indexOf("npm publish --dry-run");
-  const test = rel.indexOf("npm test");
-  assert.ok(test >= 0 && dry >= 0 && publish >= 0);
-  assert.ok(test < dry && dry < publish, "test and dry-run must precede provenance publish");
+  assert.match(rel, /id-token:\s*write/);
+  assert.match(rel, /contents:\s*write/);
+  assert.match(rel, /registry-url:\s*https:\/\/registry\.npmjs\.org/);
+  const identity = rel.indexOf("--mode identity");
+  const pack = rel.indexOf("ignore-scripts");
+  const artifacts = rel.indexOf("--mode artifacts");
+  const publish = rel.indexOf('--mode "$MODE"');
+  assert.ok(identity >= 0 && pack >= 0 && artifacts >= 0 && publish >= 0);
+  assert.ok(
+    identity < pack && pack < artifacts && artifacts < publish,
+    "identity then pack then artifact gate then publish/rehearse",
+  );
+  assert.doesNotMatch(rel, /^\s+- run: npm publish --provenance\s*$/m);
+  assert.match(rel, /--tarball "\$TARBALL"/);
 });
 
 test("consumer Action examples include checkout, setup-node, and npm ci", () => {
