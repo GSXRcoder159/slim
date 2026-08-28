@@ -249,4 +249,4 @@ Per third-party package name:
 - **Verdict** `candidate` vs `review` is a ranking heuristic (known-large / few **runtime** sites). `refuse` is the refuse table. `unused` is declared with no runtime import (including type-only-only). Scan never emits `slim`.
 - **Size provenance** is `measured` (complete unpacked walk), `estimated` (known min table), `partial` (walk hit a cap, unreadable entry, or omitted file), or `unknown`. `gzipBytes` is always a 0.36 guess of `minBytes`.
 
-Human output lists unused and undeclared rows. `inspect` / `replace` close an envelope; scan does not.
+Human output lists unused and undeclared rows. `inspect` / `replace` close an envelope; scan does not. `inspect` closes only on represented runtime use (call sites), never on import or re-export presence alone.

@@ -29,7 +29,10 @@ export type UnknownKind =
   | "namespace-escape"
   | "eval"
   | "ts-any"
-  | "unresolved-shape";
+  | "unresolved-shape"
+  | "side-effect-import"
+  | "unobserved-import"
+  | "unresolved-reexport";
 
 export interface PackageRef {
   name: string;

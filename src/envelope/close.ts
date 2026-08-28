@@ -27,6 +27,8 @@ export function closeEnvelope(
     Boolean(opts?.allowUnknown) &&
     unmatched.length === 0;
 
+  const hasBehavior = env.symbols.some((s) => s.callSites.length > 0);
+
   let confidence: Confidence = "closed";
   let ready = true;
   let reason = "static envelope closed";
@@ -48,6 +50,10 @@ export function closeEnvelope(
     confidence = "trace-closed";
     ready = true;
     reason = "dynamic members closed by traces (--allow-unknown)";
+  } else if (!hasBehavior) {
+    confidence = "open";
+    ready = false;
+    reason = "no represented runtime behavior";
   }
 
   if (opts?.staticOnly && confidence === "trace-closed") {

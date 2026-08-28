@@ -1,7 +1,7 @@
-import { realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { realpathSync, existsSync } from "node:fs";
+import { isAbsolute, relative, resolve, sep, dirname, join } from "node:path";
 import type ts from "typescript";
-import type { ImportKind, ImportSite, SourceLoc } from "../envelope/types.ts";
+import type { ImportKind, ImportSite, SourceLoc, UnknownSite } from "../envelope/types.ts";
 import { resolvePackageFamily } from "./family.ts";
 
 export interface Binding {
@@ -46,6 +46,8 @@ export interface CollectExtra {
   programCtx: ProgramCtx | null;
   root: string;
   typeOnly: ImportSite[];
+  unknowns: UnknownSite[];
+  wanted: Set<string> | null;
 }
 
 export function scriptKind(ts: typeof import("typescript"), file: string): ts.ScriptKind {
@@ -109,4 +111,20 @@ export function exportNameOf(b: Binding): string {
   const fam = resolvePackageFamily(b.specifier);
   if (fam?.subpath) return fam.subpath.split("/")[0]!;
   return b.imported === "default" ? "default" : "*";
+}
+
+export function resolveRelative(fromFile: string, spec: string): string | null {
+  const dir = dirname(fromFile);
+  const base = join(dir, spec);
+  const candidates = [
+    base,
+    base + ".ts",
+    base + ".js",
+    base + ".tsx",
+    base + ".mjs",
+    base + ".cjs",
+    join(base, "index.ts"),
+    join(base, "index.js"),
+  ];
+  return candidates.find((c) => existsSync(c)) ?? null;
 }

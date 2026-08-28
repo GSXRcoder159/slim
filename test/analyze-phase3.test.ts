@@ -272,6 +272,7 @@ test("assignment, return, property, shorthand, and array stores are binding esca
     "object-literal-escape.ts",
     "shorthand-escape.ts",
     "array-store.ts",
+    "callback-escape.ts",
   ]) {
     const env = analyzePackage(project, "lodash", { include: [file] });
     assert.ok(
@@ -459,4 +460,184 @@ test("inspect unresolved shape exits 3; allow-unknown stays open", async () => {
   } finally {
     process.chdir(cwd);
   }
+});
+
+function assertRefuseUnknown(env: Envelope, kind: Envelope["unknowns"][number]["kind"], label: string) {
+  assert.ok(
+    env.unknowns.some((u) => u.kind === kind && u.widensTo === "refuse"),
+    `${label}: expected ${kind} refuse, got ${env.unknowns.map((u) => `${u.kind}:${u.widensTo}:${u.detail}`).join("; ") || "none"} closed=${env.closure.confidence}`,
+  );
+  assert.notEqual(env.closure.confidence, "closed", label);
+  assert.equal(env.closure.readyToGenerate, false, label);
+}
+
+test("side-effect-only import cannot close or become ready", async () => {
+  const root = mini({
+    "src/app.ts": `import "lodash";\nexport const n = 1;\n`,
+  });
+  const env = analyzePackage(loadProject(root), "lodash");
+  assertRefuseUnknown(env, "side-effect-import", "side-effect");
+  assert.equal(
+    env.symbols.some((s) => s.callSites.length > 0),
+    false,
+    "side-effect must not invent call sites",
+  );
+  const allowed = analyzePackage(loadProject(root), "lodash", { allowUnknown: true });
+  assertRefuseUnknown(allowed, "side-effect-import", "side-effect allow-unknown");
+
+  const cwd = process.cwd();
+  process.chdir(root);
+  try {
+    const refused = await captureInspect(["inspect", "lodash", "--json"]);
+    assert.equal(refused.code, 3);
+    const doc = JSON.parse(refused.out) as { decision: string; envelope: Envelope };
+    assert.equal(doc.decision, "refuse");
+    assert.equal(doc.envelope.closure.readyToGenerate, false);
+    assert.ok(doc.envelope.unknowns.some((u) => u.kind === "side-effect-import"));
+
+    const still = await captureInspect(["inspect", "lodash", "--json", "--allow-unknown"]);
+    assert.equal(still.code, 3);
+    const stillDoc = JSON.parse(still.out) as { decision: string; envelope: Envelope };
+    assert.equal(stillDoc.decision, "refuse");
+    assert.equal(stillDoc.envelope.closure.readyToGenerate, false);
+  } finally {
+    process.chdir(cwd);
+  }
+});
+
+test("unused named runtime import cannot close", () => {
+  const env = analyzePackage(
+    loadProject(mini({ "src/app.ts": `import { get } from "lodash";\nexport const n = 1;\n` })),
+    "lodash",
+  );
+  assertRefuseUnknown(env, "unobserved-import", "unused named");
+  assert.equal(
+    env.symbols.some((s) => s.exportName === "get" && s.callSites.length === 0),
+    false,
+    "must not synthesize a zero-call get symbol",
+  );
+  const allowed = analyzePackage(
+    loadProject(mini({ "src/app.ts": `import { get } from "lodash";\nexport const n = 1;\n` })),
+    "lodash",
+    { allowUnknown: true },
+  );
+  assertRefuseUnknown(allowed, "unobserved-import", "unused named allow-unknown");
+});
+
+test("package re-export with no consumer cannot close", () => {
+  const env = analyzePackage(
+    loadProject(mini({ "src/barrel.ts": `export { get } from "lodash";\n` })),
+    "lodash",
+  );
+  assertRefuseUnknown(env, "unobserved-import", "unused re-export");
+  assert.equal(
+    env.symbols.some((s) => s.callSites.length > 0),
+    false,
+    "unused re-export has no represented calls",
+  );
+});
+
+test("three-hop local barrel resolves get call sites and closes", () => {
+  const env = analyzePackage(
+    loadProject(
+      mini({
+        "src/c.ts": `export { get } from "lodash";\n`,
+        "src/b.ts": `export { get } from "./c";\n`,
+        "src/a.ts": `export { get } from "./b";\n`,
+        "src/app.ts": `import { get } from "./a";\nexport const v = get({ a: 1 }, "a");\n`,
+      }),
+    ),
+    "lodash",
+  );
+  assertGetCall(env, "three-hop");
+  assert.equal(env.closure.confidence, "closed", env.closure.reason);
+  assert.equal(env.closure.readyToGenerate, true);
+});
+
+test("cyclic barrel that never binds get is unresolved-reexport, not closed", () => {
+  const env = analyzePackage(
+    loadProject(
+      mini({
+        "src/a.ts": `export { get } from "./b";\n`,
+        "src/b.ts": `export { get } from "./a";\nexport { debounce } from "lodash";\n`,
+        "src/app.ts": `import { get } from "./a";\nexport const v = get({ a: 1 }, "a");\n`,
+      }),
+    ),
+    "lodash",
+  );
+  assertRefuseUnknown(env, "unresolved-reexport", "cycle");
+});
+
+test("unresolved re-export terminal blocks closure", () => {
+  const env = analyzePackage(
+    loadProject(
+      mini({
+        "src/leaf.ts": `export { get } from "lodash";\n`,
+        "src/a.ts": `export { get } from "./missing";\n`,
+        "src/app.ts": `import { get } from "./a";\nexport const v = get({ a: 1 }, "a");\n`,
+      }),
+    ),
+    "lodash",
+  );
+  assertRefuseUnknown(env, "unresolved-reexport", "missing terminal");
+});
+
+test("three-hop CJS require barrel binds get call sites", () => {
+  const env = analyzePackage(
+    loadProject(
+      mini({
+        "src/b.cjs": `module.exports = require("lodash");\n`,
+        "src/a.cjs": `module.exports = require("./b");\n`,
+        "src/app.cjs": `const { get } = require("./a");\nmodule.exports = { v: get({ a: 1 }, "a") };\n`,
+      }),
+    ),
+    "lodash",
+  );
+  assertGetCall(env, "cjs three-hop");
+  assert.equal(env.closure.confidence, "closed", env.closure.reason);
+  assert.equal(env.closure.readyToGenerate, true);
+});
+
+test("unused sibling import does not block a represented get call", () => {
+  const env = analyzePackage(
+    loadProject(
+      mini({
+        "src/app.ts": `import { get, debounce } from "lodash";\nexport const v = get({ a: 1 }, "a");\n`,
+      }),
+    ),
+    "lodash",
+  );
+  assertGetCall(env, "sibling unused");
+  assert.equal(
+    env.unknowns.some((u) => u.kind === "unobserved-import"),
+    false,
+    env.unknowns.map((u) => `${u.kind}:${u.detail}`).join("; "),
+  );
+  assert.equal(env.closure.confidence, "closed", env.closure.reason);
+  assert.equal(env.closure.readyToGenerate, true);
+});
+
+test("CJS local wrapper exports are not package symbols", () => {
+  const env = analyzePackage(
+    loadProject(
+      mini(
+        {
+          "src/index.cjs": `const ms = require("ms");\nmodule.exports = { hour: () => ms("1h") };\n`,
+          "src/index.test.cjs": `const { hour } = require("./index.cjs");\nmodule.exports = { hour };\n`,
+        },
+        { dependencies: { ms: "2.1.3" } },
+      ),
+    ),
+    "ms",
+  );
+  assert.equal(
+    env.symbols.some((s) => s.exportName === "hour"),
+    false,
+    `symbols=${exportNames(env)}`,
+  );
+  assert.ok(
+    env.symbols.some((s) => s.exportName === "default" && s.callSites.length > 0),
+    `expected default call, symbols=${exportNames(env)} unknowns=${env.unknowns.map((u) => u.kind)}`,
+  );
+  assert.equal(env.closure.confidence, "closed", env.closure.reason);
 });

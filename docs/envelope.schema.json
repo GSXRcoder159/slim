@@ -173,7 +173,10 @@
             "namespace-escape",
             "eval",
             "ts-any",
-            "unresolved-shape"
+            "unresolved-shape",
+            "side-effect-import",
+            "unobserved-import",
+            "unresolved-reexport"
           ]
         },
         "detail": { "type": "string" },
