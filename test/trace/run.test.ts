@@ -137,7 +137,7 @@ test("withLocalBinPath strips host test-runner IPC env", () => {
   assert.equal(env.NODE_TEST_CONTEXT, undefined);
   assert.equal(env.NODE_CHANNEL_FD, undefined);
   assert.equal(env.SLIM_TRACE_OUT, "/tmp/t.jsonl");
-  assert.match(env.PATH ?? "", /node_modules\/.bin/);
+  assert.match(env.PATH ?? "", /node_modules[\\/]\.bin/);
 });
 
 test("nonzero test runner fails closed", () => {

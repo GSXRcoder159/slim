@@ -36,9 +36,9 @@ function slimGlobal(): SlimGlobal {
 }
 
 export function matchesTracedUrl(url: string, packages: string[]): boolean {
-  let pathname = url;
+  let pathname = url.replace(/\\/g, "/");
   try {
-    pathname = decodeURIComponent(new URL(url).pathname);
+    pathname = decodeURIComponent(new URL(url).pathname).replace(/\\/g, "/");
   } catch {
     /* keep raw */
   }

@@ -6,6 +6,10 @@ export function fileBase(name: string): string {
   return name.replace(/^@/, "").replace(/\//g, "-");
 }
 
+export function toPosixPath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
 function existingAncestor(abs: string): string {
   let dir = resolve(abs);
   while (!existsSync(dir)) {

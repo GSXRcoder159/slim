@@ -31,6 +31,10 @@ test("matchesTracedUrl matches lodash but not lodash-es", () => {
     matchesTracedUrl("file:///app/src/index.js", ["lodash"]),
     false,
   );
+  assert.equal(
+    matchesTracedUrl("D:\\tmp\\app\\node_modules\\tiny-trace-star\\index.js", ["tiny-trace-star"]),
+    true,
+  );
 });
 
 test("createSlimHooks returns register, events, flush", () => {

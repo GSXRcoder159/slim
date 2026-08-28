@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import {
   ENVELOPE_VERSION,
@@ -272,7 +272,7 @@ test("worker thread specifier matches current module extension", () => {
   assert.equal(existsSync(fileURLToPath(resolved)), true, `missing ${resolved.href}`);
 
   assert.throws(
-    () => workerThreadUrl("file:///app/src/fuzz/workers.ts"),
+    () => workerThreadUrl(pathToFileURL(join(tmpdir(), "no-such-fuzz", "workers.ts")).href),
     /runtime file missing/,
   );
 });

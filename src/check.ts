@@ -8,6 +8,7 @@ import { loadConfig } from "./config.ts";
 import { analyzePackage } from "./analyze/index.ts";
 import { specifierMatches, wantedSpecifiers } from "./analyze/reexports.ts";
 import { withLocalBinPath } from "./replace.ts";
+import { cmdShim, scriptSpawnOpts } from "./rewrite/lockfile.ts";
 import { JSON_SCHEMA_VERSION, statusFromExit, writeJson } from "./json.ts";
 import { assertDocument, readDocument } from "./schema/documents.ts";
 import { diffEnvelope, type EnvelopeDrift } from "./envelope/drift.ts";
@@ -76,11 +77,13 @@ function spawnChecked(
   failMessage: string,
   json: boolean,
 ): void {
-  const r = spawn(command, args, {
+  const file = cmdShim(command);
+  const r = spawn(file, args, {
     cwd: root,
     encoding: "utf8",
     stdio: json ? ["ignore", "pipe", "pipe"] : "inherit",
     env: withLocalBinPath(root),
+    ...scriptSpawnOpts(file),
   });
   if (json) {
     const out = childText(r.stdout);

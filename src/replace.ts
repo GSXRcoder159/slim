@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { spawnSync } from "node:child_process";
+import { cmdShim, scriptSpawnOpts } from "./rewrite/lockfile.ts";
 import { randomInt } from "node:crypto";
 import { tmpdir } from "node:os";
 import type { CliArgs } from "./cli.ts";
@@ -459,11 +460,13 @@ export function runMergeGate(root: string, testCommand: string | null, json = fa
   }
   if (!cmd) return;
   const parts = cmd.split(/\s+/).filter(Boolean);
-  const r = spawnSync(parts[0]!, parts.slice(1), {
+  const file = cmdShim(parts[0]!);
+  const r = spawnSync(file, parts.slice(1), {
     cwd: root,
     encoding: "utf8",
     stdio: json ? ["ignore", "pipe", "pipe"] : "inherit",
     env: withLocalBinPath(root),
+    ...scriptSpawnOpts(file),
   });
   if (json) {
     if (r.stdout) process.stderr.write(r.stdout);

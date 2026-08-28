@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileBase } from "../rewrite/paths.ts";
+import { fileBase, toPosixPath } from "../rewrite/paths.ts";
 
 export function standingTestPaths(
   root: string,
@@ -8,8 +8,8 @@ export function standingTestPaths(
   outDir: string,
 ): { tsRel: string; jsRel: string; tsAbs: string; jsAbs: string } {
   const stem = `${fileBase(pkg)}.test`;
-  const tsRel = join(outDir, `${stem}.ts`);
-  const jsRel = join(outDir, `${stem}.js`);
+  const tsRel = toPosixPath(join(outDir, `${stem}.ts`));
+  const jsRel = toPosixPath(join(outDir, `${stem}.js`));
   return { tsRel, jsRel, tsAbs: join(root, tsRel), jsAbs: join(root, jsRel) };
 }
 
@@ -18,8 +18,8 @@ export function hardeningTestPaths(
   moduleRel: string,
 ): { tsRel: string; jsRel: string; tsAbs: string; jsAbs: string } {
   const base = moduleRel.replace(/\.(ts|js|mjs|cjs)$/, "");
-  const tsRel = `${base}.hardened.test.ts`;
-  const jsRel = `${base}.hardened.test.js`;
+  const tsRel = toPosixPath(`${base}.hardened.test.ts`);
+  const jsRel = toPosixPath(`${base}.hardened.test.js`);
   return { tsRel, jsRel, tsAbs: join(root, tsRel), jsAbs: join(root, jsRel) };
 }
 

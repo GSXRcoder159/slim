@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { toPosixPath } from "../rewrite/paths.ts";
 import { EXIT_FAIL, SlimExit } from "../exit.ts";
 import {
   OriginalSourceGuard,
@@ -67,7 +68,7 @@ export function loadPublicApi(projectRoot: string, pkg: string, subpath = ""): P
     return {
       text,
       source: "readme",
-      from: relative(projectRoot, readme),
+      from: toPosixPath(relative(projectRoot, readme)),
       ...(truncated
         ? { limitation: `README truncated to ${README_CAP} characters.` }
         : {}),
@@ -83,7 +84,7 @@ function specFromDts(projectRoot: string, abs: string, source: SpecSource): Publ
   return {
     text: OriginalSourceGuard.readPublicSpec(abs),
     source,
-    from: relative(projectRoot, abs),
+    from: toPosixPath(relative(projectRoot, abs)),
   };
 }
 

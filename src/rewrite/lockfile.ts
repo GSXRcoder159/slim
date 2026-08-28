@@ -49,6 +49,13 @@ export function cmdShimSpawnOpts(bin: string): { shell?: boolean; windowsHide?: 
   return {};
 }
 
+/** Package scripts and node_modules/.bin shims need cmd.exe; node.exe does not. */
+export function scriptSpawnOpts(file: string): { shell?: boolean; windowsHide?: boolean } {
+  if (process.platform !== "win32") return {};
+  if (file === process.execPath || /\.exe$/i.test(file)) return {};
+  return { shell: true, windowsHide: true };
+}
+
 export function spawnPm(
   name: string,
   args: readonly string[],
