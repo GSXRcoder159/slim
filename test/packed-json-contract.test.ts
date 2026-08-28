@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
 import { validateNamed } from "../src/schema/documents.ts";
+import { npmPackTo } from "./helpers/llm-replace.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -27,12 +28,7 @@ function packAndInstall(): { tmp: string; packDir: string; slimJs: string; proj:
     execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
   }
   const packDir = mkdtempSync(join(tmpdir(), "slim-json-pack-"));
-  const tgz = execFileSync(
-    "npm",
-    ["pack", "--silent", "--ignore-scripts", `--pack-destination=${packDir}`],
-    { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: hermeticPmEnv() },
-  ).trim();
-  const tarball = join(packDir, tgz.split("\n").pop() ?? tgz);
+  const tarball = npmPackTo(packDir);
   const tmp = mkdtempSync(join(tmpdir(), "slim-json-app-"));
   writeFileSync(join(tmp, "package.json"), JSON.stringify({ name: "host", private: true, type: "module" }));
   execFileSync("npm", ["install", tarball, "--omit=dev"], {

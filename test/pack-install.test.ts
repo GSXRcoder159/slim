@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
+import { npmPackTo, withRepoDistLock } from "./helpers/llm-replace.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -45,11 +46,13 @@ function ensureDist(): void {
 
 test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tests", { timeout: 120_000 }, () => {
   ensureDist();
-  const pack = execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-    cwd: ROOT,
-    encoding: "utf8",
-    timeout: 30_000,
-  });
+  const pack = withRepoDistLock(() =>
+    execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      timeout: 30_000,
+    }),
+  );
   const parsed = JSON.parse(pack) as Array<{ files: Array<{ path: string }> }>;
   const files = new Set((parsed[0]?.files ?? []).map((f) => f.path.replace(/\\/g, "/")));
 
@@ -91,11 +94,13 @@ test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tes
 
 test("npm publish --dry-run lists the same production files", { timeout: 120_000 }, () => {
   ensureDist();
-  const out = execFileSync("npm", ["publish", "--dry-run", "--json", "--ignore-scripts"], {
-    cwd: ROOT,
-    encoding: "utf8",
-    timeout: 60_000,
-  });
+  const out = withRepoDistLock(() =>
+    execFileSync("npm", ["publish", "--dry-run", "--json", "--ignore-scripts"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      timeout: 60_000,
+    }),
+  );
   const parsed = JSON.parse(out) as { filename?: string; files?: Array<{ path: string }> };
   const files = new Set((parsed.files ?? []).map((f) => f.path.replace(/\\/g, "/")));
   assert.ok(files.has("dist/main.js"), "publish dry-run missing dist/main.js");
@@ -111,16 +116,7 @@ test("npm publish --dry-run lists the same production files", { timeout: 120_000
 test("installed tarball CLI matches source for help, doctor, scan --json, inspect, replace --dry-run", { timeout: 180_000 }, () => {
   ensureDist();
   const packDir = mkdtempSync(join(tmpdir(), "slim-install-pack-"));
-  const tgz = execFileSync(
-    "npm",
-    ["pack", "--silent", "--ignore-scripts", `--pack-destination=${packDir}`],
-    {
-      cwd: ROOT,
-      encoding: "utf8",
-      timeout: 60_000,
-    },
-  ).trim();
-  const tarball = join(packDir, tgz.split("\n").pop() ?? tgz);
+  const tarball = npmPackTo(packDir);
   const tmp = mkdtempSync(join(tmpdir(), "slim-install-"));
   try {
     writeFileSync(

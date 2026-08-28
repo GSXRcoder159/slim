@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hermeticPmEnv } from "../../src/rewrite/lockfile.ts";
+import { build, withDistLock } from "../../scripts/build.mjs";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -69,20 +70,38 @@ export function runSlim(
   });
 }
 
-export function packSlim(): { packDir: string; tarball: string } {
-  execFileSync("npm", ["run", "build"], {
-    cwd: ROOT,
-    encoding: "utf8",
-    timeout: 60_000,
-    env: npmEnv(),
+export function withRepoDistLock<T>(fn: () => T): T {
+  return withDistLock(ROOT, fn);
+}
+
+export function npmPackTo(packDir: string): string {
+  mkdirSync(packDir, { recursive: true });
+  return withDistLock(ROOT, () => {
+    let last: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const tgz = execFileSync(
+          "npm",
+          ["pack", "--ignore-scripts", `--pack-destination=${packDir}`],
+          { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: npmEnv() },
+        ).trim();
+        const name = tgz.split("\n").pop() ?? tgz;
+        if (!name) throw new Error("npm pack produced no tarball name");
+        return join(packDir, name);
+      } catch (err) {
+        last = err;
+      }
+    }
+    throw last;
   });
-  const packDir = mkdtempSync(join(tmpdir(), "slim-llm-pack-"));
-  const tgz = execFileSync(
-    "npm",
-    ["pack", "--silent", "--ignore-scripts", `--pack-destination=${packDir}`],
-    { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: npmEnv() },
-  ).trim();
-  return { packDir, tarball: join(packDir, tgz.split("\n").pop() ?? tgz) };
+}
+
+export function packSlim(): { packDir: string; tarball: string } {
+  return withDistLock(ROOT, () => {
+    build(ROOT);
+    const packDir = mkdtempSync(join(tmpdir(), "slim-llm-pack-"));
+    return { packDir, tarball: npmPackTo(packDir) };
+  });
 }
 
 export function writeTinyAddFixture(

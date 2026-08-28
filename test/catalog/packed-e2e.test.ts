@@ -15,6 +15,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { hermeticPmEnv } from "../../src/rewrite/lockfile.ts";
+import { npmPackTo } from "../helpers/llm-replace.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const TMP = tmpdir();
@@ -170,17 +171,7 @@ test("packed CLI replace → standing tests → slim check for every registered 
   execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: npmEnv() });
   mkdirSync(TMP, { recursive: true });
   const packDir = mkdtempSync(join(TMP, "slim-catalog-pack-"));
-  const tgz = execFileSync(
-    "npm",
-    ["pack", "--silent", "--ignore-scripts", `--pack-destination=${packDir}`],
-    {
-      cwd: ROOT,
-      encoding: "utf8",
-      timeout: 60_000,
-      env: npmEnv(),
-    },
-  ).trim();
-  const tarball = join(packDir, tgz.split("\n").pop() ?? tgz);
+  const tarball = npmPackTo(packDir);
   const tmp = mkdtempSync(join(TMP, "slim-catalog-e2e-"));
   try {
     for (const c of CASES) {

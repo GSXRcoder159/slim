@@ -9,6 +9,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
@@ -16,6 +17,96 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { actionManifest, ACTION_WRAPPERS } from "../action/digest.mjs";
 
 const STAMP_NAME = ".slim-build.json";
+const LOCK_NAME = ".slim-build.lock";
+const LOCK_ROOT_ENV = "SLIM_DIST_LOCK_ROOT";
+const LOCK_PID_ENV = "SLIM_DIST_LOCK_PID";
+const lockNest = new Map();
+const lockExit = new Map();
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function pidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acquireLockFile(lockPath) {
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    try {
+      writeFileSync(lockPath, `${process.pid}\n`, { flag: "wx" });
+      return;
+    } catch (err) {
+      if (err?.code !== "EEXIST") throw err;
+      try {
+        const pid = Number(readFileSync(lockPath, "utf8").trim());
+        const age = Date.now() - statSync(lockPath).mtimeMs;
+        if (!pidAlive(pid) || age > 180_000) unlinkSync(lockPath);
+        else sleepSync(50);
+      } catch {
+        sleepSync(50);
+      }
+    }
+  }
+  throw new Error(`slim build: timed out waiting for ${LOCK_NAME}`);
+}
+
+function releaseLockFile(lockPath) {
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    /* lock already gone */
+  }
+}
+
+/** Serialize dist mutation and pack reads so parallel tests cannot observe a half-written tree. */
+export function withDistLock(root, fn) {
+  const absRoot = resolve(root);
+  const lockPath = join(absRoot, LOCK_NAME);
+  const inherited =
+    process.env[LOCK_ROOT_ENV] === absRoot && pidAlive(Number(process.env[LOCK_PID_ENV]));
+  if (inherited) return fn();
+
+  const nested = lockNest.get(lockPath) ?? 0;
+  const prevRoot = process.env[LOCK_ROOT_ENV];
+  const prevPid = process.env[LOCK_PID_ENV];
+  if (nested === 0) {
+    acquireLockFile(lockPath);
+    process.env[LOCK_ROOT_ENV] = absRoot;
+    process.env[LOCK_PID_ENV] = String(process.pid);
+    const onExit = () => releaseLockFile(lockPath);
+    process.once("exit", onExit);
+    lockExit.set(lockPath, onExit);
+  }
+  lockNest.set(lockPath, nested + 1);
+  try {
+    return fn();
+  } finally {
+    const left = (lockNest.get(lockPath) ?? 1) - 1;
+    if (left <= 0) {
+      lockNest.delete(lockPath);
+      const onExit = lockExit.get(lockPath);
+      if (onExit) {
+        process.off("exit", onExit);
+        lockExit.delete(lockPath);
+      }
+      if (prevRoot === undefined) delete process.env[LOCK_ROOT_ENV];
+      else process.env[LOCK_ROOT_ENV] = prevRoot;
+      if (prevPid === undefined) delete process.env[LOCK_PID_ENV];
+      else process.env[LOCK_PID_ENV] = prevPid;
+      releaseLockFile(lockPath);
+    } else {
+      lockNest.set(lockPath, left);
+    }
+  }
+}
 
 export function repoRootFromScript(metaUrl = import.meta.url) {
   return join(dirname(fileURLToPath(metaUrl)), "..");
@@ -130,26 +221,28 @@ export function assertPackReady(root) {
 }
 
 export function build(root) {
-  const dist = join(root, "dist");
-  const stampPath = join(dist, STAMP_NAME);
-  const bin = tscBin(root);
-  if (!bin) {
-    process.stderr.write("slim build: typescript is not installed (devDependency)\n");
-    process.exit(1);
-  }
-  const tsconfig = join(root, "tsconfig.json");
-  const tsc = spawnSync(process.execPath, [bin, "-p", tsconfig], {
-    cwd: root,
-    stdio: "inherit",
+  return withDistLock(root, () => {
+    const dist = join(root, "dist");
+    const stampPath = join(dist, STAMP_NAME);
+    const bin = tscBin(root);
+    if (!bin) {
+      process.stderr.write("slim build: typescript is not installed (devDependency)\n");
+      process.exit(1);
+    }
+    const tsconfig = join(root, "tsconfig.json");
+    const tsc = spawnSync(process.execPath, [bin, "-p", tsconfig], {
+      cwd: root,
+      stdio: "inherit",
+    });
+    if (tsc.status !== 0) {
+      rmSync(stampPath, { force: true });
+      process.exit(tsc.status ?? 1);
+    }
+    // ponytail: in-place emit + orphan delete. A full dist wipe races parallel test prepacks.
+    removeOrphans(root);
+    copyPackAssets(root);
+    writeStamp(root);
   });
-  if (tsc.status !== 0) {
-    rmSync(stampPath, { force: true });
-    process.exit(tsc.status ?? 1);
-  }
-  // ponytail: in-place emit + orphan delete. A full dist wipe races parallel test prepacks.
-  removeOrphans(root);
-  copyPackAssets(root);
-  writeStamp(root);
 }
 
 function isMain() {

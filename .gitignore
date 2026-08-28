@@ -1,5 +1,6 @@
 node_modules/
 dist/
+.slim-build.lock
 .worktrees/
 .tmp/
 *.tsbuildinfo

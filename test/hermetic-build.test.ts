@@ -16,6 +16,7 @@ import { createHash } from "node:crypto";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
+import { withRepoDistLock } from "./helpers/llm-replace.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(ROOT, "dist");
@@ -205,9 +206,9 @@ test("npm pack and publish dry-run leave tracked metadata unchanged and create n
   assert.equal(built.status, 0, built.stderr);
   assert.ok(existsSync(STAMP));
 
-  const pack = npmJson(["pack", "--dry-run", "--json"]);
+  const pack = withRepoDistLock(() => npmJson(["pack", "--dry-run", "--json"]));
   assert.equal(pack.status, 0, pack.stderr + pack.stdout);
-  const publish = npmJson(["publish", "--dry-run", "--json"]);
+  const publish = withRepoDistLock(() => npmJson(["publish", "--dry-run", "--json"]));
   assert.equal(publish.status, 0, publish.stderr + publish.stdout);
 
   assert.deepEqual(readFileSync(pkgPath), beforePkg);
