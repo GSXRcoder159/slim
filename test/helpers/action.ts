@@ -2,7 +2,7 @@
  * Helpers for packed Action checkout extract and consumer fixtures.
  */
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
@@ -26,6 +26,15 @@ export function extractPackedAction(tarball: string): { dest: string; root: stri
   }
   const { sha256 } = actionManifest(root);
   return { dest, root, actionDigest: sha256 };
+}
+
+/** Copy packed action/dist/docs onto dest so `uses: ./action/*` can load schemas next to dist. */
+export function copyPackedActionCheckout(actionRoot: string, dest: string): void {
+  mkdirSync(dest, { recursive: true });
+  for (const name of readdirSync(actionRoot)) {
+    if (name === "node_modules") continue;
+    cpSync(join(actionRoot, name), join(dest, name), { recursive: true });
+  }
 }
 
 export function packAndExtractAction(): {

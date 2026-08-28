@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { STAMP_NAME } from "../../action/digest.mjs";
 import {
+  copyPackedActionCheckout,
   packAndExtractAction,
   runPackedAction,
   runPackedCli,
@@ -44,6 +45,7 @@ test("packed Action checkout has compiled dist, digest stamp, and no src", { tim
   assert.ok(existsSync(join(actionRoot, "dist/github/check-action.js")));
   assert.ok(existsSync(join(actionRoot, "dist/github/bloat-action.js")));
   assert.ok(existsSync(join(actionRoot, "dist/github/upstream-action.js")));
+  assert.ok(existsSync(join(actionRoot, "docs/slim.schema.json")));
   assert.equal(existsSync(join(actionRoot, "src")), false);
   const stamp = JSON.parse(readFileSync(join(actionRoot, "dist", STAMP_NAME), "utf8")) as {
     actionSha256: string;
@@ -109,4 +111,17 @@ test("packed Action matches packed CLI on success and failure", { timeout: 180_0
   assert.match(upA.stderr + upA.stdout, /manifest/);
   assert.doesNotMatch(upA.stdout, /not exposed/);
   assert.doesNotMatch(upA.stderr, /slice not exposed/);
+});
+
+test("same-tree Action checkout loads packed schemas like uses: ./action", { timeout: 180_000 }, () => {
+  ensurePack();
+  const dest = mkdtempSync(join(tmpdir(), "slim-action-same-tree-"));
+  copyPackedActionCheckout(actionRoot, dest);
+  writeAllSuccessConsumer(dest);
+  assert.ok(existsSync(join(dest, "docs", "slim.schema.json")));
+  for (const cmd of ["check", "bloat", "upstream"] as const) {
+    const action = runPackedAction(dest, cmd, dest);
+    assert.equal(action.status, 0, `${cmd} ${action.stderr}\n${action.stdout}`);
+  }
+  rmSync(dest, { recursive: true, force: true });
 });

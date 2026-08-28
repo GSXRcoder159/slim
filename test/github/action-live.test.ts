@@ -1,13 +1,14 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canonicalInventory } from "../../src/support/inventory.ts";
 import { actionReceipt, writeReceipt } from "../../src/support/receipts.ts";
 import { hermeticPmEnv } from "../../src/rewrite/lockfile.ts";
 import {
+  copyPackedActionCheckout,
   packAndExtractAction,
   writeAllSuccessConsumer,
   writeBloatFailConsumer,
@@ -137,9 +138,12 @@ jobs:
 `;
 
 function writeLiveRepo(dest: string): void {
+  copyPackedActionCheckout(actionRoot, dest);
   writeAllSuccessConsumer(dest);
-  cpSync(join(actionRoot, "action"), join(dest, "action"), { recursive: true });
-  cpSync(join(actionRoot, "dist"), join(dest, "dist"), { recursive: true });
+  assert.ok(
+    existsSync(join(dest, "docs", "slim.schema.json")),
+    "packed Action checkout needs docs schemas next to dist",
+  );
   mkdirSync(join(dest, "consumers", "bloat-fail"), { recursive: true });
   mkdirSync(join(dest, "consumers", "check-fail"), { recursive: true });
   mkdirSync(join(dest, "consumers", "upstream-fail"), { recursive: true });
@@ -149,6 +153,7 @@ function writeLiveRepo(dest: string): void {
   mkdirSync(join(dest, ".github", "workflows"), { recursive: true });
   writeFileSync(join(dest, ".github", "workflows", "qualify-actions.yml"), QUALIFY_WORKFLOW);
   writeFileSync(join(dest, ".gitignore"), "node_modules\n");
+  writeFileSync(join(dest, ".gitattributes"), "* text=auto eol=lf\n");
   execFileSync("npm", ["install"], {
     cwd: dest,
     encoding: "utf8",
@@ -190,6 +195,7 @@ test("live packed Actions pass on every advertised runner/Node cell", { timeout:
   try {
     writeLiveRepo(dest);
     execFileSync("git", ["init", "--template=", "-b", "main"], { cwd: dest, encoding: "utf8" });
+    execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: dest });
     execFileSync("git", ["config", "user.email", "slim@test"], { cwd: dest });
     execFileSync("git", ["config", "user.name", "slim"], { cwd: dest });
     execFileSync("git", ["add", "-A"], { cwd: dest });
