@@ -5,7 +5,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { execPm } from "../rewrite/lockfile.ts";
+import { execPm, hermeticPmEnv } from "../rewrite/lockfile.ts";
 import {
   cpSync,
   existsSync,
@@ -18,9 +18,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  STAMP_NAME,
   actionDigestFromPack,
   contentDigestOfDir,
   extractNpmPack,
+  stampDistSha256,
 } from "../release/digest.ts";
 import type { InventoryEntry, SupportInventory } from "./inventory.ts";
 import { INVENTORY_NODES, INVENTORY_OS } from "./inventory.ts";
@@ -230,6 +232,7 @@ export function packAndDigest(root: string): {
   tarball: string;
   npmDigest: string;
   actionDigest: string;
+  distSha256: string;
 } {
   const packDir = mkdtempSync(join(tmpdir(), "slim-qualify-pack-"));
   const tgz = String(
@@ -237,7 +240,7 @@ export function packAndDigest(root: string): {
       cwd: root,
       encoding: "utf8",
       timeout: 120_000,
-      env: { ...process.env, COPYFILE_DISABLE: "1" },
+      env: hermeticPmEnv({ COPYFILE_DISABLE: "1" }),
     }),
   ).trim();
   const name = tgz.split("\n").pop() ?? tgz;
@@ -246,11 +249,16 @@ export function packAndDigest(root: string): {
   const dest = mkdtempSync(join(tmpdir(), "slim-qualify-extract-"));
   try {
     const packRoot = extractNpmPack(tarball, dest);
+    const distSha256 = stampDistSha256(packRoot);
+    if (!distSha256 || !/^[0-9a-f]{64}$/.test(distSha256)) {
+      throw new Error(`packed dist/${STAMP_NAME} is missing sha256`);
+    }
     return {
       packDir,
       tarball,
       npmDigest: contentDigestOfDir(packRoot),
       actionDigest: actionDigestFromPack(packRoot),
+      distSha256,
     };
   } finally {
     rmSync(dest, { recursive: true, force: true });

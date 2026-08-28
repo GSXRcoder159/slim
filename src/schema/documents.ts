@@ -23,6 +23,7 @@ const SCHEMA_FILES = {
   manifest: "manifest.schema.json",
   inventory: "support-inventory.schema.json",
   receipt: "receipt.schema.json",
+  artifactIdentity: "artifact-identity.schema.json",
 } as const;
 
 export type SchemaName = keyof typeof SCHEMA_FILES;

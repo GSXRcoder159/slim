@@ -15,10 +15,11 @@ Slim CI runs an n-gram similarity gate against pinned catalog oracles in `node_m
 
 ```bash
 npm run build
+npm run typecheck
 npm test
 ```
 
-`node:test` only. No extra test frameworks. `npm run build` compiles with `noEmitOnError` and deletes stale `dist/` outputs; do not commit `dist/`, `slim-*.tgz`, or package-manager stores. Pack with `--pack-destination` outside the repo.
+`node:test` only. No extra test frameworks. `npm run build` compiles with `noEmitOnError` and deletes stale `dist/` outputs; `npm run typecheck` is `tsc --noEmit`. Do not commit `dist/`, `slim-*.tgz`, or package-manager stores. Pack with `--pack-destination` outside the repo.
 
 When you add a catalog function, add `test/catalog/<name>.test.ts` that compares against the real package.
 

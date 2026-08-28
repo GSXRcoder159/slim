@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/artifact-identity.schema.json",
+  "title": "Slim packed artifact identity",
+  "description": "Reproducible npm tarball and Action content identities for one candidate commit. schemaVersion 1.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "commit",
+    "npmDigest",
+    "actionDigest",
+    "distSha256",
+    "packedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "commit": { "type": "string", "minLength": 40, "maxLength": 40 },
+    "npmDigest": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "actionDigest": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "distSha256": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "packedAt": { "type": "string", "minLength": 20 }
+  }
+}

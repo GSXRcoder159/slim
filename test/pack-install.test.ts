@@ -7,16 +7,19 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
   cpSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { npmPackTo, withRepoDistLock } from "./helpers/llm-replace.ts";
+import { extractNpmPack } from "../src/release/digest.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -94,6 +97,86 @@ test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tes
     assert.ok(!f.startsWith("src/"), `pack leaked source file ${f}`);
   }
   assert.ok(![...files].some((f) => f.includes(".env")), "pack leaked env file");
+});
+
+function walkRel(dir: string, acc: string[] = [], base = dir): string[] {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walkRel(p, acc, base);
+    else acc.push(relative(base, p).replace(/\\/g, "/"));
+  }
+  return acc;
+}
+
+function packedAllowed(rel: string): boolean {
+  if (rel === "package.json" || rel === "LICENSE" || rel === "README.md" || rel === "CHANGELOG.md") {
+    return true;
+  }
+  if (rel === "slim.schema.json" || rel === "docs/support-inventory.json" || rel === "docs/README.md") {
+    return true;
+  }
+  if (/^docs\/[^/]+\.schema\.json$/.test(rel)) return true;
+  if (rel.startsWith("dist/") || rel.startsWith("action/")) return true;
+  return false;
+}
+
+test("packed tarball matches the documented production surface exactly", { timeout: 180_000 }, () => {
+  ensureDist();
+  const packDir = mkdtempSync(join(tmpdir(), "slim-pack-surface-"));
+  const extractDir = mkdtempSync(join(tmpdir(), "slim-pack-extract-"));
+  try {
+    const tarball = npmPackTo(packDir);
+    const packRoot = extractNpmPack(tarball, extractDir);
+    const files = walkRel(packRoot).sort();
+
+    const catalog = readdirSync(join(ROOT, "src/generate/catalog")).filter((n) => n.endsWith(".ts"));
+    const schemas = readdirSync(join(ROOT, "docs")).filter((n) => n.endsWith(".schema.json"));
+    const required = [
+      "package.json",
+      "LICENSE",
+      "README.md",
+      "CHANGELOG.md",
+      "slim.schema.json",
+      "docs/support-inventory.json",
+      "docs/README.md",
+      "dist/main.js",
+      "dist/main.d.ts",
+      "dist/trace/hook.js",
+      "dist/trace/hook.d.ts",
+      "dist/trace/vitest.js",
+      "dist/trace/vitest.d.ts",
+      "dist/fuzz/worker-thread.js",
+      "dist/github/check-action.js",
+      "dist/github/bloat-action.js",
+      "dist/github/upstream-action.js",
+      "dist/.slim-build.json",
+      "action/run.mjs",
+      "action/digest.mjs",
+      "action/check/action.yml",
+      "action/bloat/action.yml",
+      "action/upstream/action.yml",
+      ...catalog.map((n) => `dist/generate/catalog/${n}`),
+      ...schemas.map((n) => `docs/${n}`),
+    ];
+    const have = new Set(files);
+    for (const f of required) {
+      assert.ok(have.has(f), `packed artifact missing ${f}`);
+    }
+    for (const f of files) {
+      assert.ok(packedAllowed(f), `unexpected packed path ${f}`);
+      assert.ok(!f.startsWith("test/"), f);
+      assert.ok(!f.startsWith("fixtures/"), f);
+      assert.ok(!f.startsWith("src/"), f);
+      assert.ok(!f.startsWith("node_modules/"), f);
+      assert.ok(!f.startsWith("qualification/"), f);
+      assert.ok(!f.includes(".env"), f);
+      assert.ok(!f.includes("traces.jsonl"), f);
+      assert.ok(!f.endsWith(".tgz"), f);
+    }
+  } finally {
+    rmSync(packDir, { recursive: true, force: true });
+    rmSync(extractDir, { recursive: true, force: true });
+  }
 });
 
 test("npm publish --dry-run lists the same production files", { timeout: 120_000 }, () => {

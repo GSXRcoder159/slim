@@ -28,11 +28,11 @@ slim/
     lodash-dynamic-refuse/ native-addon-refuse/
   action/                   # check, bloat, upstream composites → action/run.mjs
   docs/                     # dx, packages, schemas, examples
-  scripts/                  # build.mjs, similarity-gate, refresh-golden, measure-claims, qualify-receipts, emit-local-receipts, qualify-candidate, release-gate
+  scripts/                  # build.mjs, artifact-identity, similarity-gate, refresh-golden, measure-claims, qualify-receipts, emit-local-receipts, qualify-candidate, release-gate
   .github/workflows/        # ci (OS × Node matrix + golden-refresh), release, slim-check, slim-bloat, slim-upstream
 ```
 
-TypeScript compiles to `dist/` via `npm run build` (`scripts/build.mjs` runs `tsc` with `noEmitOnError`, deletes stale outputs, copies catalog `.ts` sources, writes `dist/.slim-build.json`). `"type": "module"`. `package.json` `"files"` ships `dist`, `action/`, root `slim.schema.json`, `docs/*.schema.json`, `docs/support-inventory.json`, `LICENSE`, `README.md`, `CHANGELOG.md`. Tests, fixtures, and `src/` are not packed. Do not commit `dist/` or `*.tgz`.
+TypeScript compiles to `dist/` via `npm run build` (`scripts/build.mjs` runs `tsc` with `noEmitOnError`, deletes stale outputs, copies catalog `.ts` sources, writes `dist/.slim-build.json`). `npm run typecheck` is `tsc --noEmit`. Two clean builds and an incremental rebuild from the same sources produce the same stamp `files`, `sha256`, and `actionSha256`. `"type": "module"`. `package.json` `"files"` ships `dist`, `action/`, root `slim.schema.json`, `docs/*.schema.json`, `docs/support-inventory.json`, `docs/README.md`, `LICENSE`, `README.md`, `CHANGELOG.md`. Tests, fixtures, and `src/` are not packed. Do not commit `dist/` or `*.tgz`. Pack with `--pack-destination` outside the repo. `npm run artifacts` prints one `docs/artifact-identity.schema.json` document (`commit`, `npmDigest`, `actionDigest`, `distSha256`).
 
 Fixtures are mini-apps. Tests invoke `dist/main.js` or `src/main.ts` under `--experimental-strip-types`. The golden Worker fixture is `fixtures/lodash-get-debounce/`. Declared refresh inputs live in `.slim/refresh-inputs.json`. `npm run refresh:golden` rewrites that fixture with `--template-only --seed 1 --workers 1 --budget-ms 30000`. `npm run refresh:golden -- --check` refreshes twice in temp dirs and fails if artifacts are not equivalent. `npm run measure:claims` rewrites `docs/measurements.json`. CI runs the check job and `npm test` (docs + measurement stale gates).
 

@@ -192,7 +192,7 @@ test("command result schemas exist with required fields", () => {
   }
 });
 
-test("evidence, manifest, inventory, and receipt schemas are versioned", () => {
+test("evidence, manifest, inventory, receipt, and artifact-identity schemas are versioned", () => {
   const evidence = JSON.parse(readFileSync(join(ROOT, "docs/evidence.schema.json"), "utf8")) as {
     required: string[];
     properties: { schemaVersion: { const: number } };
@@ -215,6 +215,14 @@ test("evidence, manifest, inventory, and receipt schemas are versioned", () => {
   assert.equal(rec.additionalProperties, false);
   for (const key of ["schemaVersion", "checkId", "commit", "outcome", "logDigest"]) {
     assert.ok(rec.required.includes(key), key);
+  }
+  const ident = JSON.parse(readFileSync(join(ROOT, "docs/artifact-identity.schema.json"), "utf8")) as {
+    required: string[];
+    additionalProperties: boolean;
+  };
+  assert.equal(ident.additionalProperties, false);
+  for (const key of ["schemaVersion", "commit", "npmDigest", "actionDigest", "distSha256", "packedAt"]) {
+    assert.ok(ident.required.includes(key), key);
   }
 });
 

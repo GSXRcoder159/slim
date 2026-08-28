@@ -92,12 +92,54 @@ export function actionDigestFromPack(packageRoot: string): string {
 }
 
 export function stampActionSha256(packageRoot: string): string | null {
+  const stamp = readStamp(packageRoot);
+  return stamp?.actionSha256 ?? null;
+}
+
+export function stampDistSha256(packageRoot: string): string | null {
+  const stamp = readStamp(packageRoot);
+  return stamp?.sha256 ?? null;
+}
+
+export function readStamp(packageRoot: string): { sha256?: string; actionSha256?: string } | null {
   const stampPath = join(packageRoot, "dist", STAMP_NAME);
   if (!existsSync(stampPath)) return null;
   try {
-    const stamp = JSON.parse(readFileSync(stampPath, "utf8")) as { actionSha256?: unknown };
-    return typeof stamp.actionSha256 === "string" ? stamp.actionSha256 : null;
+    const stamp = JSON.parse(readFileSync(stampPath, "utf8")) as {
+      sha256?: unknown;
+      actionSha256?: unknown;
+    };
+    return {
+      sha256: typeof stamp.sha256 === "string" ? stamp.sha256 : undefined,
+      actionSha256: typeof stamp.actionSha256 === "string" ? stamp.actionSha256 : undefined,
+    };
   } catch {
     return null;
   }
+}
+
+export interface ArtifactIdentity {
+  schemaVersion: 1;
+  commit: string;
+  npmDigest: string;
+  actionDigest: string;
+  distSha256: string;
+  packedAt: string;
+}
+
+export function artifactIdentity(opts: {
+  commit: string;
+  npmDigest: string;
+  actionDigest: string;
+  distSha256: string;
+  packedAt?: string;
+}): ArtifactIdentity {
+  return {
+    schemaVersion: 1,
+    commit: opts.commit,
+    npmDigest: opts.npmDigest,
+    actionDigest: opts.actionDigest,
+    distSha256: opts.distSha256,
+    packedAt: opts.packedAt ?? new Date().toISOString(),
+  };
 }

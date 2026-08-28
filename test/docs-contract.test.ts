@@ -93,6 +93,7 @@ test("package.json files includes command JSON schemas and CHANGELOG", () => {
   };
   assert.ok(pkg.files.includes("docs/*.schema.json"), "files must ship docs/*.schema.json");
   assert.ok(pkg.files.includes("docs/support-inventory.json"), "files must ship support inventory");
+  assert.ok(pkg.files.includes("docs/README.md"), "files must ship docs/README.md");
   assert.ok(pkg.files.includes("CHANGELOG.md"), "files must ship CHANGELOG.md");
   assert.ok(existsSync(join(ROOT, "CHANGELOG.md")));
 });

@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -75,9 +76,23 @@ function npmJson(args: string[]): { stdout: string; stderr: string; status: numb
     cwd: ROOT,
     encoding: "utf8",
     timeout: 120_000,
-    env: { ...process.env },
+    env: hermeticPmEnv(),
   });
   return { status: r.status ?? 1, stdout: String(r.stdout ?? ""), stderr: String(r.stderr ?? "") };
+}
+
+function stampOf(root = ROOT): {
+  ok: boolean;
+  files: string[];
+  sha256: string;
+  actionSha256?: string;
+} {
+  return JSON.parse(readFileSync(join(root, "dist", ".slim-build.json"), "utf8")) as {
+    ok: boolean;
+    files: string[];
+    sha256: string;
+    actionSha256?: string;
+  };
 }
 
 test("build wipes stale dist outputs after a source module is removed", { timeout: 120_000 }, () => {
@@ -128,26 +143,124 @@ test("build wipes stale dist outputs after a source module is removed", { timeou
   }
 });
 
-test("two builds from unchanged sources produce identical dist manifests", { timeout: 180_000 }, () => {
-  const a = runBuild(ROOT);
-  assert.equal(a.status, 0, a.stderr + a.stdout);
-  const first = distManifest();
-  const stamp1 = JSON.parse(readFileSync(STAMP, "utf8")) as {
-    ok: boolean;
-    files: string[];
-    sha256: string;
-    actionSha256?: string;
-  };
-  assert.equal(stamp1.ok, true);
-  assert.deepEqual(stamp1.files, first.files);
-  assert.equal(stamp1.sha256, first.sha256);
-  assert.match(stamp1.actionSha256 ?? "", /^[0-9a-f]{64}$/);
-  const b = runBuild(ROOT);
-  assert.equal(b.status, 0, b.stderr + b.stdout);
-  const second = distManifest();
-  assert.deepEqual(second, first);
-  const stamp2 = JSON.parse(readFileSync(STAMP, "utf8")) as { sha256: string };
-  assert.equal(stamp2.sha256, first.sha256);
+test("build wipes stale dist outputs after a source module is renamed", { timeout: 120_000 }, () => {
+  const tmp = mkdtempSync(join(tmpdir(), "slim-rename-src-"));
+  try {
+    mkdirSync(join(tmp, "src"), { recursive: true });
+    mkdirSync(join(tmp, "docs"), { recursive: true });
+    writeFileSync(
+      join(tmp, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2023",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          outDir: "dist",
+          rootDir: "src",
+          declaration: true,
+          sourceMap: true,
+          noEmitOnError: true,
+          skipLibCheck: true,
+        },
+        include: ["src/**/*.ts"],
+      }),
+    );
+    writeFileSync(join(tmp, "docs", "slim.schema.json"), "{}\n");
+    writeFileSync(join(tmp, "src", "keep.ts"), "export const keep = 1;\n");
+    const first = runBuild(tmp, [tmp]);
+    assert.equal(first.status, 0, first.stderr + first.stdout);
+    assert.ok(existsSync(join(tmp, "dist", "keep.js")));
+    renameSync(join(tmp, "src", "keep.ts"), join(tmp, "src", "renamed.ts"));
+    const second = runBuild(tmp, [tmp]);
+    assert.equal(second.status, 0, second.stderr + second.stdout);
+    assert.ok(existsSync(join(tmp, "dist", "renamed.js")));
+    assert.ok(existsSync(join(tmp, "dist", "renamed.d.ts")));
+    assert.ok(existsSync(join(tmp, "dist", "renamed.js.map")));
+    assert.equal(existsSync(join(tmp, "dist", "keep.js")), false);
+    assert.equal(existsSync(join(tmp, "dist", "keep.d.ts")), false);
+    assert.equal(existsSync(join(tmp, "dist", "keep.js.map")), false);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("build removes obsolete catalog TypeScript copies", { timeout: 120_000 }, () => {
+  const tmp = mkdtempSync(join(tmpdir(), "slim-catalog-orphan-"));
+  try {
+    mkdirSync(join(tmp, "src", "generate", "catalog"), { recursive: true });
+    mkdirSync(join(tmp, "docs"), { recursive: true });
+    writeFileSync(
+      join(tmp, "tsconfig.json"),
+      JSON.stringify({
+        compilerOptions: {
+          target: "ES2023",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          outDir: "dist",
+          rootDir: "src",
+          declaration: true,
+          sourceMap: true,
+          noEmitOnError: true,
+          skipLibCheck: true,
+        },
+        include: ["src/**/*.ts"],
+      }),
+    );
+    writeFileSync(join(tmp, "docs", "slim.schema.json"), "{}\n");
+    writeFileSync(join(tmp, "src", "keep.ts"), "export const keep = 1;\n");
+    writeFileSync(join(tmp, "src", "generate", "catalog", "keep.ts"), "export const catalogKeep = 1;\n");
+    writeFileSync(join(tmp, "src", "generate", "catalog", "gone.ts"), "export const catalogGone = 2;\n");
+    const first = runBuild(tmp, [tmp]);
+    assert.equal(first.status, 0, first.stderr + first.stdout);
+    assert.ok(existsSync(join(tmp, "dist", "generate", "catalog", "keep.ts")));
+    assert.ok(existsSync(join(tmp, "dist", "generate", "catalog", "gone.ts")));
+    assert.ok(existsSync(join(tmp, "dist", "generate", "catalog", "gone.js")));
+    rmSync(join(tmp, "src", "generate", "catalog", "gone.ts"));
+    writeFileSync(join(tmp, "dist", "generate", "catalog", "stale-probe.ts"), "export {};\n");
+    const second = runBuild(tmp, [tmp]);
+    assert.equal(second.status, 0, second.stderr + second.stdout);
+    assert.ok(existsSync(join(tmp, "dist", "generate", "catalog", "keep.ts")));
+    assert.equal(existsSync(join(tmp, "dist", "generate", "catalog", "gone.ts")), false);
+    assert.equal(existsSync(join(tmp, "dist", "generate", "catalog", "gone.js")), false);
+    assert.equal(existsSync(join(tmp, "dist", "generate", "catalog", "gone.d.ts")), false);
+    assert.equal(existsSync(join(tmp, "dist", "generate", "catalog", "gone.js.map")), false);
+    assert.equal(existsSync(join(tmp, "dist", "generate", "catalog", "stale-probe.ts")), false);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("two clean builds and an incremental build produce equivalent dist manifests", { timeout: 180_000 }, () => {
+  withRepoDistLock(() => {
+    rmSync(DIST, { recursive: true, force: true });
+    const a = runBuild(ROOT);
+    assert.equal(a.status, 0, a.stderr + a.stdout);
+    const first = distManifest();
+    const stamp1 = stampOf();
+    assert.equal(stamp1.ok, true);
+    assert.deepEqual(stamp1.files, first.files);
+    assert.equal(stamp1.sha256, first.sha256);
+    assert.match(stamp1.actionSha256 ?? "", /^[0-9a-f]{64}$/);
+
+    rmSync(DIST, { recursive: true, force: true });
+    const b = runBuild(ROOT);
+    assert.equal(b.status, 0, b.stderr + b.stdout);
+    const second = distManifest();
+    const stamp2 = stampOf();
+    assert.deepEqual(second, first);
+    assert.deepEqual(stamp2.files, stamp1.files);
+    assert.equal(stamp2.sha256, stamp1.sha256);
+    assert.equal(stamp2.actionSha256, stamp1.actionSha256);
+
+    const c = runBuild(ROOT);
+    assert.equal(c.status, 0, c.stderr + c.stdout);
+    const third = distManifest();
+    const stamp3 = stampOf();
+    assert.deepEqual(third, first);
+    assert.deepEqual(stamp3.files, stamp1.files);
+    assert.equal(stamp3.sha256, stamp1.sha256);
+    assert.equal(stamp3.actionSha256, stamp1.actionSha256);
+  });
 });
 
 test("failed tsc leaves no qualified stamp or main.js", { timeout: 60_000 }, () => {
