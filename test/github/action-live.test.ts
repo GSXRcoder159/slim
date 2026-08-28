@@ -9,7 +9,9 @@ import { actionReceipt, writeReceipt } from "../../src/support/receipts.ts";
 import { hermeticPmEnv } from "../../src/rewrite/lockfile.ts";
 import {
   copyPackedActionCheckout,
+  isWorkflowMissingError,
   packAndExtractAction,
+  workflowRunIdFromList,
   writeAllSuccessConsumer,
   writeBloatFailConsumer,
   writeCheckFailConsumer,
@@ -206,14 +208,18 @@ test("live packed Actions pass on every advertised runner/Node cell", { timeout:
 
     let runId = "";
     for (let i = 0; i < 30; i++) {
-      const listed = gh(
-        ["run", "list", "--workflow", "qualify-actions.yml", "--json", "databaseId,status,conclusion", "--limit", "1"],
-        dest,
-      );
-      const rows = JSON.parse(listed) as Array<{ databaseId: number; status: string }>;
-      if (rows[0]?.databaseId) {
-        runId = String(rows[0].databaseId);
-        break;
+      try {
+        const listed = gh(
+          ["run", "list", "--workflow", "qualify-actions.yml", "--json", "databaseId,status,conclusion", "--limit", "1"],
+          dest,
+        );
+        const id = workflowRunIdFromList(listed);
+        if (id) {
+          runId = id;
+          break;
+        }
+      } catch (err) {
+        if (!isWorkflowMissingError(err)) throw err;
       }
       execFileSync("sleep", ["5"]);
     }

@@ -96,6 +96,17 @@ export function runPackedCli(
   return runNode([join(actionRoot, "dist/main.js"), ...args], cwd, extraEnv);
 }
 
+export function isWorkflowMissingError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /HTTP 404/.test(msg) && /not found/i.test(msg);
+}
+
+export function workflowRunIdFromList(listed: string): string | null {
+  const rows = JSON.parse(listed || "[]") as Array<{ databaseId?: number }>;
+  const id = rows[0]?.databaseId;
+  return typeof id === "number" && id > 0 ? String(id) : null;
+}
+
 export function runPackedAction(
   actionRoot: string,
   cmd: string,

@@ -6,9 +6,11 @@ import { join } from "node:path";
 import { STAMP_NAME } from "../../action/digest.mjs";
 import {
   copyPackedActionCheckout,
+  isWorkflowMissingError,
   packAndExtractAction,
   runPackedAction,
   runPackedCli,
+  workflowRunIdFromList,
   writeAllSuccessConsumer,
   writeBloatFailConsumer,
   writeCheckFailConsumer,
@@ -20,6 +22,20 @@ let packDir = "";
 let extractDest = "";
 let actionRoot = "";
 let actionDigest = "";
+
+test("workflow run list treats GitHub 404 as missing, not fatal", () => {
+  assert.equal(workflowRunIdFromList("[]"), null);
+  assert.equal(workflowRunIdFromList('[{"databaseId":33135306891,"status":"queued"}]'), "33135306891");
+  assert.equal(
+    isWorkflowMissingError(
+      new Error(
+        "HTTP 404: workflow qualify-actions.yml not found on the default branch",
+      ),
+    ),
+    true,
+  );
+  assert.equal(isWorkflowMissingError(new Error("HTTP 403: Resource not accessible")), false);
+});
 
 function ensurePack(): void {
   if (actionRoot) return;
