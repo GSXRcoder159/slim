@@ -78,10 +78,12 @@ export function runNode(
   cwd: string,
   extraEnv: NodeJS.ProcessEnv = {},
 ): { status: number; stdout: string; stderr: string } {
+  const env = hermeticPmEnv({ CI: "1", ...extraEnv });
+  if (!Object.hasOwn(extraEnv, "SLIM_ACTION_DIGEST")) delete env.SLIM_ACTION_DIGEST;
   const r = spawnSync(process.execPath, args, {
     cwd,
     encoding: "utf8",
-    env: hermeticPmEnv({ CI: "1", ...extraEnv }),
+    env,
     timeout: 90_000,
   });
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };

@@ -91,7 +91,7 @@ function frozenInstallArgs(bin: string, env: NodeJS.ProcessEnv, frozen: boolean)
   if (bin === "pnpm") {
     const args = ["install"];
     if (env.npm_config_store_dir) args.push("--store-dir", env.npm_config_store_dir);
-    if (frozen) args.push("--frozen-lockfile");
+    args.push(frozen ? "--frozen-lockfile" : "--no-frozen-lockfile");
     return args;
   }
   if (frozen && bin === "yarn") return ["install", "--frozen-lockfile"];

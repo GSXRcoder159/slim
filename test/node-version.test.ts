@@ -75,8 +75,12 @@ test("action runner is committed JS and never falls back to source", async () =>
   assert.ok(readdirSync(join(ROOT, "action")).includes("run.mjs"));
   assert.ok(readdirSync(join(ROOT, "action")).includes("digest.mjs"));
 
+  const env = { ...process.env };
+  delete env.SLIM_ACTION_DIGEST;
+
   const missing = spawnSync(process.execPath, [join(ROOT, "action/run.mjs")], {
     encoding: "utf8",
+    env,
   });
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /usage: run\.mjs/);
@@ -104,20 +108,21 @@ test("action runner is committed JS and never falls back to source", async () =>
 
     const both = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
       encoding: "utf8",
+      env,
     });
     assert.equal(both.status, 0, both.stderr);
     assert.equal(both.stdout.trim(), "DIST");
 
     const pinOk = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
       encoding: "utf8",
-      env: { ...process.env, SLIM_ACTION_DIGEST: sha256 },
+      env: { ...env, SLIM_ACTION_DIGEST: sha256 },
     });
     assert.equal(pinOk.status, 0, pinOk.stderr);
     assert.equal(pinOk.stdout.trim(), "DIST");
 
     const pinBad = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
       encoding: "utf8",
-      env: { ...process.env, SLIM_ACTION_DIGEST: "a".repeat(64) },
+      env: { ...env, SLIM_ACTION_DIGEST: "a".repeat(64) },
     });
     assert.equal(pinBad.status, 4);
     assert.match(pinBad.stderr, /action digest mismatch/);
@@ -129,6 +134,7 @@ test("action runner is committed JS and never falls back to source", async () =>
     );
     const stale = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
       encoding: "utf8",
+      env,
     });
     assert.equal(stale.status, 4);
     assert.match(stale.stderr, /stale action distributable/);
@@ -136,6 +142,7 @@ test("action runner is committed JS and never falls back to source", async () =>
     rmSync(join(tmp, "dist", STAMP_NAME), { force: true });
     const noStamp = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
       encoding: "utf8",
+      env,
     });
     assert.equal(noStamp.status, 4);
     assert.match(noStamp.stderr, new RegExp(`missing dist/${STAMP_NAME}`));
@@ -143,6 +150,7 @@ test("action runner is committed JS and never falls back to source", async () =>
     rmSync(join(tmp, "dist"), { recursive: true, force: true });
     const srcOnly = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
       encoding: "utf8",
+      env,
     });
     assert.equal(srcOnly.status, 4);
     assert.match(srcOnly.stderr, /missing dist\/github\/check-action\.js/);

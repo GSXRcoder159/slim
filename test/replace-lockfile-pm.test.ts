@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
+import { hermeticPmEnv, refreshLockfile } from "../src/rewrite/lockfile.ts";
 import { applyRevert, type RevertPlan } from "../src/rewrite/revert.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -13,6 +13,47 @@ const NODE_BIN = dirname(process.execPath);
 const COREPACK =
   process.platform === "win32" ? join(NODE_BIN, "corepack.cmd") : join(NODE_BIN, "corepack");
 const PM_PATH = `${NODE_BIN}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
+
+test("pnpm lockfile refresh disables frozen-lockfile so CI can update the lock", () => {
+  let seen: string[] = [];
+  refreshLockfile(
+    {
+      root: "/tmp/slim-lock-refresh",
+      lockfile: "pnpm",
+      packageJsonPath: "/tmp/slim-lock-refresh/package.json",
+      packageJson: {},
+      tsconfigPath: null,
+      srcDir: "/tmp/slim-lock-refresh/src",
+    },
+    {},
+    (file, args) => {
+      seen = [file, ...(args as string[])];
+    },
+  );
+  assert.equal(seen[0], "pnpm");
+  assert.ok(seen.includes("--no-frozen-lockfile"));
+  assert.equal(seen.includes("--frozen-lockfile"), false);
+});
+
+test("pnpm rollback refresh keeps frozen-lockfile", () => {
+  let seen: string[] = [];
+  refreshLockfile(
+    {
+      root: "/tmp/slim-lock-frozen",
+      lockfile: "pnpm",
+      packageJsonPath: "/tmp/slim-lock-frozen/package.json",
+      packageJson: {},
+      tsconfigPath: null,
+      srcDir: "/tmp/slim-lock-frozen/src",
+    },
+    { frozen: true },
+    (file, args) => {
+      seen = [file, ...(args as string[])];
+    },
+  );
+  assert.ok(seen.includes("--frozen-lockfile"));
+  assert.equal(seen.includes("--no-frozen-lockfile"), false);
+});
 
 function pmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return hermeticPmEnv({ PATH: PM_PATH, ...extra });
@@ -127,16 +168,20 @@ function pmBin(kind: "npm" | "pnpm" | "yarn" | "bun"): string {
 }
 
 function runReplace(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
-  const r = runSlim(dir, [
-    "replace",
-    "ms",
-    "--no-pr",
-    "--no-trace",
-    "--budget-ms",
-    "800",
-    "--workers",
-    "1",
-  ]);
+  const r = runSlim(
+    dir,
+    [
+      "replace",
+      "ms",
+      "--no-pr",
+      "--no-trace",
+      "--budget-ms",
+      "800",
+      "--workers",
+      "1",
+    ],
+    { GITHUB_ACTIONS: "true" },
+  );
   assert.equal(r.status, 0, `${kind}: ${r.stderr}\n${r.stdout}`);
   assertMsGone(dir, kind);
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
@@ -183,7 +228,7 @@ function runReplaceRollback(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"):
   const r = runSlim(
     dir,
     ["replace", "ms", "--no-pr", "--no-trace", "--budget-ms", "800", "--workers", "1"],
-    { SLIM_INJECT_FAIL: "after-lockfile" },
+    { SLIM_INJECT_FAIL: "after-lockfile", GITHUB_ACTIONS: "true" },
   );
   assert.notEqual(r.status, 0, `${kind} inject should fail`);
   assert.match(r.stderr, /injected failure: after-lockfile/);
