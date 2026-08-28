@@ -42,7 +42,9 @@ export function hermeticPmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv 
 }
 
 function installEnv(): NodeJS.ProcessEnv {
-  return hermeticPmEnv();
+  const env = hermeticPmEnv();
+  delete env.GITHUB_ACTIONS;
+  return env;
 }
 
 function pmBinary(lockfile: Project["lockfile"]): string {

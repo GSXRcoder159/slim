@@ -14,6 +14,33 @@ const COREPACK =
   process.platform === "win32" ? join(NODE_BIN, "corepack.cmd") : join(NODE_BIN, "corepack");
 const PM_PATH = `${NODE_BIN}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
 
+test("pnpm lockfile refresh does not pass GITHUB_ACTIONS to the installer", () => {
+  const prev = process.env.GITHUB_ACTIONS;
+  process.env.GITHUB_ACTIONS = "true";
+  try {
+    let seenEnv: NodeJS.ProcessEnv = {};
+    refreshLockfile(
+      {
+        root: "/tmp/slim-lock-gha",
+        lockfile: "pnpm",
+        packageJsonPath: "/tmp/slim-lock-gha/package.json",
+        packageJson: {},
+        tsconfigPath: null,
+        srcDir: "/tmp/slim-lock-gha/src",
+      },
+      {},
+      (_file, _args, opts) => {
+        seenEnv = opts?.env ?? {};
+      },
+    );
+    assert.equal(seenEnv.GITHUB_ACTIONS, undefined);
+    assert.equal(seenEnv.CI, undefined);
+  } finally {
+    if (prev === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = prev;
+  }
+});
+
 test("pnpm lockfile refresh disables frozen-lockfile so CI can update the lock", () => {
   let seen: string[] = [];
   refreshLockfile(
@@ -57,6 +84,12 @@ test("pnpm rollback refresh keeps frozen-lockfile", () => {
 
 function pmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   return hermeticPmEnv({ PATH: PM_PATH, ...extra });
+}
+
+function installPmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env = pmEnv(extra);
+  delete env.GITHUB_ACTIONS;
+  return env;
 }
 
 function which(bin: string): boolean {
@@ -202,7 +235,7 @@ function revertAndReinstall(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"):
   const inst = spawnSync(pmBin(kind), ["install"], {
     cwd: dir,
     encoding: "utf8",
-    env: pmEnv(),
+    env: installPmEnv(),
     timeout: 120_000,
   });
   assert.equal(inst.status, 0, `${kind} revert install: ${inst.stderr}`);
@@ -216,7 +249,7 @@ function installKind(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
   const inst = spawnSync(pmBin(kind), ["install"], {
     cwd: dir,
     encoding: "utf8",
-    env: pmEnv(),
+    env: installPmEnv(),
     timeout: 120_000,
   });
   assert.equal(inst.status, 0, `${kind} install: ${inst.stderr}\n${inst.stdout}`);
