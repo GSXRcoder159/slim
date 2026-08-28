@@ -28,7 +28,7 @@ slim/
     lodash-dynamic-refuse/ native-addon-refuse/
   action/                   # check, bloat, upstream composites → action/run.mjs
   docs/                     # dx, packages, schemas, examples
-  scripts/                  # build.mjs, similarity-gate, refresh-golden, measure-claims, qualify-receipts, release-gate
+  scripts/                  # build.mjs, similarity-gate, refresh-golden, measure-claims, qualify-receipts, emit-local-receipts, qualify-candidate, release-gate
   .github/workflows/        # ci (OS × Node matrix + golden-refresh), release, slim-check, slim-bloat, slim-upstream
 ```
 
@@ -70,8 +70,9 @@ Slice identity is `.slim/<pkg>/envelope.json` plus the module under `src/slim/`.
 
 - **LICENSE:** MIT for the CLI. Generated slices are SPDX MIT. Do not copy upstream LICENSE files into user trees. n-gram similarity is a CI heuristic, not a legal opinion.
 - **CONTRIBUTING / SECURITY / CODE_OF_CONDUCT:** as in those files. Report Slim bugs privately; a slice mismatch is a Slim bug.
-- **CI:** Linux, macOS, Windows × Node 22.18 and 24, plus a required `golden-refresh` job (`refresh:golden -- --check`). Node 26 Current is not in CI until LTS.
-- **Release:** tag `vX.Y.Z` must equal `package.json` and the first CHANGELOG `##` heading. The workflow runs identity, test, similarity, then `npm pack --ignore-scripts` once. Dry-run, provenance, and `npm publish` all take that tarball path — never a bare `npm publish` that would rebuild. `workflow_dispatch` rehearses by default (no publish, no tag push). A successful publish attaches the extracted pack as a child commit and moves `vX.Y.Z` plus the advertised Action pin (`v1` during 0.x) onto it so `uses: slim-hq/slim/action/check@v1` has compiled `dist/`.
+- **CI:** Linux, macOS, Windows × Node 22.18 and 24, plus a required `golden-refresh` job (`refresh:golden -- --check`) and a `receipts` job that fail-closes unless all six `osNode` receipts uploaded. Each matrix cell packs once and runs `emit-local-receipts --only osNode` after tests. Node 26 Current is not in CI until LTS.
+- **Qualification:** `npm run qualify:emit` writes gitignored local receipts under `qualification/receipts/` for the candidate commit and packed content digest. `npm run qualify:candidate` asserts a clean tree, version/tag/changelog identity, CHANGELOG revert/migration guidance, packs once, emits local receipts, optionally runs live tests when `SLIM_*_LIVE=1`, then fail-closes through `qualifyInventory`. `--mode collect` merges CI `os-node-receipts` artifacts. Receipts stay gitignored because they bind a SHA; `npm publish` still requires that directory at publish time. `npm run qualify` is the inventory gate.
+- **Release:** tag `vX.Y.Z` must equal `package.json` and the first CHANGELOG `##` heading. The workflow runs identity, test, similarity, then `npm pack --ignore-scripts` once. Dry-run, provenance, and `npm publish` all take that tarball path — never a bare `npm publish` that would rebuild. `workflow_dispatch` rehearses by default (no publish, no tag push). A successful publish attaches the extracted pack as a child commit and moves `vX.Y.Z` plus the advertised Action pin (`v1` during 0.x) onto it so `uses: slim-hq/slim/action/check@v1` has compiled `dist/`. Publish mode passes `--receipts qualification/receipts` and fails closed if that SHA-bound set is missing or stale.
 - **Actions:** published `uses: slim-hq/slim/action/check@v1` (and bloat/upstream) run only compiled `dist/github/*-action.js`. Missing or stale distributable code exits 4. This repo gitignores `dist/`; dogfood workflows `npm run build` then `uses: ./action/*`. Published tags must include the compiled Action files.
 
 No `packages/` monorepo, no telemetry, no commander/chalk/ora, no hosted advisory proxy.

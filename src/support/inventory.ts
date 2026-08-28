@@ -51,8 +51,10 @@ export interface SupportInventory {
 
 const COMMANDS = ["scan", "inspect", "replace", "check", "bloat", "upstream", "doctor"] as const;
 const JSON_COMMANDS = ["scan", "inspect", "check", "upstream", "doctor"] as const;
-const OS = ["ubuntu-latest", "macos-latest", "windows-latest"] as const;
-const NODES = ["22.18", "24"] as const;
+export const INVENTORY_OS = ["ubuntu-latest", "macos-latest", "windows-latest"] as const;
+export const INVENTORY_NODES = ["22.18", "24"] as const;
+const OS = INVENTORY_OS;
+const NODES = INVENTORY_NODES;
 const PMS = ["npm", "pnpm", "yarn", "bun"] as const;
 const PACKAGES = [
   "lodash",

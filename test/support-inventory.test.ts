@@ -54,6 +54,8 @@ test("catalog symbols, aliases, CI matrix, and actions match inventory", () => {
   assert.match(ci, /windows-latest/);
   assert.match(ci, /"22\.18"/);
   assert.match(ci, /"24"/);
+  assert.match(ci, /emit-local-receipts/);
+  assert.match(ci, /receipt-osNode-/);
   for (const name of ["check", "bloat", "upstream"]) {
     assert.ok(byId.has(`action.${name}`), `missing action.${name}`);
     assert.ok(existsSync(join(ROOT, `action/${name}/action.yml`)));

@@ -63,6 +63,25 @@ export function assertVersionIdentity(opts: { root: string; tag: string }): void
   }
 }
 
+export function assertMigrationGuidance(root: string): void {
+  const version = packageVersion(root);
+  const text = readFileSync(join(root, "CHANGELOG.md"), "utf8");
+  const heading = `## ${version}`;
+  const start = text.indexOf(heading);
+  if (start < 0) {
+    throw new SlimExit(EXIT_REFUSED, `CHANGELOG.md missing ## ${version} heading`);
+  }
+  const rest = text.slice(start + heading.length);
+  const next = rest.search(/^##\s+/m);
+  const section = next < 0 ? rest : rest.slice(0, next);
+  if (!/###\s+Revert\s*\/\s*migration/i.test(section)) {
+    throw new SlimExit(
+      EXIT_REFUSED,
+      `CHANGELOG.md ${version} missing Revert / migration guidance`,
+    );
+  }
+}
+
 export function assertCleanTree(root: string): void {
   let porcelain: string;
   try {

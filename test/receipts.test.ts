@@ -13,6 +13,7 @@ import {
   githubReceipt,
   actionReceipt,
   releaseReceipt,
+  localReceipt,
   writeReceipt,
 } from "../src/support/receipts.ts";
 
@@ -328,4 +329,104 @@ test("qualify action digest mismatch fails closed", () => {
     actionDigest: ACTION,
   }, { now: NOW });
   assert.match(failures[0]?.reason ?? "", /action digest mismatch/);
+});
+
+test("localReceipt is schema-valid with command identity", () => {
+  const rec = localReceipt({
+    entry,
+    commit: COMMIT,
+    npmDigest: NPM,
+    actionDigest: null,
+    startedAt: new Date("2026-08-27T14:00:00.000Z"),
+    endedAt: new Date("2026-08-27T14:00:01.000Z"),
+    log: "ok",
+    environment: "darwin node-v22.18.0",
+  });
+  const parsed = parseReceipt(rec);
+  assert.equal(parsed.checkId, "test/cli.test.ts");
+  assert.equal(parsed.command, "scan");
+  assert.equal(parsed.provider, null);
+  assert.equal(parsed.service, null);
+  assert.equal(parsed.outcome, "pass");
+});
+
+test("qualify command mismatch fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-cmd-"));
+  writeReceipt(
+    dir,
+    entry.id,
+    localReceipt({
+      entry: { ...entry, command: "inspect" },
+      commit: COMMIT,
+      npmDigest: NPM,
+      actionDigest: null,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+      environment: "local",
+    }),
+  );
+  const failures = qualifyInventory(inventory, dir, candidate, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /command inspect != scan/);
+});
+
+test("qualify osNode environment mismatch fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-osn-"));
+  const osEntry: InventoryEntry = {
+    id: "osNode.ubuntu-latest.22.18",
+    kind: "osNode",
+    os: "ubuntu-latest",
+    node: "22.18",
+    docs: [".github/workflows/ci.yml"],
+    checkId: "test/docs-contract.test.ts",
+    receiptClass: "local",
+  };
+  writeReceipt(
+    dir,
+    osEntry.id,
+    localReceipt({
+      entry: osEntry,
+      commit: COMMIT,
+      npmDigest: NPM,
+      actionDigest: null,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+      environment: "macos-latest node-24 darwin node-v24.0.0",
+    }),
+  );
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [osEntry] }, dir, candidate, {
+    now: NOW,
+  });
+  assert.match(failures[0]?.reason ?? "", /osNode environment missing/);
+});
+
+test("qualify packageManager environment mismatch fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-pm-"));
+  const pm: InventoryEntry = {
+    id: "packageManager.pnpm",
+    kind: "packageManager",
+    name: "pnpm",
+    docs: ["docs/dx.md"],
+    checkId: "test/replace-lockfile-pm.test.ts",
+    receiptClass: "local",
+  };
+  writeReceipt(
+    dir,
+    pm.id,
+    localReceipt({
+      entry: pm,
+      commit: COMMIT,
+      npmDigest: NPM,
+      actionDigest: null,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+      environment: "darwin node-v22.18.0 npm",
+    }),
+  );
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [pm] }, dir, candidate, {
+    now: NOW,
+  });
+  assert.match(failures[0]?.reason ?? "", /packageManager environment missing pnpm/);
 });

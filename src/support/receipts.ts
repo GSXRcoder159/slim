@@ -191,6 +191,37 @@ export function releaseReceipt(opts: {
   };
 }
 
+export function localReceipt(opts: {
+  entry: InventoryEntry;
+  commit: string;
+  npmDigest: string | null;
+  actionDigest: string | null;
+  startedAt: Date;
+  endedAt: Date;
+  log: string;
+  environment: string;
+  fixture?: string;
+  workflowRun?: string | null;
+}): QualificationReceipt {
+  return {
+    schemaVersion: 1,
+    checkId: opts.entry.checkId,
+    command: opts.entry.command ?? null,
+    fixture: opts.fixture ?? opts.entry.checkId,
+    environment: opts.environment,
+    provider: null,
+    service: null,
+    startedAt: opts.startedAt.toISOString(),
+    endedAt: opts.endedAt.toISOString(),
+    outcome: "pass",
+    commit: opts.commit,
+    npmDigest: opts.npmDigest,
+    actionDigest: opts.actionDigest,
+    workflowRun: opts.workflowRun ?? null,
+    logDigest: createHash("sha256").update(opts.log).digest("hex"),
+  };
+}
+
 export function actionReceipt(opts: {
   command: "check" | "bloat" | "upstream";
   fixture: string;
@@ -272,6 +303,27 @@ export function identityMismatch(
   }
   if (receipt.fixture === "") {
     return "missing fixture identity";
+  }
+  if (
+    (entry.kind === "command" || entry.kind === "jsonCommand") &&
+    receipt.command !== entry.command
+  ) {
+    return `command ${receipt.command} != ${entry.command}`;
+  }
+  if (entry.kind === "osNode") {
+    const env = receipt.environment ?? "";
+    if (!entry.os || !env.includes(entry.os)) {
+      return `osNode environment missing ${entry.os}`;
+    }
+    if (!entry.node || !env.includes(entry.node)) {
+      return `osNode environment missing ${entry.node}`;
+    }
+  }
+  if (entry.kind === "packageManager") {
+    const env = receipt.environment ?? "";
+    if (!entry.name || !env.includes(entry.name)) {
+      return `packageManager environment missing ${entry.name}`;
+    }
   }
   if (entry.kind === "provider" && receipt.provider !== entry.name) {
     return `provider ${receipt.provider} != ${entry.name}`;

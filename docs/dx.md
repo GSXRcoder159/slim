@@ -48,6 +48,8 @@ The shipped CLI uses **0–4 only**. SIGINT is the process default (typically 13
 
 The advertised product surface is [`docs/support-inventory.json`](./support-inventory.json). Help and this file may name only those entries.
 
+Qualification receipts live in gitignored `qualification/receipts/` and bind one commit plus the packed npm/Action content digest. `npm run qualify:emit` writes local receipts after the named `checkId` tests pass; it will not mint an `osNode` cell for a different OS or Node. `npm run qualify:candidate` packs once, emits locals, runs live tests when `SLIM_*_LIVE=1`, and fail-closes. CI uploads six `osNode` receipts; `npm run qualify:candidate -- --mode collect --os-node-only` merges them. Missing or stale receipts fail `npm run qualify`; they do not vanish from `npm test`.
+
 Shipped top-level help is the `HELP` string in `src/cli.ts` (`slim --help`). Keep [`help.txt`](./help.txt) equal to that string; `test/cli.test.ts` diffs them.
 
 ### `slim scan [dir]`
