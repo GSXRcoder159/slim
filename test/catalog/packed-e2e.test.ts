@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { hermeticPmEnv } from "../../src/rewrite/lockfile.ts";
+import { hermeticPmEnv, execPm, cmdShimSpawnOpts } from "../../src/rewrite/lockfile.ts";
 import { npmPackTo } from "../helpers/llm-replace.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -46,7 +46,13 @@ function run(
   extraEnv: NodeJS.ProcessEnv = {},
   timeoutMs = 180_000,
 ): { status: number; stdout: string; stderr: string } {
-  const r = spawnSync(bin, args, { cwd, encoding: "utf8", env: npmEnv(extraEnv), timeout: timeoutMs });
+  const r = spawnSync(bin, args, {
+    cwd,
+    encoding: "utf8",
+    env: npmEnv(extraEnv),
+    timeout: timeoutMs,
+    ...cmdShimSpawnOpts(bin),
+  });
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
@@ -159,7 +165,7 @@ function assertReplaceLoop(dest: string, pkg: string, slimJs: string): void {
 }
 
 function npmInstall(cwd: string, tarball: string): void {
-  execFileSync("npm", ["install", tarball], {
+  execPm("npm", ["install", tarball], {
     cwd,
     encoding: "utf8",
     timeout: 120_000,
@@ -168,7 +174,7 @@ function npmInstall(cwd: string, tarball: string): void {
 }
 
 test("packed CLI replace → standing tests → slim check for every registered catalog package and alias", { timeout: 1_200_000 }, () => {
-  execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: npmEnv() });
+  execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: npmEnv() });
   mkdirSync(TMP, { recursive: true });
   const packDir = mkdtempSync(join(TMP, "slim-catalog-pack-"));
   const tarball = npmPackTo(packDir);

@@ -4,7 +4,7 @@ import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { spawnPm } from "../../src/rewrite/lockfile.ts";
 import { ENVELOPE_VERSION, emptyHyrum, type Envelope } from "../../src/envelope/types.ts";
 import { runTraces } from "../../src/trace/run.ts";
 
@@ -76,12 +76,12 @@ test("named get", () => {
 });
 `,
   );
-  const inst = spawnSync("npm", ["install", "--omit=peer", "--no-audit", "--no-fund"], {
+  const inst = spawnPm("npm", ["install", "--omit=peer", "--no-audit", "--no-fund"], {
     cwd: dir,
     encoding: "utf8",
     timeout: 90_000,
   });
-  assert.equal(inst.status, 0, inst.stderr + inst.stdout);
+  assert.equal(inst.status, 0, String(inst.stderr) + String(inst.stdout));
   const pkgDir = join(dir, "node_modules", "tiny-trace-esm");
   mkdirSync(pkgDir, { recursive: true });
   cpSync(FIXTURE, pkgDir, { recursive: true });

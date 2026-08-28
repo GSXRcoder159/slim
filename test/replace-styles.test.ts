@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
+import { hermeticPmEnv, spawnPm } from "../src/rewrite/lockfile.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -18,13 +18,13 @@ function runSlim(cwd: string, args: string[]) {
 }
 
 function npmInstall(cwd: string): void {
-  const r = spawnSync("npm", ["install", "--ignore-scripts"], {
+  const r = spawnPm("npm", ["install", "--ignore-scripts"], {
     cwd,
     encoding: "utf8",
     env: hermeticPmEnv(),
     timeout: 120_000,
   });
-  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.status, 0, String(r.stderr));
 }
 
 function tsconfig(): string {

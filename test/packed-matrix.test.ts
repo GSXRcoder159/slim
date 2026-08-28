@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
+import { hermeticPmEnv, execPm, cmdShimSpawnOpts } from "../src/rewrite/lockfile.ts";
 import { npmPackTo } from "./helpers/llm-replace.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -32,6 +32,7 @@ function run(
     encoding: "utf8",
     env: hermeticPmEnv({ ...extraEnv }),
     timeout: timeoutMs,
+    ...cmdShimSpawnOpts(bin),
   });
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
@@ -39,7 +40,7 @@ function run(
 function packTarball(): { dir: string; tarball: string } {
   mkdirSync(TMP, { recursive: true });
   if (!existsSync(join(ROOT, "dist", ".slim-build.json"))) {
-    execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
   }
   const dir = mkdtempSync(join(TMP, "slim-matrix-pack-"));
   return { dir, tarball: npmPackTo(dir) };
@@ -69,7 +70,7 @@ function slimJs(cwd: string): string {
 function installSlim(cwd: string, tarball: string, ignoreScripts = false): void {
   const args = ["install", tarball];
   if (ignoreScripts) args.push("--ignore-scripts");
-  execFileSync("npm", args, { cwd, encoding: "utf8", timeout: 120_000, env: hermeticPmEnv() });
+  execPm("npm", args, { cwd, encoding: "utf8", timeout: 120_000, env: hermeticPmEnv() });
 }
 
 test("packed consumer: doctor scan inspect traced lodash replace check evidence", { timeout: 300_000 }, () => {
@@ -282,7 +283,7 @@ test("packed vitest plugin runs a tiny ESM consumer test", { timeout: 180_000 },
       `import slimVitest from "slim/vitest";\nexport default { plugins: [slimVitest({ packages: ["ms"] })] };\n`,
     );
     installSlim(dest, tarball);
-    execFileSync("npm", ["install", "vitest@3.2.4", "--save-dev", "--no-audit", "--no-fund"], {
+    execPm("npm", ["install", "vitest@3.2.4", "--save-dev", "--no-audit", "--no-fund"], {
       cwd: dest,
       encoding: "utf8",
       timeout: 120_000,

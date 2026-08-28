@@ -1,12 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
+import { hermeticPmEnv, execPm } from "../src/rewrite/lockfile.ts";
 import { validateNamed } from "../src/schema/documents.ts";
 import { minimalEnvelope, minimalEvidence, minimalManifest } from "./helpers/documents.ts";
 import { npmPackTo } from "./helpers/llm-replace.ts";
@@ -26,13 +26,13 @@ function run(args: string[], cwd: string): { status: number; stdout: string; std
 
 function packSlim(): { tmp: string; packDir: string; slimJs: string } {
   if (!existsSync(join(ROOT, "dist", ".slim-build.json"))) {
-    execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
   }
   const packDir = mkdtempSync(join(tmpdir(), "slim-check-pack-"));
   const tarball = npmPackTo(packDir);
   const tmp = mkdtempSync(join(tmpdir(), "slim-check-host-"));
   writeFileSync(join(tmp, "package.json"), JSON.stringify({ name: "host", private: true, type: "module" }));
-  execFileSync("npm", ["install", tarball, "--omit=dev"], {
+  execPm("npm", ["install", tarball, "--omit=dev"], {
     cwd: tmp,
     encoding: "utf8",
     timeout: 60_000,

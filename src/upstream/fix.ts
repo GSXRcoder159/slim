@@ -1,5 +1,5 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawnPm } from "../rewrite/lockfile.ts";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
@@ -401,7 +401,7 @@ export { emitHardenedGetSetTest } from "../evidence/emit-tests.ts";
 
 export async function installUpstreamInTemp(name: string, version: string): Promise<string | null> {
   const spec = `${name}@${version}`;
-  const view = spawnSync("npm", ["view", spec, "version"], {
+  const view = spawnPm("npm", ["view", spec, "version"], {
     encoding: "utf8",
     timeout: 20_000,
     stdio: ["ignore", "pipe", "pipe"],
@@ -412,7 +412,7 @@ export async function installUpstreamInTemp(name: string, version: string): Prom
     join(dir, "package.json"),
     JSON.stringify({ name: "slim-upstream-oracle", private: true }),
   );
-  const inst = spawnSync(
+  const inst = spawnPm(
     "npm",
     ["install", spec, "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", dir],
     { encoding: "utf8", timeout: 60_000, stdio: ["ignore", "pipe", "pipe"] },

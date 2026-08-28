@@ -1,4 +1,10 @@
-import { execFileSync } from "node:child_process";
+import {
+  execFileSync,
+  spawnSync,
+  type ExecFileSyncOptions,
+  type SpawnSyncOptions,
+  type SpawnSyncReturns,
+} from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../exit.ts";
@@ -20,8 +26,46 @@ type ExecFile = (
     encoding?: BufferEncoding;
     stdio?: string | string[];
     env?: NodeJS.ProcessEnv;
+    shell?: boolean;
+    windowsHide?: boolean;
   },
 ) => unknown;
+
+/**
+ * Windows `.cmd`/`.bat` shims are not PE images. CreateProcess cannot launch them;
+ * cmd.exe (`shell: true`) must. `bun` is a real `.exe` and stays unshimmed.
+ */
+export function cmdShim(name: string): string {
+  if (process.platform !== "win32") return name;
+  if (/\.(cmd|bat|exe)$/i.test(name)) return name;
+  if (name === "bun" || name === "node" || name === "git" || name === "tar") return name;
+  return `${name}.cmd`;
+}
+
+export function cmdShimSpawnOpts(bin: string): { shell?: boolean; windowsHide?: boolean } {
+  if (process.platform === "win32" && /\.(cmd|bat)$/i.test(bin)) {
+    return { shell: true, windowsHide: true };
+  }
+  return {};
+}
+
+export function spawnPm(
+  name: string,
+  args: readonly string[],
+  opts: SpawnSyncOptions = {},
+): SpawnSyncReturns<string | Buffer> {
+  const bin = cmdShim(name);
+  return spawnSync(bin, args, { ...opts, ...cmdShimSpawnOpts(bin) });
+}
+
+export function execPm(
+  name: string,
+  args: readonly string[],
+  opts: ExecFileSyncOptions = {},
+): string | Buffer {
+  const bin = cmdShim(name);
+  return execFileSync(bin, args, { ...opts, ...cmdShimSpawnOpts(bin) });
+}
 
 /** Install must update the lockfile after package.json edits; CI frozen-lockfile would fail closed incorrectly. */
 export function hermeticPmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
@@ -55,9 +99,7 @@ function pmName(lockfile: Project["lockfile"]): string {
 }
 
 function pmBinary(lockfile: Project["lockfile"]): string {
-  const name = pmName(lockfile);
-  if (process.platform === "win32" && name !== "bun") return `${name}.cmd`;
-  return name;
+  return cmdShim(pmName(lockfile));
 }
 
 export function installCommandFor(lockfile: Project["lockfile"]): string {
@@ -79,7 +121,7 @@ export function refreshLockfile(
   }
   const args = frozenInstallArgs(bin, env, Boolean(opts?.frozen));
   try {
-    execFile(bin, args, { cwd, encoding: "utf8", stdio: "inherit", env });
+    execFile(bin, args, { cwd, encoding: "utf8", stdio: "inherit", env, ...cmdShimSpawnOpts(bin) });
   } catch (err) {
     const code = err && typeof err === "object" && "code" in err ? String((err as { code?: unknown }).code) : "";
     const stderr =

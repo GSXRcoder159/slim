@@ -19,7 +19,7 @@ import { delimiter, dirname, join, relative } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { applyRevert, type RevertPlan } from "../src/rewrite/revert.ts";
-import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
+import { hermeticPmEnv, spawnPm } from "../src/rewrite/lockfile.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -64,13 +64,13 @@ function snapshotTree(root: string): Record<string, string> {
 }
 
 function npmInstall(cwd: string): void {
-  const r = spawnSync("npm", ["install", "--ignore-scripts"], {
+  const r = spawnPm("npm", ["install", "--ignore-scripts"], {
     cwd,
     encoding: "utf8",
     env: hermeticPmEnv(),
     timeout: 120_000,
   });
-  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.status, 0, String(r.stderr));
 }
 
 test("dry-run with traces leaves the project byte-identical", { timeout: 180_000 }, () => {

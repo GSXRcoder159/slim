@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../src/exit.ts";
-import { refreshLockfile, shouldRefreshLockfile } from "../src/rewrite/lockfile.ts";
+import { refreshLockfile, shouldRefreshLockfile, cmdShim, cmdShimSpawnOpts } from "../src/rewrite/lockfile.ts";
 import type { Project } from "../src/project.ts";
 
 function project(lockfile: Project["lockfile"]): Project {
@@ -21,19 +21,27 @@ function project(lockfile: Project["lockfile"]): Project {
 }
 
 test("refreshLockfile npm install on npm lockfile", () => {
-  const calls: Array<{ file: string; args: string[]; cwd: string; env?: NodeJS.ProcessEnv }> = [];
+  const calls: Array<{
+    file: string;
+    args: string[];
+    cwd: string;
+    env?: NodeJS.ProcessEnv;
+    shell?: boolean;
+  }> = [];
   refreshLockfile(project("npm"), undefined, (file, args, opts) => {
     calls.push({
       file: String(file),
       args: args as string[],
       cwd: String((opts as { cwd?: string }).cwd),
       env: (opts as { env?: NodeJS.ProcessEnv }).env,
+      shell: (opts as { shell?: boolean }).shell,
     });
     return Buffer.from("");
   });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]!.file, "npm");
+  assert.equal(calls[0]!.file, cmdShim("npm"));
   assert.deepEqual(calls[0]!.args, ["install"]);
+  assert.equal(calls[0]!.shell, process.platform === "win32" ? true : undefined);
   assert.equal(calls[0]!.env?.CI, undefined);
   assert.equal(calls[0]!.env?.INIT_CWD, undefined);
   assert.match(calls[0]!.env?.npm_config_cache ?? "", /slim-pm-cache/);
@@ -45,7 +53,7 @@ test("refreshLockfile pnpm install uses an isolated store-dir", () => {
     calls.push({ file: String(file), args: args as string[] });
     return Buffer.from("");
   });
-  assert.equal(calls[0]!.file, "pnpm");
+  assert.equal(calls[0]!.file, cmdShim("pnpm"));
   assert.equal(calls[0]!.args[0], "install");
   assert.equal(calls[0]!.args[1], "--store-dir");
   assert.match(calls[0]!.args[2] ?? "", /slim-pm-cache/);
@@ -60,7 +68,7 @@ test("refreshLockfile pnpm/yarn/bun commands", () => {
   refreshLockfile(project("pnpm"), undefined, exec as typeof import("node:child_process").execFileSync);
   refreshLockfile(project("yarn"), undefined, exec as typeof import("node:child_process").execFileSync);
   refreshLockfile(project("bun"), undefined, exec as typeof import("node:child_process").execFileSync);
-  assert.deepEqual(seen, ["pnpm", "yarn", "bun"]);
+  assert.deepEqual(seen, [cmdShim("pnpm"), cmdShim("yarn"), "bun"]);
 });
 
 test("refreshLockfile missing binary is EXIT_ENV", () => {
@@ -96,6 +104,19 @@ test("shouldRefreshLockfile still skips keep-original and no-install", () => {
   assert.equal(shouldRefreshLockfile({ keepOriginal: false, noInstall: false }), true);
   assert.equal(shouldRefreshLockfile({ keepOriginal: false, noInstall: true }), false);
   assert.equal(shouldRefreshLockfile({ keepOriginal: true, noInstall: false }), false);
+});
+
+test("cmdShim routes Windows cmd shims through cmd.exe", () => {
+  if (process.platform === "win32") {
+    assert.equal(cmdShim("npm"), "npm.cmd");
+    assert.equal(cmdShim("pnpm"), "pnpm.cmd");
+    assert.equal(cmdShim("bun"), "bun");
+    assert.equal(cmdShimSpawnOpts("npm.cmd").shell, true);
+    assert.equal(cmdShimSpawnOpts("bun").shell, undefined);
+  } else {
+    assert.equal(cmdShim("npm"), "npm");
+    assert.equal(cmdShimSpawnOpts("npm").shell, undefined);
+  }
 });
 
 test("refreshLockfile frozen restore does not rewrite the lockfile", () => {

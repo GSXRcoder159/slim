@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   existsSync,
@@ -10,7 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hermeticPmEnv } from "../../src/rewrite/lockfile.ts";
+import { hermeticPmEnv, execPm } from "../../src/rewrite/lockfile.ts";
 import { build, withDistLock } from "../../scripts/build.mjs";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -80,10 +80,13 @@ export function npmPackTo(packDir: string): string {
     let last: unknown;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const tgz = execFileSync(
-          "npm",
-          ["pack", "--ignore-scripts", `--pack-destination=${packDir}`],
-          { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: npmEnv() },
+        const tgz = String(
+          execPm("npm", ["pack", "--ignore-scripts", `--pack-destination=${packDir}`], {
+            cwd: ROOT,
+            encoding: "utf8",
+            timeout: 60_000,
+            env: npmEnv(),
+          }),
         ).trim();
         const name = tgz.split("\n").pop() ?? tgz;
         if (!name) throw new Error("npm pack produced no tarball name");
@@ -175,7 +178,7 @@ export function writeTinyAddFixture(
 }
 
 export function installFixture(dest: string, tarball: string): string {
-  execFileSync("npm", ["install", tarball], {
+  execPm("npm", ["install", tarball], {
     cwd: dest,
     encoding: "utf8",
     timeout: 120_000,

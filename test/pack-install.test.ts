@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import { execPm, spawnPm, cmdShimSpawnOpts } from "../src/rewrite/lockfile.ts";
 import {
   existsSync,
   mkdirSync,
@@ -34,24 +35,27 @@ function run(
     encoding: "utf8",
     env,
     timeout: 90_000,
+    ...cmdShimSpawnOpts(bin),
   });
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
 }
 
 function ensureDist(): void {
   if (!existsSync(join(ROOT, "dist", ".slim-build.json"))) {
-    execFileSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
   }
 }
 
 test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tests", { timeout: 120_000 }, () => {
   ensureDist();
   const pack = withRepoDistLock(() =>
-    execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-      cwd: ROOT,
-      encoding: "utf8",
-      timeout: 30_000,
-    }),
+    String(
+      execPm("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        timeout: 30_000,
+      }),
+    ),
   );
   const parsed = JSON.parse(pack) as Array<{ files: Array<{ path: string }> }>;
   const files = new Set((parsed[0]?.files ?? []).map((f) => f.path.replace(/\\/g, "/")));
@@ -95,11 +99,13 @@ test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tes
 test("npm publish --dry-run lists the same production files", { timeout: 120_000 }, () => {
   ensureDist();
   const packOut = withRepoDistLock(() =>
-    execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
-      cwd: ROOT,
-      encoding: "utf8",
-      timeout: 60_000,
-    }),
+    String(
+      execPm("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+        cwd: ROOT,
+        encoding: "utf8",
+        timeout: 60_000,
+      }),
+    ),
   );
   const packed = JSON.parse(packOut) as Array<{ files?: Array<{ path: string }> }> | { files?: Array<{ path: string }> };
   const packList = (Array.isArray(packed) ? packed[0]?.files : packed.files) ?? [];
@@ -113,7 +119,7 @@ test("npm publish --dry-run lists the same production files", { timeout: 120_000
     assert.ok(!f.includes(".env"), `publish dry-run leaked ${f}`);
   }
   const publish = withRepoDistLock(() =>
-    spawnSync("npm", ["publish", "--dry-run", "--json", "--ignore-scripts"], {
+    spawnPm("npm", ["publish", "--dry-run", "--json", "--ignore-scripts"], {
       cwd: ROOT,
       encoding: "utf8",
       timeout: 60_000,
@@ -145,7 +151,7 @@ test("installed tarball CLI matches source for help, doctor, scan --json, inspec
         2,
       ),
     );
-    execFileSync("npm", ["install", tarball, "--omit=dev"], {
+    execPm("npm", ["install", tarball, "--omit=dev"], {
       cwd: tmp,
       encoding: "utf8",
       timeout: 60_000,

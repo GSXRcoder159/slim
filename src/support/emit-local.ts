@@ -4,7 +4,8 @@
  * Emit local qualification receipts after named checkIds pass.
  */
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
+import { execPm } from "../rewrite/lockfile.ts";
 import {
   cpSync,
   existsSync,
@@ -231,15 +232,13 @@ export function packAndDigest(root: string): {
   actionDigest: string;
 } {
   const packDir = mkdtempSync(join(tmpdir(), "slim-qualify-pack-"));
-  const tgz = execFileSync(
-    "npm",
-    ["pack", "--ignore-scripts", `--pack-destination=${packDir}`],
-    {
+  const tgz = String(
+    execPm("npm", ["pack", "--ignore-scripts", `--pack-destination=${packDir}`], {
       cwd: root,
       encoding: "utf8",
       timeout: 120_000,
       env: { ...process.env, COPYFILE_DISABLE: "1" },
-    },
+    }),
   ).trim();
   const name = tgz.split("\n").pop() ?? tgz;
   if (!name) throw new Error("npm pack produced no tarball name");

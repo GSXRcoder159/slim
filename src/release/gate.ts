@@ -9,6 +9,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXIT_ENV, EXIT_FAIL, EXIT_REFUSED, SlimExit } from "../exit.ts";
+import { cmdShim, cmdShimSpawnOpts } from "../rewrite/lockfile.ts";
 import { loadInventory } from "../support/inventory.ts";
 import { qualifyInventory } from "../support/receipts.ts";
 import { attachCompiledTree, rollbackAttach, type AttachResult } from "./attach.ts";
@@ -147,10 +148,12 @@ export function npmPublishTarball(
     throw new SlimExit(EXIT_ENV, "refusing to publish outside GitHub Actions");
   }
   try {
-    execFile("npm", npmPublishArgs(tarball, opts), {
+    const bin = cmdShim("npm");
+    execFile(bin, npmPublishArgs(tarball, opts), {
       cwd: opts.cwd,
       encoding: "utf8",
       env: opts.env ?? process.env,
+      ...cmdShimSpawnOpts(bin),
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

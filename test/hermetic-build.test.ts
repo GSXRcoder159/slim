@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
+import { hermeticPmEnv, spawnPm, cmdShimSpawnOpts } from "../src/rewrite/lockfile.ts";
 import { withRepoDistLock } from "./helpers/llm-replace.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -71,13 +71,13 @@ function parseNpmJson(text: string): unknown {
 }
 
 function npmJson(args: string[]): { stdout: string; stderr: string; status: number } {
-  const r = spawnSync("npm", args, {
+  const r = spawnPm("npm", args, {
     cwd: ROOT,
     encoding: "utf8",
     timeout: 120_000,
     env: { ...process.env },
   });
-  return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  return { status: r.status ?? 1, stdout: String(r.stdout ?? ""), stderr: String(r.stderr ?? "") };
 }
 
 test("build wipes stale dist outputs after a source module is removed", { timeout: 120_000 }, () => {
@@ -284,11 +284,17 @@ test("pnpm install with INIT_CWD set to this repo does not create a repo-local s
   const COREPACK =
     process.platform === "win32" ? join(NODE_BIN, "corepack.cmd") : join(NODE_BIN, "corepack");
   const pathEnv = `${NODE_BIN}${process.platform === "win32" ? ";" : ":"}${process.env.PATH ?? ""}`;
-  spawnSync(COREPACK, ["enable"], { encoding: "utf8", env: { ...process.env, PATH: pathEnv }, timeout: 60_000 });
+  spawnSync(COREPACK, ["enable"], {
+    encoding: "utf8",
+    env: { ...process.env, PATH: pathEnv },
+    timeout: 60_000,
+    ...cmdShimSpawnOpts(COREPACK),
+  });
   spawnSync(COREPACK, ["prepare", "pnpm@9.15.9", "--activate"], {
     encoding: "utf8",
     env: { ...process.env, PATH: pathEnv },
     timeout: 60_000,
+    ...cmdShimSpawnOpts(COREPACK),
   });
   const dir = mkdtempSync(join(tmpdir(), "slim-pnpm-store-"));
   try {
@@ -297,9 +303,8 @@ test("pnpm install with INIT_CWD set to this repo does not create a repo-local s
       JSON.stringify({ name: "store-probe", private: true, dependencies: { ms: "2.1.3" } }),
     );
     const env = hermeticPmEnv({ INIT_CWD: ROOT, PATH: pathEnv });
-    const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-    const r = spawnSync(pnpm, ["install"], { cwd: dir, encoding: "utf8", env, timeout: 90_000 });
-    assert.equal(r.status, 0, r.stderr + r.stdout);
+    const r = spawnPm("pnpm", ["install"], { cwd: dir, encoding: "utf8", env, timeout: 90_000 });
+    assert.equal(r.status, 0, String(r.stderr) + String(r.stdout));
     assert.equal(existsSync(join(ROOT, ".pnpm-store")), false);
     assert.equal(existsSync(join(dir, ".pnpm-store")), false);
   } finally {

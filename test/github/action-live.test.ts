@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { canonicalInventory } from "../../src/support/inventory.ts";
 import { actionReceipt, writeReceipt } from "../../src/support/receipts.ts";
-import { hermeticPmEnv } from "../../src/rewrite/lockfile.ts";
+import { hermeticPmEnv, execPm } from "../../src/rewrite/lockfile.ts";
 import {
   copyPackedActionCheckout,
   isWorkflowMissingError,
@@ -156,7 +156,7 @@ function writeLiveRepo(dest: string): void {
   writeFileSync(join(dest, ".github", "workflows", "qualify-actions.yml"), QUALIFY_WORKFLOW);
   writeFileSync(join(dest, ".gitignore"), "node_modules\n");
   writeFileSync(join(dest, ".gitattributes"), "* text=auto eol=lf\n");
-  execFileSync("npm", ["install"], {
+  execPm("npm", ["install"], {
     cwd: dest,
     encoding: "utf8",
     timeout: 120_000,

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { hermeticPmEnv, refreshLockfile } from "../src/rewrite/lockfile.ts";
+import { hermeticPmEnv, refreshLockfile, cmdShim, cmdShimSpawnOpts } from "../src/rewrite/lockfile.ts";
 import { applyRevert, type RevertPlan } from "../src/rewrite/revert.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,7 +57,7 @@ test("pnpm lockfile refresh disables frozen-lockfile so CI can update the lock",
       seen = [file, ...(args as string[])];
     },
   );
-  assert.equal(seen[0], "pnpm");
+  assert.equal(seen[0], cmdShim("pnpm"));
   assert.ok(seen.includes("--no-frozen-lockfile"));
   assert.equal(seen.includes("--frozen-lockfile"), false);
 });
@@ -113,11 +113,17 @@ function runSlim(cwd: string, args: string[], extra: NodeJS.ProcessEnv = {}) {
 }
 
 function prepareCorepack(pkg: string): void {
-  const enable = spawnSync(COREPACK, ["enable"], { encoding: "utf8", env: pmEnv(), timeout: 60_000 });
+  const enable = spawnSync(COREPACK, ["enable"], {
+    encoding: "utf8",
+    env: pmEnv(),
+    timeout: 60_000,
+    ...cmdShimSpawnOpts(COREPACK),
+  });
   const prep = spawnSync(COREPACK, ["prepare", pkg, "--activate"], {
     encoding: "utf8",
     env: pmEnv(),
     timeout: 60_000,
+    ...cmdShimSpawnOpts(COREPACK),
   });
   if (prep.status !== 0) {
     throw new Error(
@@ -197,8 +203,7 @@ function lockfileBytes(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): Buff
 }
 
 function pmBin(kind: "npm" | "pnpm" | "yarn" | "bun"): string {
-  if (process.platform === "win32" && kind !== "bun") return `${kind}.cmd`;
-  return kind;
+  return cmdShim(kind);
 }
 
 function runReplace(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
@@ -238,6 +243,7 @@ function revertAndReinstall(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"):
     encoding: "utf8",
     env: installPmEnv(),
     timeout: 120_000,
+    ...cmdShimSpawnOpts(pmBin(kind)),
   });
   assert.equal(inst.status, 0, `${kind} revert install: ${inst.stderr}`);
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
@@ -252,6 +258,7 @@ function installKind(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
     encoding: "utf8",
     env: installPmEnv(),
     timeout: 120_000,
+    ...cmdShimSpawnOpts(pmBin(kind)),
   });
   assert.equal(inst.status, 0, `${kind} install: ${inst.stderr}\n${inst.stdout}`);
 }
