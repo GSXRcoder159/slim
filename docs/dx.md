@@ -77,7 +77,7 @@ One package. Writes `.slim/<pkg>/envelope.json` (replace depends on it). This is
 
 Exit 0 if Slim would try (closed, or `--allow-unknown` made ready). Exit 3 if the envelope is open/incomplete or refused (still print the full inspect report; the code is the refuse). JSON mode does not mix progress on stdout.
 
-`--force` does not claim closed. `--allow-unknown` may set `readyToGenerate` while `confidence` stays `open`. Unknown `kind` values include `dynamic-member`, `dynamic-specifier`, `spread-args`, `binding-escape`, `namespace-escape`, `eval`, `ts-any`, and `unresolved-shape` (object/array spreads and non-literal computed keys). `eval` widens to `refuse` and is not overridden by `--allow-unknown`.
+`--force` does not claim closed. `--allow-unknown` may set `readyToGenerate` while `confidence` stays `open`. Import or re-export presence alone never closes; a static envelope is closed only when call sites represent runtime use. Unknown `kind` values include `dynamic-member`, `dynamic-specifier`, `spread-args`, `binding-escape`, `namespace-escape`, `eval`, `ts-any`, `unresolved-shape` (object/array spreads and non-literal computed keys), `side-effect-import`, `unobserved-import`, and `unresolved-reexport`. `eval`, `side-effect-import`, `unobserved-import`, and `unresolved-reexport` widen to `refuse` and are not overridden by `--allow-unknown`.
 
 ### Hyrum substitution contract
 

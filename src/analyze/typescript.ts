@@ -10,7 +10,7 @@ import type {
   SymbolEnvelope,
   UnknownSite,
 } from "../envelope/types.ts";
-import { ENVELOPE_VERSION, emptyHyrum } from "../envelope/types.ts";
+import { ENVELOPE_VERSION } from "../envelope/types.ts";
 import { parseSpecifier, resolvePackageFamily, resolvePackageImports } from "./family.ts";
 import { refusePackage } from "../scan/refuse.ts";
 import { readInstalledVersion } from "../size/estimate.ts";
@@ -22,11 +22,11 @@ import type { Binding, CollectExtra } from "./model.ts";
 import { exportNameOf, scriptKind } from "./model.ts";
 import { createScopedProgram, readTsConfig, shouldEscalate } from "./program.ts";
 import {
-  bindLocalReexports,
   collectImports,
   specifierMatches,
   wantedSpecifiers,
 } from "./reexports.ts";
+import { bindLocalReexports } from "./reexport-bind.ts";
 import { inferHyrum } from "./shapes.ts";
 
 export interface AnalyzeOptions {
@@ -90,6 +90,8 @@ export function analyzePackage(
     programCtx,
     root: project.root,
     typeOnly: [],
+    unknowns,
+    wanted,
   };
 
   for (const file of walked) {
@@ -140,36 +142,18 @@ export function analyzePackage(
   if (symbols.length === 0) {
     for (const b of bindings) {
       if (!specifierMatches(b.specifier, wanted)) continue;
-      const exportName = exportNameOf(b) === "*" ? "*" : exportNameOf(b);
-      if (byExport.has(exportName === "default" ? "default" : exportName)) continue;
-      if (exportName === "*") {
-        unknowns.push({
-          id: `ns:${b.loc.file}:${b.loc.line}`,
-          loc: b.loc,
-          kind: "namespace-escape",
-          detail: `namespace import of ${b.specifier} with no observed members`,
-          widensTo: "all-exports",
-          traceObservedMembers: null,
-        });
-        continue;
-      }
-      symbols.push({
-        exportName: exportName === "default" ? "default" : exportName,
-        packages: [
-          {
-            name: family?.name ?? pkg,
-            version,
-            family: family?.family ?? pkg,
-            subpath: family?.subpath ?? "",
-          },
-        ],
-        callSites: [],
-        resultMembers: [],
-        hyrum: emptyHyrum(),
-        coverage: { callSitesStatic: 0, callSitesTraced: 0 },
+      if (exportNameOf(b) !== "*") continue;
+      unknowns.push({
+        id: `ns:${b.loc.file}:${b.loc.line}`,
+        loc: b.loc,
+        kind: "namespace-escape",
+        detail: `namespace import of ${b.specifier} with no observed members`,
+        widensTo: "all-exports",
+        traceObservedMembers: null,
       });
     }
   }
+  accountUnobservedImports(imports, callSites, unknowns, wanted);
 
   const installedName = family?.name ?? pkg;
   const installedDir = join(project.root, "node_modules", installedName);
@@ -239,6 +223,8 @@ export function collectPackageSpecifiers(
       programCtx: null,
       root: project.root,
       typeOnly: [],
+      unknowns: [],
+      wanted: null,
     };
     collectImports(ts, sf, dummy, imports, null, extra);
     addSpecifierSites(runtime, imports, project.packageJson.imports);
@@ -252,6 +238,54 @@ export function collectImportSpecifiers(
   opts: { include?: string[]; ignore?: string[] } = {},
 ): Map<string, ImportSite[]> {
   return collectPackageSpecifiers(project, opts).runtime;
+}
+
+function accountUnobservedImports(
+  imports: ImportSite[],
+  callSites: CallSite[],
+  unknowns: UnknownSite[],
+  wanted: Set<string> | null,
+): void {
+  const seen = new Set(unknowns.map((u) => u.id));
+  const push = (u: UnknownSite) => {
+    if (seen.has(u.id)) return;
+    seen.add(u.id);
+    unknowns.push(u);
+  };
+  for (const imp of imports) {
+    if (!specifierMatches(imp.specifier, wanted)) continue;
+    if (imp.kind !== "side-effect") continue;
+    push({
+      id: `side:${imp.loc.file}:${imp.loc.line}:${imp.loc.column}`,
+      loc: imp.loc,
+      kind: "side-effect-import",
+      detail: `side-effect import of ${imp.specifier} has no represented init behavior`,
+      widensTo: "refuse",
+      traceObservedMembers: null,
+    });
+  }
+  if (callSites.length > 0) return;
+  const observedUnknown = unknowns.some(
+    (u) =>
+      u.kind !== "unresolved-reexport" &&
+      u.kind !== "side-effect-import" &&
+      u.kind !== "unobserved-import",
+  );
+  if (observedUnknown) return;
+  const hasNsEscape = unknowns.some((u) => u.kind === "namespace-escape");
+  for (const imp of imports) {
+    if (!specifierMatches(imp.specifier, wanted)) continue;
+    if (imp.kind === "side-effect") continue;
+    if (imp.kind === "namespace" && hasNsEscape) continue;
+    push({
+      id: `unobs:${imp.loc.file}:${imp.loc.line}:${imp.loc.column}`,
+      loc: imp.loc,
+      kind: "unobserved-import",
+      detail: `import of ${imp.specifier} has no represented runtime use`,
+      widensTo: "refuse",
+      traceObservedMembers: null,
+    });
+  }
 }
 
 function addSpecifierSites(

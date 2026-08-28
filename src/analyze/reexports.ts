@@ -1,10 +1,8 @@
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
 import type ts from "typescript";
 import type { ImportKind, ImportSite } from "../envelope/types.ts";
 import { parseSpecifier, resolvePackageFamily } from "./family.ts";
-import type { Binding, CollectExtra, LocalPending, PkgLink } from "./model.ts";
-import { locOf, normPath } from "./model.ts";
+import type { Binding, CollectExtra } from "./model.ts";
+import { locOf, normPath, resolveRelative } from "./model.ts";
 
 export function wantedSpecifiers(pkg: string): Set<string> | null {
   const fam = resolvePackageFamily(pkg);
@@ -179,6 +177,8 @@ export function collectImports(
       ) {
         const specifier = node.arguments[0].text;
         const parent = node.parent;
+        const pendingNames: Array<{ local: string; imported: string }> = [];
+        let defaultLocal: string | undefined;
         if (specifierMatches(specifier, wanted)) {
           imports.push({
             loc: locOf(sf, node, extra.root),
@@ -188,13 +188,16 @@ export function collectImports(
           });
         }
         if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
-          bindings.push({
-            local: parent.name.text,
-            imported: "default",
-            specifier,
-            kind: "cjs-require",
-            loc: locOf(sf, node, extra.root),
-          });
+          defaultLocal = parent.name.text;
+          if (parseSpecifier(specifier)) {
+            bindings.push({
+              local: parent.name.text,
+              imported: "default",
+              specifier,
+              kind: "cjs-require",
+              loc: locOf(sf, node, extra.root),
+            });
+          }
         } else if (ts.isVariableDeclaration(parent) && ts.isObjectBindingPattern(parent.name)) {
           const map = new Map<string, string>();
           for (const el of parent.name.elements) {
@@ -204,18 +207,29 @@ export function collectImports(
                 ? el.propertyName.text
                 : el.name.text;
             map.set(imported, imported);
-            bindings.push({
-              local: el.name.text,
-              imported,
-              specifier,
-              kind: "cjs-require",
-              loc: locOf(sf, node, extra.root),
-            });
+            pendingNames.push({ local: el.name.text, imported });
+            if (parseSpecifier(specifier)) {
+              bindings.push({
+                local: el.name.text,
+                imported,
+                specifier,
+                kind: "cjs-require",
+                loc: locOf(sf, node, extra.root),
+              });
+            }
           }
-          extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: map });
+          if (map.size && parseSpecifier(specifier)) {
+            extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: map });
+          }
         }
-        if (parseSpecifier(specifier)) {
-          extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: "*" });
+        if (isCjsExportAssign(ts, node)) {
+          if (specifier.startsWith(".")) extra.localHops.push({ file: normPath(sf.fileName), specifier });
+          else if (parseSpecifier(specifier)) {
+            extra.pkgLinks.push({ file: normPath(sf.fileName), specifier, names: "*" });
+          }
+        }
+        if (specifier.startsWith(".") && (pendingNames.length || defaultLocal)) {
+          queueLocalOrAlias(ts, sf, node, specifier, pendingNames, undefined, defaultLocal, extra);
         }
       }
       if (cal.kind === ts.SyntaxKind.ImportKeyword && node.arguments[0]) {
@@ -298,78 +312,6 @@ function queueLocalOrAlias(
   });
 }
 
-export function bindLocalReexports(bindings: Binding[], extra: CollectExtra): void {
-  // ponytail: one hop only — nested barrels stay as local modules
-  for (const pending of extra.localPending) {
-    applyPkgLinks(pending, pending.resolvedFile, extra, bindings, 0);
-  }
-}
-
-function applyPkgLinks(
-  pending: LocalPending,
-  file: string,
-  extra: CollectExtra,
-  bindings: Binding[],
-  hop: number,
-): void {
-  const nf = normPath(file);
-  for (const link of extra.pkgLinks) {
-    if (normPath(link.file) !== nf) continue;
-    addBindingsFromLink(pending, link, bindings);
-  }
-  if (hop >= 1) return;
-  for (const hopSpec of extra.localHops) {
-    if (normPath(hopSpec.file) !== nf) continue;
-    const next = resolveRelative(hopSpec.file, hopSpec.specifier);
-    if (next) applyPkgLinks(pending, next, extra, bindings, hop + 1);
-  }
-}
-
-function addBindingsFromLink(pending: LocalPending, link: PkgLink, bindings: Binding[]): void {
-  if (link.names === "*") {
-    if (pending.namespaceLocal) {
-      bindings.push({
-        local: pending.namespaceLocal,
-        imported: "*",
-        specifier: link.specifier,
-        kind: "namespace",
-        loc: pending.loc,
-      });
-    }
-    if (pending.defaultLocal) {
-      bindings.push({
-        local: pending.defaultLocal,
-        imported: "default",
-        specifier: link.specifier,
-        kind: "default",
-        loc: pending.loc,
-      });
-    }
-    for (const n of pending.names) {
-      if (n.imported === "default") continue;
-      bindings.push({
-        local: n.local,
-        imported: n.imported,
-        specifier: link.specifier,
-        kind: "named",
-        loc: pending.loc,
-      });
-    }
-    return;
-  }
-  for (const n of pending.names) {
-    const orig = link.names.get(n.imported);
-    if (!orig) continue;
-    bindings.push({
-      local: n.local,
-      imported: orig,
-      specifier: link.specifier,
-      kind: "named",
-      loc: pending.loc,
-    });
-  }
-}
-
 export function localFromImportCall(
   ts: typeof import("typescript"),
   node: ts.CallExpression | ts.NewExpression,
@@ -380,18 +322,34 @@ export function localFromImportCall(
   return null;
 }
 
-function resolveRelative(fromFile: string, spec: string): string | null {
-  const dir = dirname(fromFile);
-  const base = join(dir, spec);
-  const candidates = [
-    base,
-    base + ".ts",
-    base + ".js",
-    base + ".tsx",
-    base + ".mjs",
-    base + ".cjs",
-    join(base, "index.ts"),
-    join(base, "index.js"),
-  ];
-  return candidates.find((c) => existsSync(c)) ?? null;
+function isCjsExportAssign(ts: typeof import("typescript"), node: ts.CallExpression): boolean {
+  const parent = node.parent;
+  if (
+    !parent ||
+    !ts.isBinaryExpression(parent) ||
+    parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    parent.right !== node
+  ) {
+    return false;
+  }
+  const left = parent.left;
+  if (!ts.isPropertyAccessExpression(left) || !ts.isIdentifier(left.name)) return false;
+  if (ts.isIdentifier(left.expression) && left.expression.text === "exports") return true;
+  if (
+    ts.isIdentifier(left.expression) &&
+    left.expression.text === "module" &&
+    left.name.text === "exports"
+  ) {
+    return true;
+  }
+  if (
+    ts.isPropertyAccessExpression(left.expression) &&
+    ts.isIdentifier(left.expression.expression) &&
+    left.expression.expression.text === "module" &&
+    ts.isIdentifier(left.expression.name) &&
+    left.expression.name.text === "exports"
+  ) {
+    return true;
+  }
+  return false;
 }

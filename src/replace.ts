@@ -97,7 +97,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
       `refused ${args.pkg}: ${env.slimmable.blockers.join("; ") || env.closure.reason}`,
     );
   }
-  if (!env.closure.readyToGenerate && !args.allowUnknown && !args.force) {
+  if (!env.closure.readyToGenerate && !args.force) {
     throw new SlimExit(EXIT_REFUSED, `envelope not closed: ${env.closure.reason}`);
   }
   if (!env.symbols.length) {
