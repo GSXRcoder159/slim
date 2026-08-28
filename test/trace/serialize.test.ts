@@ -234,6 +234,20 @@ test("does not persist stack-looking strings", () => {
   assert.equal(dump.includes("lodash.js"), false);
 });
 
+test("redacts source map JSON strings", () => {
+  const map =
+    '{"version":3,"file":"index.js","sources":["index.ts"],"mappings":"AAAA,IAAI","sourcesContent":["export const add = (a, b) => a + b;\\n"]}';
+  const s = serialize(map);
+  const dump = JSON.stringify(s);
+  assert.equal(dump.includes("sourcesContent"), false);
+  assert.equal(dump.includes("mappings"), false);
+  assert.equal(dump.includes("export const add"), false);
+  assert.equal(s.t, "str");
+  if (s.t !== "str") throw new Error("expected str");
+  assert.equal(s.redacted, true);
+  assert.equal(s.v, "[redacted]");
+});
+
 test("serializeEvent shares identity across args and result", () => {
   const inner = { c: 1 };
   const obj = { a: { b: inner } };

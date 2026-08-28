@@ -119,7 +119,9 @@ function userConfigHasSlimPlugin(configPath: string): boolean {
 }
 
 function slimVitestSpecifier(): string {
-  return pathToFileURL(siblingModule(import.meta.url, "vitest")).href;
+  const abs = siblingModule(import.meta.url, "vitest");
+  if (abs.endsWith(".js")) return "slim/vitest";
+  return pathToFileURL(abs).href;
 }
 
 export function writeVitestTraceConfig(

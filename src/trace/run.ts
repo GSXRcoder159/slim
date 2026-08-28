@@ -100,9 +100,7 @@ export function runTraces(
     SLIM_TRACE_ROOT: root,
   };
   const vitestConfigPath =
-    runner.kind === "vitest"
-      ? writeVitestTraceConfig(root, uniq, opts?.traceDir ?? join(root, ".slim"))
-      : undefined;
+    runner.kind === "vitest" ? writeVitestTraceConfig(root, uniq) : undefined;
   const spawn = buildTraceSpawn(runner, { hookPath: hook, vitestConfigPath });
   if (!spawn) {
     throw new SlimExit(EXIT_ENV, `cannot build ${runner.kind} trace spawn`);

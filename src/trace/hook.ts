@@ -7,10 +7,11 @@ import type { TraceEvent } from "../envelope/types.ts";
 import { wrapExports } from "./proxy.ts";
 import { errorLine, sessionLine, type TraceErrorRecord } from "./session.ts";
 import { extractCjsExportNames, extractEsmExportNames } from "./esm-names.ts";
+import { matchesTracedUrl, packageFromUrl } from "./match.ts";
 import { Worker as NodeWorker } from "node:worker_threads";
 import { createRequire } from "node:module";
 
-export { extractEsmExportNames };
+export { extractEsmExportNames, matchesTracedUrl, packageFromUrl };
 
 type LoadResult = {
   format?: string | null;
@@ -33,36 +34,6 @@ type SlimGlobal = typeof globalThis & {
 
 function slimGlobal(): SlimGlobal {
   return globalThis as SlimGlobal;
-}
-
-export function matchesTracedUrl(url: string, packages: string[]): boolean {
-  let pathname = url.replace(/\\/g, "/");
-  try {
-    pathname = decodeURIComponent(new URL(url).pathname).replace(/\\/g, "/");
-  } catch {
-    /* keep raw */
-  }
-  const sorted = [...packages].sort((a, b) => b.length - a.length);
-  for (const pkg of sorted) {
-    const needle = `/node_modules/${pkg}`;
-    const idx = pathname.indexOf(needle);
-    if (idx === -1) continue;
-    const after = pathname.slice(idx + needle.length);
-    if (after === "" || after.startsWith(".")) return true;
-    if (!after.startsWith("/")) continue;
-    const first = after.slice(1).split("/")[0] ?? "";
-    if (first === "node_modules") continue;
-    return true;
-  }
-  return false;
-}
-
-export function packageFromUrl(url: string, packages: string[]): string | null {
-  const sorted = [...packages].sort((a, b) => b.length - a.length);
-  for (const pkg of sorted) {
-    if (matchesTracedUrl(url, [pkg])) return pkg;
-  }
-  return null;
 }
 
 function packagesFromEnv(): string[] {
@@ -179,8 +150,9 @@ function patchWorkers(): void {
     }
     (SlimWorker as { __slimPatched?: boolean }).__slimPatched = true;
     Object.defineProperty(wt, "Worker", { value: SlimWorker, configurable: true, writable: true });
-  } catch {
-    /* builtin export may be read-only */
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    reportTraceError("worker", message);
   }
 }
 
@@ -205,6 +177,9 @@ function esmWrapper(origUrl: string, names: string[], packageName: string): stri
     .filter((n) => n !== "default")
     .map((n) => `export const ${n} = __slim_wrapped[${JSON.stringify(n)}];`)
     .join("\n");
+  const defaultLine = names.includes("default")
+    ? "export default __slim_wrapped.default !== undefined ? __slim_wrapped.default : __slim_wrapped;\n"
+    : "";
   return `import * as __slim_orig from ${JSON.stringify(origUrl)};
 import { wrapExports } from ${JSON.stringify(siblingHref("proxy"))};
 
@@ -214,8 +189,7 @@ const __slim_wrapped = wrapExports(__slim_orig, {
   onError: (e) => { globalThis.__slimTraceOnError && globalThis.__slimTraceOnError(e); },
 });
 
-export default __slim_wrapped.default !== undefined ? __slim_wrapped.default : __slim_wrapped;
-${named}
+${defaultLine}${named}
 `;
 }
 

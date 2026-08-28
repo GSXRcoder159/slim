@@ -10,6 +10,7 @@ import { extractEsmExportNames, matchesTracedUrl } from "../../src/trace/hook.ts
 import { runTraces, readTraceFile } from "../../src/trace/run.ts";
 import { sessionLine } from "../../src/trace/session.ts";
 import { wrapExports } from "../../src/trace/proxy.ts";
+import { slimVitest, slimWrapperSource } from "../../src/trace/vitest.ts";
 import { closeEnvelope } from "../../src/envelope/close.ts";
 import { writeEvidence } from "../../src/evidence/report.ts";
 import { ENVELOPE_VERSION, emptyHyrum } from "../../src/envelope/types.ts";
@@ -19,6 +20,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const STAR = join(ROOT, "test/fixtures/trace/esm-star");
 const NS = join(ROOT, "test/fixtures/trace/esm-ns");
 const CHAIN = join(ROOT, "test/fixtures/trace/esm-chain");
+const LIST = join(ROOT, "test/fixtures/trace/esm-list");
+const DEF = join(ROOT, "test/fixtures/trace/esm-default");
+const STAR_DEF = join(ROOT, "test/fixtures/trace/esm-star-default");
+const NAMED = join(ROOT, "test/fixtures/trace/esm");
 const HOOK = join(ROOT, "src/trace/hook.ts");
 
 function emptyEnv(pkg: string, file = "src/index.test.js"): Envelope {
@@ -155,6 +160,62 @@ test("extractEsmExportNames cycle in export * does not throw", () => {
     read: (url) => files[url] ?? null,
   });
   assert.deepEqual(names, ["add"]);
+});
+
+test("extractEsmExportNames records default from export default and export lists", () => {
+  assert.ok(extractEsmExportNames(`export default function add() {}\n`).includes("default"));
+  assert.ok(extractEsmExportNames(`export default class Foo {}\n`).includes("default"));
+  assert.ok(extractEsmExportNames(`export { foo as default };\n`).includes("default"));
+  assert.ok(extractEsmExportNames(`export { default } from "./impl.js";\n`).includes("default"));
+  assert.equal(
+    extractEsmExportNames(`export { default as v4 } from "./v4.js";\n`).includes("default"),
+    false,
+  );
+  assert.deepEqual(
+    extractEsmExportNames(`export { add, get } from "./impl.js";\n`).sort(),
+    ["add", "get"],
+  );
+});
+
+test("extractEsmExportNames export * does not copy default from the child", () => {
+  const parentUrl = pathToFileURL(join(STAR_DEF, "index.js")).href;
+  const names = extractEsmExportNames(readFileSync(join(STAR_DEF, "index.js"), "utf8"), {
+    parentUrl,
+  });
+  assert.deepEqual([...names].sort(), ["add"]);
+  assert.equal(names.includes("default"), false);
+});
+
+test("slimWrapperSource emits export default only when default is in the name list", () => {
+  const named = slimWrapperSource("/pkg/index.js", "pkg", ["add"]);
+  assert.match(named, /export const add = wrapped\["add"\]/);
+  assert.doesNotMatch(named, /export default /);
+  const withDef = slimWrapperSource("/pkg/index.js", "pkg", ["add", "default"]);
+  assert.match(withDef, /export default wrapped\.default/);
+});
+
+test("vitest plugin.load default line is present iff the module has a default", () => {
+  const namedDir = mkdtempSync(join(tmpdir(), "slim-p4-vite-named-"));
+  const namedPkg = join(namedDir, "node_modules", "tiny-trace-esm");
+  mkdirSync(namedPkg, { recursive: true });
+  cpSync(NAMED, namedPkg, { recursive: true });
+  const namedWrap = String(slimVitest({ packages: ["tiny-trace-esm"] }).load?.(join(namedPkg, "index.js")) ?? "");
+  assert.match(namedWrap, /export const add = wrapped\["add"\]/);
+  assert.doesNotMatch(namedWrap, /export default /);
+
+  const defDir = mkdtempSync(join(tmpdir(), "slim-p4-vite-def-"));
+  const defPkg = join(defDir, "node_modules", "tiny-trace-default");
+  mkdirSync(defPkg, { recursive: true });
+  cpSync(DEF, defPkg, { recursive: true });
+  const defWrap = String(slimVitest({ packages: ["tiny-trace-default"] }).load?.(join(defPkg, "index.js")) ?? "");
+  assert.match(defWrap, /export default wrapped\.default/);
+
+  const cjsDir = mkdtempSync(join(tmpdir(), "slim-p4-vite-cjs-"));
+  const cjsPkg = join(cjsDir, "node_modules", "tiny-trace-cjs");
+  mkdirSync(cjsPkg, { recursive: true });
+  cpSync(join(ROOT, "test/fixtures/trace/cjs"), cjsPkg, { recursive: true });
+  const cjsWrap = String(slimVitest({ packages: ["tiny-trace-cjs"] }).load?.(join(cjsPkg, "index.js")) ?? "");
+  assert.match(cjsWrap, /export default wrapped\.default/);
 });
 
 test("matchesTracedUrl does not treat nested node_modules as the parent package", () => {
@@ -323,6 +384,106 @@ test("chain", () => { assert.equal(add(2, 3), 5); });
   assert.match(r.jsonl, /"symbol":"add"/);
 });
 
+test("named-only ESM is not default-importable while tracing", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-p4-named-"));
+  const pkgDir = join(dir, "node_modules", "tiny-trace-esm");
+  mkdirSync(pkgDir, { recursive: true });
+  mkdirSync(join(dir, "src"), { recursive: true });
+  cpSync(NAMED, pkgDir, { recursive: true });
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "app", type: "module" }));
+  writeFileSync(
+    join(dir, "src", "index.test.js"),
+    `import { test } from "node:test";
+import assert from "node:assert/strict";
+import { add } from "tiny-trace-esm";
+import * as ns from "tiny-trace-esm";
+test("named", async () => {
+  assert.equal(add(2, 3), 5);
+  assert.equal("default" in ns, false);
+  await assert.rejects(() => import("./default-import.js"));
+});
+`,
+  );
+  writeFileSync(join(dir, "src", "default-import.js"), `import add from "tiny-trace-esm";\nvoid add;\n`);
+  const r = spawnHook(dir, "tiny-trace-esm");
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.match(r.jsonl, /"symbol":"add"/);
+});
+
+test("default-only ESM stays default-importable and records the public name", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-p4-def-"));
+  const pkgDir = join(dir, "node_modules", "tiny-trace-default");
+  mkdirSync(pkgDir, { recursive: true });
+  mkdirSync(join(dir, "src"), { recursive: true });
+  cpSync(DEF, pkgDir, { recursive: true });
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "app", type: "module" }));
+  writeFileSync(
+    join(dir, "src", "index.test.js"),
+    `import { test } from "node:test";
+import assert from "node:assert/strict";
+import add from "tiny-trace-default";
+test("default", () => { assert.equal(add(2, 3), 5); });
+`,
+  );
+  const r = spawnHook(dir, "tiny-trace-default");
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.match(r.jsonl, /"symbol":"default"/);
+});
+
+test("export list from impl records add and get", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-p4-list-"));
+  const pkgDir = join(dir, "node_modules", "tiny-trace-list");
+  mkdirSync(pkgDir, { recursive: true });
+  mkdirSync(join(dir, "src"), { recursive: true });
+  cpSync(LIST, pkgDir, { recursive: true });
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "app", type: "module" }));
+  writeFileSync(
+    join(dir, "src", "index.test.js"),
+    `import { test } from "node:test";
+import assert from "node:assert/strict";
+import { add, get } from "tiny-trace-list";
+test("list", () => {
+  assert.equal(add(2, 3), 5);
+  assert.equal(get({ a: 1 }, "a"), 1);
+});
+`,
+  );
+  const r = spawnHook(dir, "tiny-trace-list");
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.match(r.jsonl, /"symbol":"add"/);
+  assert.match(r.jsonl, /"symbol":"get"/);
+});
+
+test("export * from a child with default is not default-importable", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-p4-stardef-"));
+  const pkgDir = join(dir, "node_modules", "tiny-trace-star-default");
+  mkdirSync(pkgDir, { recursive: true });
+  mkdirSync(join(dir, "src"), { recursive: true });
+  cpSync(STAR_DEF, pkgDir, { recursive: true });
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "app", type: "module" }));
+  writeFileSync(
+    join(dir, "src", "index.test.js"),
+    `import { test } from "node:test";
+import assert from "node:assert/strict";
+import { add } from "tiny-trace-star-default";
+import * as ns from "tiny-trace-star-default";
+test("star default", async () => {
+  assert.equal(add(2, 3), 5);
+  assert.equal("default" in ns, false);
+  await assert.rejects(() => import("./default-import.js"));
+});
+`,
+  );
+  writeFileSync(
+    join(dir, "src", "default-import.js"),
+    `import add from "tiny-trace-star-default";\nvoid add;\n`,
+  );
+  const r = spawnHook(dir, "tiny-trace-star-default");
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  assert.match(r.jsonl, /"symbol":"add"/);
+  assert.doesNotMatch(r.jsonl, /"symbol":"default"/);
+});
+
 test("worker without caller execArgv still records package calls", () => {
   const dir = mkdtempSync(join(tmpdir(), "slim-p4-worker-"));
   const pkgDir = join(dir, "node_modules", "tiny-trace-worker");
@@ -478,6 +639,82 @@ test("non-Promise thenables that resolve to functions stay wrapped", async () =>
   const inner = await wrapped.factory();
   assert.equal(inner(), 9);
   assert.equal(events.some((e) => e.symbol === "factory()"), true);
+});
+
+test("unresolved star through runTraces fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-p4-unstar-"));
+  const pkgDir = join(dir, "node_modules", "tiny-trace-unstar");
+  mkdirSync(pkgDir, { recursive: true });
+  mkdirSync(join(dir, "node_modules", "other-pkg"), { recursive: true });
+  mkdirSync(join(dir, "src"), { recursive: true });
+  writeFileSync(
+    join(pkgDir, "package.json"),
+    JSON.stringify({ name: "tiny-trace-unstar", type: "module", exports: "./index.js" }),
+  );
+  writeFileSync(
+    join(pkgDir, "index.js"),
+    `export * from "other-pkg";\nexport function add(a, b) { return a + b; }\n`,
+  );
+  writeFileSync(
+    join(dir, "node_modules", "other-pkg", "package.json"),
+    JSON.stringify({ name: "other-pkg", type: "module", exports: "./index.js" }),
+  );
+  writeFileSync(join(dir, "node_modules", "other-pkg", "index.js"), `export function hidden() { return 1; }\n`);
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({
+      name: "app",
+      type: "module",
+      scripts: { test: "node --test src/index.test.js" },
+    }),
+  );
+  writeFileSync(
+    join(dir, "src", "index.test.js"),
+    `import { test } from "node:test";
+import assert from "node:assert/strict";
+import { add } from "tiny-trace-unstar";
+test("add", () => { assert.equal(add(2, 3), 5); });
+`,
+  );
+  const env = emptyEnv("tiny-trace-unstar");
+  assert.throws(
+    () => runTraces(dir, "tiny-trace-unstar", env),
+    (e: unknown) => {
+      assert.equal(isFail(e), true);
+      assert.match((e as Error).message, /unresolved-star/);
+      return true;
+    },
+  );
+});
+
+test("patchWorkers failure emits a worker error record", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-p4-pworker-"));
+  const outPath = join(dir, "traces.jsonl");
+  const script = join(dir, "freeze.mjs");
+  writeFileSync(
+    script,
+    `import { createRequire } from "node:module";
+const req = createRequire(import.meta.url);
+const wt = req("node:worker_threads");
+Object.defineProperty(wt, "Worker", { value: wt.Worker, configurable: false, writable: false });
+await import(${JSON.stringify(pathToFileURL(HOOK).href)});
+`,
+  );
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    SLIM_TRACE_PACKAGES: "tiny-trace-worker",
+    SLIM_TRACE_OUT: outPath,
+  };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_CHANNEL_FD;
+  const r = spawnSync(process.execPath, ["--experimental-strip-types", script], {
+    cwd: dir,
+    encoding: "utf8",
+    env,
+  });
+  assert.equal(r.status, 0, r.stderr + r.stdout);
+  const jsonl = readFileSync(outPath, "utf8");
+  assert.match(jsonl, /"kind":"worker"/);
 });
 
 test("closeEnvelope staticOnly names --no-trace and cannot be trace-closed", () => {

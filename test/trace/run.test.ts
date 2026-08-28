@@ -1,13 +1,24 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, cpSync, unlinkSync, existsSync, openSync, ftruncateSync, closeSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../../src/exit.ts";
-import { runTraces, readTraceFile, withLocalBinPath, MAX_TRACE_EVENTS } from "../../src/trace/run.ts";
+import {
+  runTraces,
+  readTraceFile,
+  withLocalBinPath,
+  MAX_TRACE_EVENTS,
+  MAX_TRACE_BYTES,
+} from "../../src/trace/run.ts";
 import { sessionLine } from "../../src/trace/session.ts";
+import { siblingModule } from "../../src/runtime-path.ts";
+import { execPm } from "../../src/rewrite/lockfile.ts";
 import { ENVELOPE_VERSION, emptyHyrum } from "../../src/envelope/types.ts";
 import type { Envelope } from "../../src/envelope/types.ts";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
 function emptyEnv(): Envelope {
   return {
@@ -181,4 +192,169 @@ test("trace spawn timeout fails closed", () => {
   );
 });
 
-void MAX_TRACE_EVENTS;
+function writeTinyCjs(dir: string, testJs: string): void {
+  mkdirSync(join(dir, "node_modules", "tiny-trace-pkg"), { recursive: true });
+  mkdirSync(join(dir, "src"), { recursive: true });
+  writeFileSync(
+    join(dir, "node_modules", "tiny-trace-pkg", "package.json"),
+    JSON.stringify({ name: "tiny-trace-pkg", main: "index.js" }),
+  );
+  writeFileSync(
+    join(dir, "node_modules", "tiny-trace-pkg", "index.js"),
+    "module.exports = { add(a, b) { return a + b; } };\n",
+  );
+  writeFileSync(
+    join(dir, "package.json"),
+    JSON.stringify({
+      name: "app",
+      type: "commonjs",
+      scripts: { test: "node --test src/index.test.js" },
+    }),
+  );
+  writeFileSync(join(dir, "src", "index.test.js"), testJs);
+}
+
+function assertSlim(err: unknown, code: number, re: RegExp): boolean {
+  assert.equal(isExit(err, code), true);
+  assert.match((err as Error).message, re);
+  return true;
+}
+
+test("spawned runTraces missing session fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-run-nosess-"));
+  writeTinyCjs(
+    dir,
+    `const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const { add } = require("tiny-trace-pkg");
+test("add", () => { assert.equal(add(2, 3), 5); });
+process.on("exit", () => {
+  require("node:fs").writeFileSync(process.env.SLIM_TRACE_OUT, JSON.stringify({ symbol: "add", args: [] }) + "\\n");
+});
+`,
+  );
+  assert.throws(
+    () => runTraces(dir, "tiny-trace-pkg", emptyEnv()),
+    (e: unknown) => assertSlim(e, EXIT_ENV, /trace hook did not load|missing session/),
+  );
+});
+
+test("spawned runTraces serialize error fails closed while tests pass", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-run-ser-"));
+  writeTinyCjs(
+    dir,
+    `const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const { add } = require("tiny-trace-pkg");
+test("add", () => {
+  assert.equal(add(2, 3), 5);
+  const boom = {};
+  Object.defineProperty(boom, "x", { enumerable: true, get() { throw new Error("getter-boom"); } });
+  add(boom, 0);
+});
+`,
+  );
+  assert.throws(
+    () => runTraces(dir, "tiny-trace-pkg", emptyEnv()),
+    (e: unknown) => assertSlim(e, EXIT_FAIL, /trace serialize/),
+  );
+});
+
+test("spawned runTraces planted worker error fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-run-worker-"));
+  writeTinyCjs(
+    dir,
+    `const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const { add } = require("tiny-trace-pkg");
+test("add", () => { assert.equal(add(2, 3), 5); });
+process.on("exit", () => {
+  require("node:fs").appendFileSync(
+    process.env.SLIM_TRACE_OUT,
+    JSON.stringify({ t: "error", kind: "worker", message: "boom" }) + "\\n",
+  );
+});
+`,
+  );
+  assert.throws(
+    () => runTraces(dir, "tiny-trace-pkg", emptyEnv()),
+    (e: unknown) => assertSlim(e, EXIT_FAIL, /trace worker/),
+  );
+});
+
+test("readTraceFile oversize bytes and event cap fail closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-run-over-"));
+  const big = join(dir, "big.jsonl");
+  const fd = openSync(big, "w");
+  ftruncateSync(fd, MAX_TRACE_BYTES + 1);
+  closeSync(fd);
+  assert.throws(
+    () => readTraceFile(big),
+    (e: unknown) => assertSlim(e, EXIT_FAIL, /exceeds/),
+  );
+  const many = join(dir, "many.jsonl");
+  const ev = JSON.stringify({ symbol: "add", args: [] }) + "\n";
+  writeFileSync(many, sessionLine() + ev.repeat(MAX_TRACE_EVENTS + 1));
+  assert.throws(
+    () => readTraceFile(many),
+    (e: unknown) => assertSlim(e, EXIT_FAIL, /exceeds/),
+  );
+});
+
+test("spawned runTraces oversize JSONL fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-run-bytes-"));
+  writeTinyCjs(
+    dir,
+    `const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const { add } = require("tiny-trace-pkg");
+test("add", () => { assert.equal(add(2, 3), 5); });
+process.on("exit", () => {
+  const fd = fs.openSync(process.env.SLIM_TRACE_OUT, "w");
+  fs.ftruncateSync(fd, ${MAX_TRACE_BYTES + 1});
+  fs.closeSync(fd);
+});
+`,
+  );
+  assert.throws(
+    () => runTraces(dir, "tiny-trace-pkg", emptyEnv()),
+    (e: unknown) => assertSlim(e, EXIT_FAIL, /exceeds/),
+  );
+});
+
+test("siblingModule miss is the hook-missing failure", () => {
+  const ghost = pathToFileURL(join(mkdtempSync(join(tmpdir(), "slim-run-ghost-")), "run.js")).href;
+  assert.throws(() => siblingModule(ghost, "hook"), /missing/);
+});
+
+test("missing compiled hook fails runTraces closed", { timeout: 90_000 }, async () => {
+  if (!existsSync(join(ROOT, "dist", "trace", "match.js"))) {
+    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+  }
+  const dest = mkdtempSync(join(tmpdir(), "slim-run-nohook-"));
+  cpSync(join(ROOT, "dist"), join(dest, "dist"), { recursive: true });
+  unlinkSync(join(dest, "dist", "trace", "hook.js"));
+  const { runTraces: packedRun } = await import(
+    pathToFileURL(join(dest, "dist", "trace", "run.js")).href
+  ) as { runTraces: typeof runTraces };
+  const app = mkdtempSync(join(tmpdir(), "slim-run-nohook-app-"));
+  writeTinyCjs(
+    app,
+    `const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const { add } = require("tiny-trace-pkg");
+test("add", () => { assert.equal(add(2, 3), 5); });
+`,
+  );
+  assert.throws(
+    () => packedRun(app, "tiny-trace-pkg", emptyEnv()),
+    (e: unknown) => {
+      const err = e as { name?: string; code?: number; message: string };
+      assert.equal(err.name, "SlimExit");
+      assert.equal(err.code, EXIT_ENV);
+      assert.match(err.message, /trace hook missing/);
+      return true;
+    },
+  );
+});

@@ -247,7 +247,9 @@ function defineOwn(o: object, key: PropertyKey, value: unknown): void {
 }
 
 function serializeString(s: string): SlimValue {
-  if (REDACT_RE.test(s) || looksLikeSource(s) || looksLikeStack(s)) return redacted();
+  if (REDACT_RE.test(s) || looksLikeSource(s) || looksLikeStack(s) || looksLikeSourceMap(s)) {
+    return redacted();
+  }
   if (s.length > MAX_STRING) {
     const hash = createHash("sha256").update(s).digest("hex");
     return { t: "str", v: s.slice(0, MAX_STRING) + "\nsha256:" + hash };
@@ -257,6 +259,10 @@ function serializeString(s: string): SlimValue {
 
 function looksLikeSource(s: string): boolean {
   return s.includes("\n") && s.length >= 80 && SOURCE_HINT.test(s);
+}
+
+function looksLikeSourceMap(s: string): boolean {
+  return s.includes('"mappings"') && s.includes('"sourcesContent"') && /"version"\s*:\s*3/.test(s);
 }
 
 function looksLikeStack(s: string): boolean {

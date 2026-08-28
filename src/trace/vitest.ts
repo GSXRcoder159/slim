@@ -4,7 +4,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import type { TraceEvent } from "../envelope/types.ts";
 import { siblingModule } from "../runtime-path.ts";
 import { wrapExports } from "./proxy.ts";
-import { matchesTracedUrl, packageFromUrl } from "./hook.ts";
+import { matchesTracedUrl, packageFromUrl } from "./match.ts";
 import { extractCjsExportNames, extractEsmExportNames } from "./esm-names.ts";
 import { errorLine, sessionLine, type TraceErrorRecord } from "./session.ts";
 
@@ -72,6 +72,9 @@ export function slimWrapperSource(id: string, packageName: string, names: string
     .filter((n) => n !== "default")
     .map((n) => `export const ${n} = wrapped[${JSON.stringify(n)}];`)
     .join("\n");
+  const defaultLine = names.includes("default")
+    ? "export default wrapped.default !== undefined ? wrapped.default : wrapped;\n"
+    : "";
   return `import * as orig from ${orig};
 import { wrapExports } from ${spec};
 const wrapped = wrapExports(orig, {
@@ -79,8 +82,7 @@ const wrapped = wrapExports(orig, {
   onEvent: (e) => { globalThis.__slimTraceOnEvent && globalThis.__slimTraceOnEvent(e); },
   onError: (e) => { globalThis.__slimTraceOnError && globalThis.__slimTraceOnError(e); },
 });
-export default wrapped.default !== undefined ? wrapped.default : wrapped;
-${named}
+${defaultLine}${named}
 `;
 }
 
@@ -145,6 +147,7 @@ function namesFromId(id: string): string[] {
       }),
     );
     for (const n of extractCjsExportNames(src)) names.add(n);
+    if (/\b(?:module\.exports|exports\.)/.test(src)) names.add("default");
     return [...names];
   } catch {
     return [];

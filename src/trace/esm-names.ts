@@ -16,6 +16,7 @@ export function extractEsmExportNames(source: string, opts?: ExtractEsmOpts): st
     seen.add(opts.parentUrl);
   }
 
+  if (/\bexport\s+default\b/.test(source)) names.add("default");
   for (const m of source.matchAll(
     /\bexport\s+(?:async\s+)?(?:function\*?|class)\s+([A-Za-z_$][\w$]*)/g,
   )) {
@@ -29,10 +30,10 @@ export function extractEsmExportNames(source: string, opts?: ExtractEsmOpts): st
     const body = m[2] ?? "";
     for (const part of body.split(",")) {
       const bits = part.trim();
-      if (!bits || bits === "default") continue;
+      if (!bits) continue;
       const asMatch = bits.match(/\bas\s+([A-Za-z_$][\w$]*)\s*$/);
       const name = asMatch?.[1] ?? bits.split(/\s+/)[0];
-      if (name && name !== "default" && /^[A-Za-z_$][\w$]*$/.test(name)) names.add(name);
+      if (name && /^[A-Za-z_$][\w$]*$/.test(name)) names.add(name);
     }
   }
   for (const m of source.matchAll(
@@ -52,7 +53,7 @@ export function extractEsmExportNames(source: string, opts?: ExtractEsmOpts): st
       parentUrl: child.url,
       seen,
     })) {
-      names.add(n);
+      if (n !== "default") names.add(n);
     }
     for (const n of extractCjsExportNames(child.source)) names.add(n);
   }

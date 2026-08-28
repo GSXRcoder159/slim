@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { closeEnvelope } from "../src/envelope/close.ts";
 import { renderEvidenceMd, writeEvidence, type EvidenceJson } from "../src/evidence/report.ts";
 import { findBundleEntry, maybeBundleBytes } from "../src/size/bundle.ts";
-import { ENVELOPE_VERSION, emptyHyrum } from "../src/envelope/types.ts";
+import { ENVELOPE_VERSION, emptyHyrum, envelopeForDisk } from "../src/envelope/types.ts";
 import type { Envelope } from "../src/envelope/types.ts";
 import type { RevertPlan } from "../src/rewrite/revert.ts";
 
@@ -335,4 +335,38 @@ test("maybeBundleBytes returns null when neither tool is on PATH", () => {
   mkdirSync(join(root, "src"), { recursive: true });
   writeFileSync(join(root, "src", "index.ts"), "export const x = 1;\n");
   assert.equal(maybeBundleBytes(root, { hasBin: () => false }), null);
+});
+
+test("traced evidence and disk envelope omit raw traces, maps, and stacks", () => {
+  const traced = env();
+  traced.traces = [
+    {
+      symbol: "get",
+      originId: "o1",
+      argc: 1,
+      args: [{ t: "str", v: "[redacted]", redacted: true }],
+      sessionId: "s1",
+      tRelMs: 0,
+    },
+  ];
+  const disk = envelopeForDisk(traced);
+  assert.deepEqual(disk.traces, []);
+  const root = mkdtempSync(join(tmpdir(), "slim-ev-hygiene-"));
+  const { mdPath, jsonPath } = writeEvidence({
+    root,
+    env: traced,
+    replacementBytes: 100,
+    originalMin: 1000,
+    fuzz,
+    catalogIds: ["lodash.get"],
+    coverageHoles: [],
+    bundle: null,
+    revert: sampleRevert(),
+  });
+  const blob = readFileSync(mdPath, "utf8") + readFileSync(jsonPath, "utf8");
+  assert.doesNotMatch(blob, /traces\.jsonl/);
+  assert.doesNotMatch(blob, /"t":"session"/);
+  assert.doesNotMatch(blob, /at foo \(/);
+  assert.doesNotMatch(blob, /sourcesContent/);
+  assert.doesNotMatch(blob, /super-secret|sk-ant-/);
 });
