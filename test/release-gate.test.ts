@@ -34,6 +34,7 @@ import { attachCompiledTree, rollbackAttach } from "../src/release/attach.ts";
 import {
   assertIdentity,
   assertTarballMatchesRoot,
+  isDryRunVersionConflict,
   npmPublishArgs,
   npmPublishTarball,
   runReleaseGate,
@@ -285,6 +286,27 @@ test("npm publish args always include the tarball path and never a bare publish"
     tarball,
     "--provenance",
   ]);
+});
+
+test("npm publish dry-run treats an already-published version as packed, not failed", () => {
+  mkdirSync(TMP, { recursive: true });
+  const tarball = join(TMP, "slim-dry-conflict.tgz");
+  writeFileSync(tarball, "tarball");
+  try {
+    assert.equal(
+      isDryRunVersionConflict("You cannot publish over the previously published versions: 0.1.0."),
+      true,
+    );
+    npmPublishTarball(
+      tarball,
+      { dryRun: true, provenance: false, cwd: ROOT },
+      () => {
+        throw new Error("npm error You cannot publish over the previously published versions: 0.1.0.");
+      },
+    );
+  } finally {
+    rmSync(tarball, { force: true });
+  }
 });
 
 test("npm publish without GITHUB_ACTIONS is refused", () => {

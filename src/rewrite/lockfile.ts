@@ -47,15 +47,21 @@ function installEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function pmBinary(lockfile: Project["lockfile"]): string {
+function pmName(lockfile: Project["lockfile"]): string {
   if (lockfile === "pnpm") return "pnpm";
   if (lockfile === "yarn") return "yarn";
   if (lockfile === "bun") return "bun";
   return "npm";
 }
 
+function pmBinary(lockfile: Project["lockfile"]): string {
+  const name = pmName(lockfile);
+  if (process.platform === "win32" && name !== "bun") return `${name}.cmd`;
+  return name;
+}
+
 export function installCommandFor(lockfile: Project["lockfile"]): string {
-  return `${pmBinary(lockfile)} install`;
+  return `${pmName(lockfile)} install`;
 }
 
 export function refreshLockfile(
@@ -90,14 +96,15 @@ export function refreshLockfile(
 }
 
 function frozenInstallArgs(bin: string, env: NodeJS.ProcessEnv, frozen: boolean): string[] {
-  if (bin === "pnpm") {
+  const kind = bin.replace(/\.cmd$/i, "");
+  if (kind === "pnpm") {
     const args = ["install"];
     if (env.npm_config_store_dir) args.push("--store-dir", env.npm_config_store_dir);
     args.push(frozen ? "--frozen-lockfile" : "--no-frozen-lockfile");
     return args;
   }
-  if (frozen && bin === "yarn") return ["install", "--frozen-lockfile"];
-  if (frozen && bin === "bun") return ["install", "--frozen-lockfile"];
-  if (frozen && bin === "npm") return ["ci", "--ignore-scripts"];
+  if (frozen && kind === "yarn") return ["install", "--frozen-lockfile"];
+  if (frozen && kind === "bun") return ["install", "--frozen-lockfile"];
+  if (frozen && kind === "npm") return ["ci", "--ignore-scripts"];
   return ["install"];
 }

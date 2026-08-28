@@ -197,6 +197,7 @@ function lockfileBytes(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): Buff
 }
 
 function pmBin(kind: "npm" | "pnpm" | "yarn" | "bun"): string {
+  if (process.platform === "win32" && kind !== "bun") return `${kind}.cmd`;
   return kind;
 }
 

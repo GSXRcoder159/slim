@@ -85,8 +85,26 @@ function workerEnv(): NodeJS.ProcessEnv {
   return env;
 }
 
-function workerExecArgv(): string[] {
-  return process.execArgv.filter((a) => a !== "--test" && !a.startsWith("--test-"));
+const WORKER_EXEC_FLAG =
+  /^(?:--experimental-strip-types|--experimental-require-module|--import|--require)(?:=|$)/;
+
+/** Node 24 runners inject V8/TLS flags that `new Worker` rejects (ERR_WORKER_INVALID_EXEC_ARGV). */
+export function workerExecArgv(argv: readonly string[] = process.execArgv): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]!;
+    if (a === "--test" || a.startsWith("--test-")) continue;
+    if (!WORKER_EXEC_FLAG.test(a)) continue;
+    out.push(a);
+    if (!a.includes("=") && (a === "--import" || a === "--require")) {
+      const next = argv[i + 1];
+      if (next && !next.startsWith("-")) {
+        out.push(next);
+        i += 1;
+      }
+    }
+  }
+  return out;
 }
 
 export function defaultJobTimeoutMs(budgetMs: number): number {

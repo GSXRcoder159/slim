@@ -130,6 +130,11 @@ export function npmPublishArgs(
   return args;
 }
 
+/** npm 11 fail-closes dry-run when the version is already on the registry. Packing still succeeded. */
+export function isDryRunVersionConflict(msg: string): boolean {
+  return /cannot publish over the previously published versions/i.test(msg);
+}
+
 export function npmPublishTarball(
   tarball: string,
   opts: { dryRun: boolean; provenance: boolean; cwd: string; env?: NodeJS.ProcessEnv },
@@ -149,6 +154,7 @@ export function npmPublishTarball(
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (opts.dryRun && isDryRunVersionConflict(msg)) return;
     throw new SlimExit(EXIT_FAIL, `npm publish failed: ${msg}`);
   }
 }

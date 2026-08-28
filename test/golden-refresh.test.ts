@@ -16,6 +16,10 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE = join(ROOT, "fixtures", "lodash-get-debounce");
 const SLIM = join(FIXTURE, ".slim", "lodash");
 
+function gitLf(buf: Buffer): Buffer {
+  return Buffer.from(buf.toString("utf8").replace(/\r\n/g, "\n"));
+}
+
 test("refresh-inputs.json matches the declared golden contract", () => {
   const path = join(FIXTURE, ".slim", "refresh-inputs.json");
   assert.ok(existsSync(path), "fixtures/lodash-get-debounce/.slim/refresh-inputs.json must exist");
@@ -50,7 +54,7 @@ test("committed golden evidence matches refresh inputs, slice bytes, and catalog
   const man = JSON.parse(readFileSync(join(FIXTURE, ".slim", "manifest.json"), "utf8")) as {
     replacements: { lodash: { envelopeHash: string; version: string } };
   };
-  const slice = readFileSync(join(FIXTURE, "src", "slim", "lodash.ts"));
+  const slice = gitLf(readFileSync(join(FIXTURE, "src", "slim", "lodash.ts")));
   assert.equal(evidence.fuzz.seed, GOLDEN_REFRESH_INPUTS.seed);
   assert.equal(evidence.package.version, GOLDEN_REFRESH_INPUTS.lodashVersion);
   assert.equal(evidence.package.name, GOLDEN_REFRESH_INPUTS.package);
@@ -63,11 +67,11 @@ test("committed golden evidence matches refresh inputs, slice bytes, and catalog
 });
 
 test("golden evidence.md has real digests and the sample is a true copy", () => {
-  const md = readFileSync(join(SLIM, "evidence.md"), "utf8");
-  const sample = readFileSync(join(ROOT, "docs", "evidence.lodash.sample.md"), "utf8");
+  const md = gitLf(readFileSync(join(SLIM, "evidence.md"))).toString("utf8");
+  const sample = gitLf(readFileSync(join(ROOT, "docs", "evidence.lodash.sample.md"))).toString("utf8");
   assert.equal(sample, md, "docs/evidence.lodash.sample.md must equal golden evidence.md");
-  const jsonBytes = readFileSync(join(SLIM, "evidence.json"));
-  const modBytes = readFileSync(join(FIXTURE, "src", "slim", "lodash.ts"));
+  const jsonBytes = gitLf(readFileSync(join(SLIM, "evidence.json")));
+  const modBytes = gitLf(readFileSync(join(FIXTURE, "src", "slim", "lodash.ts")));
   const evidenceHash = createHash("sha256").update(jsonBytes).digest("hex");
   const moduleDigest = createHash("sha256").update(modBytes).digest("hex");
   assert.match(md, new RegExp(`Evidence hash: \`${evidenceHash}\``));

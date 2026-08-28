@@ -17,8 +17,32 @@ import { defaultWorkerCount, runFuzz, type FuzzReport } from "../../src/fuzz/run
 import {
   createPool,
   toCloneableJob,
+  workerExecArgv,
   workerThreadUrl,
 } from "../../src/fuzz/workers.ts";
+
+test("workerExecArgv drops Node 24 runner flags that Worker rejects", () => {
+  const argv = [
+    "--experimental-strip-types",
+    "--test",
+    "--test-reporter=spec",
+    "--v8-pool-size=4",
+    "--trace-event-file-pattern=node_trace.${rotation}.log",
+    "--secure-heap-min=2",
+    "--tls-cipher-list=TLS_AES_128_GCM_SHA256",
+    "--use-largepages=off",
+    "--secure-heap=0",
+    "--node-snapshot",
+    "--stack-trace-limit=10",
+    "--import",
+    "./hook.js",
+  ];
+  assert.deepEqual(workerExecArgv(argv), [
+    "--experimental-strip-types",
+    "--import",
+    "./hook.js",
+  ]);
+});
 
 const ID_DEBOUNCE_SRC = `
 export function id(x) { return x; }
@@ -724,7 +748,7 @@ test("non-cloneable job is EXIT_FAIL serialization failure", async () => {
 test("worker-thread posts error on malformed run message", { timeout: 8000 }, async () => {
   const { orig, slim } = writePair("export function id() { return 1; }\n");
   const w = new Worker(workerThreadUrl(), {
-    execArgv: process.execArgv.filter((a) => a !== "--test" && !a.startsWith("--test-")),
+    execArgv: workerExecArgv(),
     workerData: {
       origModule: orig,
       slimModule: pathToFileURL(slim).href,
@@ -1080,7 +1104,7 @@ test("worker-pool determinism holds across 10 serial repeats", { timeout: 30_000
 test("worker-thread posts ready after load", { timeout: 8000 }, async () => {
   const { orig, slim } = writePair(ID_SRC);
   const w = new Worker(workerThreadUrl(), {
-    execArgv: process.execArgv.filter((a) => a !== "--test" && !a.startsWith("--test-")),
+    execArgv: workerExecArgv(),
     workerData: {
       origModule: orig,
       slimModule: pathToFileURL(slim).href,

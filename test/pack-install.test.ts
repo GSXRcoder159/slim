@@ -94,15 +94,16 @@ test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tes
 
 test("npm publish --dry-run lists the same production files", { timeout: 120_000 }, () => {
   ensureDist();
-  const out = withRepoDistLock(() =>
-    execFileSync("npm", ["publish", "--dry-run", "--json", "--ignore-scripts"], {
+  const packOut = withRepoDistLock(() =>
+    execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
       cwd: ROOT,
       encoding: "utf8",
       timeout: 60_000,
     }),
   );
-  const parsed = JSON.parse(out) as { filename?: string; files?: Array<{ path: string }> };
-  const files = new Set((parsed.files ?? []).map((f) => f.path.replace(/\\/g, "/")));
+  const packed = JSON.parse(packOut) as Array<{ files?: Array<{ path: string }> }> | { files?: Array<{ path: string }> };
+  const packList = (Array.isArray(packed) ? packed[0]?.files : packed.files) ?? [];
+  const files = new Set(packList.map((f) => f.path.replace(/\\/g, "/")));
   assert.ok(files.has("dist/main.js"), "publish dry-run missing dist/main.js");
   assert.ok(files.has("CHANGELOG.md"), "publish dry-run missing CHANGELOG.md");
   assert.ok(files.has("docs/scan.schema.json"), "publish dry-run missing command schema");
@@ -110,6 +111,19 @@ test("npm publish --dry-run lists the same production files", { timeout: 120_000
     assert.ok(!f.startsWith("test/"), `publish dry-run leaked ${f}`);
     assert.ok(!f.startsWith("src/"), `publish dry-run leaked ${f}`);
     assert.ok(!f.includes(".env"), `publish dry-run leaked ${f}`);
+  }
+  const publish = withRepoDistLock(() =>
+    spawnSync("npm", ["publish", "--dry-run", "--json", "--ignore-scripts"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      timeout: 60_000,
+    }),
+  );
+  if ((publish.status ?? 1) !== 0) {
+    assert.match(
+      `${publish.stdout ?? ""}\n${publish.stderr ?? ""}`,
+      /cannot publish over the previously published versions/i,
+    );
   }
 });
 

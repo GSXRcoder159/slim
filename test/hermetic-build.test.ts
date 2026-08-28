@@ -209,7 +209,10 @@ test("npm pack and publish dry-run leave tracked metadata unchanged and create n
   const pack = withRepoDistLock(() => npmJson(["pack", "--dry-run", "--json"]));
   assert.equal(pack.status, 0, pack.stderr + pack.stdout);
   const publish = withRepoDistLock(() => npmJson(["publish", "--dry-run", "--json"]));
-  assert.equal(publish.status, 0, publish.stderr + publish.stdout);
+  const publishOut = `${publish.stdout}\n${publish.stderr}`;
+  if (publish.status !== 0) {
+    assert.match(publishOut, /cannot publish over the previously published versions/i);
+  }
 
   assert.deepEqual(readFileSync(pkgPath), beforePkg);
   assert.deepEqual(readFileSync(lockPath), beforeLock);
@@ -256,7 +259,9 @@ test("qualification commands can run twice without dirtying tracked files", { ti
     const pack = npmJson(["pack", "--dry-run"]);
     assert.equal(pack.status, 0, pack.stderr);
     const publish = npmJson(["publish", "--dry-run"]);
-    assert.equal(publish.status, 0, publish.stderr);
+    if (publish.status !== 0) {
+      assert.match(`${publish.stdout}\n${publish.stderr}`, /cannot publish over the previously published versions/i);
+    }
   }
   const after = execFileSync("git", ["status", "--porcelain"], { cwd: ROOT, encoding: "utf8" });
   assert.equal(after, before);
@@ -292,7 +297,8 @@ test("pnpm install with INIT_CWD set to this repo does not create a repo-local s
       JSON.stringify({ name: "store-probe", private: true, dependencies: { ms: "2.1.3" } }),
     );
     const env = hermeticPmEnv({ INIT_CWD: ROOT, PATH: pathEnv });
-    const r = spawnSync("pnpm", ["install"], { cwd: dir, encoding: "utf8", env, timeout: 90_000 });
+    const pnpm = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+    const r = spawnSync(pnpm, ["install"], { cwd: dir, encoding: "utf8", env, timeout: 90_000 });
     assert.equal(r.status, 0, r.stderr + r.stdout);
     assert.equal(existsSync(join(ROOT, ".pnpm-store")), false);
     assert.equal(existsSync(join(dir, ".pnpm-store")), false);
