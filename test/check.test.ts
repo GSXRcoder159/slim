@@ -172,7 +172,7 @@ test("slim:evidence is preferred over the emitted test file", () => {
   };
   runStandingTests(root, "lodash", "src/slim", spawn);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0]!.command, "node");
+  assert.equal(calls[0]!.command, process.execPath);
   assert.deepEqual(calls[0]!.args, ["evidence.js"]);
 });
 

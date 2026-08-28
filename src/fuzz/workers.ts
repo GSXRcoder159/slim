@@ -431,6 +431,11 @@ function createInProcessPool(opts: {
   };
 }
 
+function moduleHref(spec: string): string {
+  if (/^(?:file|data|node):/i.test(spec)) return spec;
+  return pathToFileURL(spec).href;
+}
+
 export async function loadOrig(
   spec: string,
   projectRoot = process.cwd(),
@@ -439,15 +444,13 @@ export async function loadOrig(
   try {
     return unwrapModule(req(spec));
   } catch {
-    const href = spec.startsWith("file:") ? spec : spec.startsWith("/") ? pathToFileURL(spec).href : spec;
-    const m = await import(href);
+    const m = await import(moduleHref(spec));
     return unwrapModule(m);
   }
 }
 
 export async function loadSlim(spec: string): Promise<Record<string, Function>> {
-  const href = spec.startsWith("file:") ? spec : pathToFileURL(spec).href;
-  const m = await import(href);
+  const m = await import(moduleHref(spec));
   return unwrapModule(m);
 }
 
@@ -549,7 +552,7 @@ function cryptoArgs(symbol: string, args: unknown[]): unknown[] {
   return args;
 }
 
-function withFrozenNow<T>(fn: () => T): T {
+export function withFrozenNow<T>(fn: () => T): T {
   const now = Date.now();
   const orig = Date.now;
   Date.now = () => now;

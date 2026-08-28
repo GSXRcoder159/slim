@@ -65,6 +65,12 @@ export function spawnPm(
   return spawnSync(bin, args, { ...opts, ...cmdShimSpawnOpts(bin) });
 }
 
+/** `node` in package.json scripts is node.exe; resolve it so Windows cmd.exe is not required. */
+export function resolveScriptFile(file: string): string {
+  if (file === "node" || file === "node.exe") return process.execPath;
+  return cmdShim(file);
+}
+
 export function execPm(
   name: string,
   args: readonly string[],

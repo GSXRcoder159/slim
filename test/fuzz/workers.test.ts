@@ -19,6 +19,7 @@ import {
   runJob,
   workerThreadUrl,
   loadOrig,
+  loadSlim,
 } from "../../src/fuzz/workers.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -275,6 +276,15 @@ test("worker thread specifier matches current module extension", () => {
     () => workerThreadUrl(pathToFileURL(join(tmpdir(), "no-such-fuzz", "workers.ts")).href),
     /runtime file missing/,
   );
+});
+
+test("loadSlim imports a native filesystem path", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-load-native-"));
+  const spec = join(dir, "mod.mjs");
+  writeFileSync(spec, "export function id(x) { return x; }\n");
+  const m = await loadSlim(spec);
+  assert.equal(typeof m.id, "function");
+  assert.equal(m.id(3), 3);
 });
 
 test("cloneable roundtrip preserves function arity", () => {

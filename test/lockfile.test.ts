@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../src/exit.ts";
-import { refreshLockfile, shouldRefreshLockfile, cmdShim, cmdShimSpawnOpts, scriptSpawnOpts } from "../src/rewrite/lockfile.ts";
+import { refreshLockfile, shouldRefreshLockfile, cmdShim, cmdShimSpawnOpts, scriptSpawnOpts, resolveScriptFile } from "../src/rewrite/lockfile.ts";
 import type { Project } from "../src/project.ts";
 
 function project(lockfile: Project["lockfile"]): Project {
@@ -115,10 +115,13 @@ test("cmdShim routes Windows cmd shims through cmd.exe", () => {
     assert.equal(cmdShimSpawnOpts("bun").shell, undefined);
     assert.equal(scriptSpawnOpts("vitest").shell, true);
     assert.equal(scriptSpawnOpts(process.execPath).shell, undefined);
+    assert.equal(resolveScriptFile("node"), process.execPath);
+    assert.equal(resolveScriptFile("npm"), "npm.cmd");
   } else {
     assert.equal(cmdShim("npm"), "npm");
     assert.equal(cmdShimSpawnOpts("npm").shell, undefined);
     assert.equal(scriptSpawnOpts("vitest").shell, undefined);
+    assert.equal(resolveScriptFile("node"), process.execPath);
   }
 });
 

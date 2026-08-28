@@ -12,6 +12,7 @@ import * as whatwgOracle from "whatwg-url";
 import { allCatalogEntries, getCatalog } from "../../src/generate/catalog/index.ts";
 import { TAXONOMY, runDebounceScript, type DebounceScript } from "../../src/fuzz/debounce-driver.ts";
 import { createFakeClock } from "../../src/fuzz/clock.ts";
+import { withFrozenNow } from "../../src/fuzz/workers.ts";
 import { CATEGORIES, MATRIX, type Category, type QualCase, type QualRow } from "./qualify-matrix.ts";
 
 function idsOf(rows: { pkg: string; symbol: string }[]): string[] {
@@ -268,16 +269,18 @@ async function runCase(row: QualRow, c: QualCase, impl: unknown, oracle: unknown
   let exp: unknown;
   let slimErr: unknown;
   let origErr: unknown;
-  try {
-    got = invoke(impl, c, row);
-  } catch (e) {
-    slimErr = e;
-  }
-  try {
-    exp = invoke(oracle, c, row);
-  } catch (e) {
-    origErr = e;
-  }
+  withFrozenNow(() => {
+    try {
+      got = invoke(impl, c, row);
+    } catch (e) {
+      slimErr = e;
+    }
+    try {
+      exp = invoke(oracle, c, row);
+    } catch (e) {
+      origErr = e;
+    }
+  });
   if (slimErr || origErr) {
     assert.ok(slimErr && origErr, `${label}: throw mismatch`);
     return;

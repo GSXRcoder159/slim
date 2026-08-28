@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { delimiter, join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { cmdShim, scriptSpawnOpts } from "../rewrite/lockfile.ts";
+import { resolveScriptFile, scriptSpawnOpts } from "../rewrite/lockfile.ts";
 import { siblingModule } from "../runtime-path.ts";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../exit.ts";
 import type { Envelope, TraceEvent } from "../envelope/types.ts";
@@ -102,7 +102,7 @@ export function runTraces(
 
   const timeoutMs = opts?.timeoutMs ?? TRACE_TIMEOUT_MS;
   process.stderr.write(`tracing via ${runner.kind}…\n`);
-  const file = cmdShim(spawn.file);
+  const file = resolveScriptFile(spawn.file);
   const r = spawnSync(file, spawn.args, {
     cwd: root,
     env: withLocalBinPath(root, envVars),
