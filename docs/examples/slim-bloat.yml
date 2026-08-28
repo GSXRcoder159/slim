@@ -4,12 +4,10 @@ on:
 jobs:
   bloat:
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version: "22.18"
+      - run: npm ci
       - uses: slim-hq/slim/action/bloat@v1
-        # fail: true   # optional: exit 1 when a fat slimmable dep is added

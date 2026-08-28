@@ -78,7 +78,7 @@ test("help, README, dx, and packages only advertise inventory names", () => {
   );
   const symbols = new Set(loaded.entries.filter((e) => e.kind === "symbol").map((e) => e.name));
   const help = helpText();
-  for (const name of ["scan", "inspect", "replace", "check", "upstream", "watch", "doctor"]) {
+  for (const name of ["scan", "inspect", "replace", "check", "bloat", "upstream", "watch", "doctor"]) {
     assert.ok(commands.has(name), `help command ${name} missing from inventory`);
     assert.match(help, new RegExp(`slim ${name === "watch" ? "watch" : name}`));
   }

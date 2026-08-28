@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { actionManifest, ACTION_WRAPPERS } from "../action/digest.mjs";
 
 const STAMP_NAME = ".slim-build.json";
 
@@ -102,10 +103,11 @@ export function distManifest(root) {
 
 export function writeStamp(root) {
   const manifest = distManifest(root);
-  writeFileSync(
-    join(root, "dist", STAMP_NAME),
-    `${JSON.stringify({ ok: true, ...manifest }, null, 2)}\n`,
-  );
+  const stamp = { ok: true, ...manifest };
+  if (ACTION_WRAPPERS.every((f) => existsSync(join(root, f)))) {
+    stamp.actionSha256 = actionManifest(root).sha256;
+  }
+  writeFileSync(join(root, "dist", STAMP_NAME), `${JSON.stringify(stamp, null, 2)}\n`);
 }
 
 export function assertPackReady(root) {

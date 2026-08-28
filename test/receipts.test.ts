@@ -11,6 +11,7 @@ import {
   receiptFileName,
   sourceReceipt,
   githubReceipt,
+  actionReceipt,
   writeReceipt,
 } from "../src/support/receipts.ts";
 
@@ -246,4 +247,64 @@ test("qualify wrong service on OSV receipt fails closed", () => {
   );
   const failures = qualifyInventory({ schemaVersion: 1, entries: [osv] }, dir, candidate, { now: NOW });
   assert.match(failures[0]?.reason ?? "", /service npm-registry != osv/);
+});
+
+const ACTION = "c".repeat(64);
+const actionEntry: InventoryEntry = {
+  id: "action.check",
+  kind: "action",
+  name: "check",
+  docs: ["action/check/action.yml"],
+  checkId: "test/github/action-live.test.ts",
+  receiptClass: "live",
+};
+
+test("actionReceipt is schema-valid with action digest identity", () => {
+  const rec = actionReceipt({
+    command: "check",
+    fixture: "packed-action-consumer",
+    commit: COMMIT,
+    actionDigest: ACTION,
+    startedAt: new Date("2026-08-27T14:00:00.000Z"),
+    endedAt: new Date("2026-08-27T14:00:01.000Z"),
+    log: "ubuntu-latest:22.18:check:0",
+  });
+  const parsed = parseReceipt(rec);
+  assert.equal(parsed.checkId, "test/github/action-live.test.ts");
+  assert.equal(parsed.command, "check");
+  assert.equal(parsed.actionDigest, ACTION);
+  assert.equal(parsed.npmDigest, null);
+  assert.equal(parsed.service, null);
+  assert.equal(parsed.outcome, "pass");
+});
+
+test("qualify missing action.check receipt fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-action-missing-"));
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [actionEntry] }, dir, {
+    ...candidate,
+    actionDigest: ACTION,
+  }, { now: NOW });
+  assert.deepEqual(failures, [{ entryId: "action.check", reason: "missing receipt" }]);
+});
+
+test("qualify action digest mismatch fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-action-dig-"));
+  writeReceipt(
+    dir,
+    actionEntry.id,
+    actionReceipt({
+      command: "check",
+      fixture: "packed-action-consumer",
+      commit: COMMIT,
+      actionDigest: "d".repeat(64),
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+    }),
+  );
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [actionEntry] }, dir, {
+    ...candidate,
+    actionDigest: ACTION,
+  }, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /action digest mismatch/);
 });

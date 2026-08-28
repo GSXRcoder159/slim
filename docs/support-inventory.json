@@ -58,6 +58,20 @@
       "receiptClass": "local"
     },
     {
+      "id": "command.bloat",
+      "kind": "command",
+      "command": "bloat",
+      "json": false,
+      "docs": [
+        "docs/help.txt",
+        "docs/dx.md",
+        "README.md",
+        "docs/help-commands.txt"
+      ],
+      "checkId": "test/cli.test.ts",
+      "receiptClass": "local"
+    },
+    {
       "id": "command.upstream",
       "kind": "command",
       "command": "upstream",
@@ -1437,7 +1451,7 @@
         "action/check/action.yml",
         "docs/dx.md"
       ],
-      "checkId": "test/pack-install.test.ts",
+      "checkId": "test/github/action-live.test.ts",
       "receiptClass": "live"
     },
     {
@@ -1448,7 +1462,7 @@
         "action/bloat/action.yml",
         "docs/dx.md"
       ],
-      "checkId": "test/pack-install.test.ts",
+      "checkId": "test/github/action-live.test.ts",
       "receiptClass": "live"
     },
     {
@@ -1459,7 +1473,7 @@
         "action/upstream/action.yml",
         "docs/dx.md"
       ],
-      "checkId": "test/pack-install.test.ts",
+      "checkId": "test/github/action-live.test.ts",
       "receiptClass": "live"
     }
   ]

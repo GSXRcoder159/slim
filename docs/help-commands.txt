@@ -64,6 +64,16 @@ failing standing/hardening suite. Prefers scripts.slim:evidence.
 Empty replacements exit 0.
 Example:  slim check
 ------------------------------------------------------------------------
+slim bloat — fail if a fat production dependency has no Slim replacement
+
+Usage:
+  slim bloat
+
+Flags production BLOAT_PACKAGES in dependencies with no recorded
+replacement. Ignores devDependencies and import sites. No --json.
+Exit 0 when none are found. Exit 1 when any remain.
+Example:  slim bloat
+------------------------------------------------------------------------
 slim watch — see if upstream advisories/releases touch your slice
 
 Usage:

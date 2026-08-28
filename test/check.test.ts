@@ -297,7 +297,7 @@ test("slim-check.yml has no continue-on-error and uses ./action/check", () => {
   assert.equal(/continue-on-error/.test(yml), false);
   assert.match(yml, /uses:\s*\.\/action\/check/);
   assert.match(yml, /npm run build/);
-  assert.match(yml, /SLIM_REQUIRE_DIST/);
+  assert.doesNotMatch(yml, /SLIM_REQUIRE_DIST/);
 });
 
 test("slim-bloat.yml runs the bloat action, not scan --json", () => {
@@ -305,7 +305,7 @@ test("slim-bloat.yml runs the bloat action, not scan --json", () => {
   assert.equal(/scan\s+--json/.test(yml), false);
   assert.match(yml, /uses:\s*\.\/action\/bloat/);
   assert.match(yml, /npm run build/);
-  assert.match(yml, /SLIM_REQUIRE_DIST/);
+  assert.doesNotMatch(yml, /SLIM_REQUIRE_DIST/);
 });
 
 test("slim-upstream.yml keeps weekly cron and runs the compiled action", () => {
@@ -315,7 +315,7 @@ test("slim-upstream.yml keeps weekly cron and runs the compiled action", () => {
   assert.match(yml, /contents:\s*write/);
   assert.match(yml, /pull-requests:\s*write/);
   assert.match(yml, /npm run build/);
-  assert.match(yml, /SLIM_REQUIRE_DIST/);
+  assert.doesNotMatch(yml, /SLIM_REQUIRE_DIST/);
   assert.match(yml, /upload-artifact/);
   assert.match(yml, /if:\s*failure\(\)/);
   assert.equal(/node dist\/main\.js upstream --pr/.test(yml), false);

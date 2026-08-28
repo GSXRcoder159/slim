@@ -9,6 +9,7 @@ Usage:
   slim inspect <pkg> [--json] [--allow-unknown]
   slim replace <pkg> [options]
   slim check [pkg] [--json]
+  slim bloat
   slim upstream [--pr] [--json]
   slim watch                  (alias of upstream)
   slim doctor [--strict] [--json]
@@ -35,6 +36,7 @@ Doctor options:
 
 --json is supported on scan, inspect, check, upstream/watch, and doctor only.
 replace does not support --json; machine output is .slim/<pkg>/evidence.json and .slim/manifest.json.
+bloat does not support --json.
 
 Exit codes: 0 ok  1 fail  2 usage  3 refused  4 environment
 Streams: JSON and human reports on stdout. Progress, warnings, and errors on stderr.

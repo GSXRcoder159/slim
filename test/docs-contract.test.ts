@@ -149,3 +149,27 @@ test("release qualifies before provenance publish", () => {
   assert.ok(test >= 0 && dry >= 0 && publish >= 0);
   assert.ok(test < dry && dry < publish, "test and dry-run must precede provenance publish");
 });
+
+test("consumer Action examples include checkout, setup-node, and npm ci", () => {
+  for (const name of ["slim-check.yml", "slim-bloat.yml", "slim-watch.yml"] as const) {
+    const yml = readFileSync(join(ROOT, "docs/examples", name), "utf8");
+    assert.match(yml, /actions\/checkout@/);
+    assert.match(yml, /actions\/setup-node@/);
+    assert.match(yml, /node-version:\s*"22\.18"/);
+    assert.match(yml, /npm ci/);
+    assert.doesNotMatch(yml, /experimental-strip-types/);
+    assert.doesNotMatch(yml, /SLIM_REQUIRE_DIST/);
+    assert.doesNotMatch(yml, /fail:\s*true/);
+  }
+  const check = readFileSync(join(ROOT, "docs/examples/slim-check.yml"), "utf8");
+  assert.match(check, /slim-hq\/slim\/action\/check@v1/);
+  const bloat = readFileSync(join(ROOT, "docs/examples/slim-bloat.yml"), "utf8");
+  assert.match(bloat, /slim-hq\/slim\/action\/bloat@v1/);
+  const watch = readFileSync(join(ROOT, "docs/examples/slim-watch.yml"), "utf8");
+  assert.match(watch, /slim-hq\/slim\/action\/upstream@v1/);
+  const dx = readFileSync(join(ROOT, "docs/dx.md"), "utf8");
+  assert.doesNotMatch(dx, /still falls back to source/);
+  assert.doesNotMatch(dx, /Default: comment, exit 0/);
+  const repo = readFileSync(join(ROOT, "docs/repo.md"), "utf8");
+  assert.doesNotMatch(repo, /may fall back to source/);
+});

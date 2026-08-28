@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { runBloatCheck } from "../src/github/bloat-action.ts";
+import { runBloatCheck } from "../src/bloat.ts";
 import { EXIT_FAIL, EXIT_OK } from "../src/exit.ts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");

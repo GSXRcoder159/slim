@@ -49,7 +49,7 @@ export interface SupportInventory {
   entries: InventoryEntry[];
 }
 
-const COMMANDS = ["scan", "inspect", "replace", "check", "upstream", "doctor"] as const;
+const COMMANDS = ["scan", "inspect", "replace", "check", "bloat", "upstream", "doctor"] as const;
 const JSON_COMMANDS = ["scan", "inspect", "check", "upstream", "doctor"] as const;
 const OS = ["ubuntu-latest", "macos-latest", "windows-latest"] as const;
 const NODES = ["22.18", "24"] as const;
@@ -245,7 +245,7 @@ export function canonicalInventory(): SupportInventory {
         kind: "action",
         name,
         docs: [`action/${name}/action.yml`, "docs/dx.md"],
-        checkId: "test/pack-install.test.ts",
+        checkId: "test/github/action-live.test.ts",
         receiptClass: "live",
       }),
     );

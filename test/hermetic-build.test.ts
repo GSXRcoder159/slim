@@ -131,10 +131,16 @@ test("two builds from unchanged sources produce identical dist manifests", { tim
   const a = runBuild(ROOT);
   assert.equal(a.status, 0, a.stderr + a.stdout);
   const first = distManifest();
-  const stamp1 = JSON.parse(readFileSync(STAMP, "utf8")) as { ok: boolean; files: string[]; sha256: string };
+  const stamp1 = JSON.parse(readFileSync(STAMP, "utf8")) as {
+    ok: boolean;
+    files: string[];
+    sha256: string;
+    actionSha256?: string;
+  };
   assert.equal(stamp1.ok, true);
   assert.deepEqual(stamp1.files, first.files);
   assert.equal(stamp1.sha256, first.sha256);
+  assert.match(stamp1.actionSha256 ?? "", /^[0-9a-f]{64}$/);
   const b = runBuild(ROOT);
   assert.equal(b.status, 0, b.stderr + b.stdout);
   const second = distManifest();

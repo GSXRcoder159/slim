@@ -14,6 +14,7 @@ Usage:
   slim inspect <pkg> [--json] [--allow-unknown]
   slim replace <pkg> [options]
   slim check [pkg] [--json]
+  slim bloat
   slim upstream [--pr] [--json]
   slim watch                  (alias of upstream)
   slim doctor [--strict] [--json]
@@ -40,6 +41,7 @@ Doctor options:
 
 --json is supported on scan, inspect, check, upstream/watch, and doctor only.
 replace does not support --json; machine output is .slim/<pkg>/evidence.json and .slim/manifest.json.
+bloat does not support --json.
 
 Exit codes: 0 ok  1 fail  2 usage  3 refused  4 environment
 Streams: JSON and human reports on stdout. Progress, warnings, and errors on stderr.
@@ -175,6 +177,7 @@ export const COMMAND_FLAGS: Record<string, ReadonlySet<string>> = {
     "max-attempts",
   ]),
   check: new Set(["json", "help"]),
+  bloat: new Set(["help"]),
   upstream: new Set(["json", "help", "pr"]),
   doctor: new Set(["json", "help", "strict"]),
 };
@@ -200,6 +203,9 @@ export function assertCommandFlags(command: string, flags: string[]): void {
         "replace does not support --json; machine output is .slim/<pkg>/evidence.json and .slim/manifest.json",
       );
     }
+    if (command === "bloat" && flag === "json") {
+      throw new SlimExit(EXIT_USAGE, "bloat does not support --json");
+    }
     throw new SlimExit(EXIT_USAGE, `${command} does not support --${flag}`);
   }
 }
@@ -220,6 +226,7 @@ export async function runCli(argv: string[]): Promise<number> {
       "inspect",
       "replace",
       "check",
+      "bloat",
       "upstream",
       "doctor",
     ];
@@ -241,6 +248,8 @@ export async function runCli(argv: string[]): Promise<number> {
         return await (await import("./replace.ts")).runReplace(args);
       case "check":
         return await (await import("./check.ts")).runCheck(args);
+      case "bloat":
+        return (await import("./bloat.ts")).runBloatCheck();
       case "upstream":
         return await (await import("./upstream.ts")).runUpstream(args);
       default:

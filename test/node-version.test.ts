@@ -63,12 +63,17 @@ test("package, CI, Actions, README, and doctor name the same minimum Node", () =
   assert.doesNotMatch(repoDoc, /20\.12/);
 });
 
-test("action runner is committed JS and prefers dist", () => {
+test("action runner is committed JS and never falls back to source", async () => {
   const runner = readFileSync(join(ROOT, "action/run.mjs"), "utf8");
-  assert.match(runner, /dist\/github/);
-  assert.match(runner, /experimental-strip-types/);
-  assert.match(runner, /process\.exit\(4\)/);
+  const digestSrc = readFileSync(join(ROOT, "action/digest.mjs"), "utf8");
+  assert.match(runner, /digest\.mjs/);
+  assert.match(digestSrc, /dist\/github/);
+  assert.doesNotMatch(runner, /experimental-strip-types/);
+  assert.doesNotMatch(digestSrc, /experimental-strip-types/);
+  assert.doesNotMatch(runner, /SLIM_REQUIRE_DIST/);
+  assert.doesNotMatch(digestSrc, /SLIM_REQUIRE_DIST/);
   assert.ok(readdirSync(join(ROOT, "action")).includes("run.mjs"));
+  assert.ok(readdirSync(join(ROOT, "action")).includes("digest.mjs"));
 
   const missing = spawnSync(process.execPath, [join(ROOT, "action/run.mjs")], {
     encoding: "utf8",
@@ -76,15 +81,26 @@ test("action runner is committed JS and prefers dist", () => {
   assert.equal(missing.status, 2);
   assert.match(missing.stderr, /usage: run\.mjs/);
 
+  const { actionManifest, STAMP_NAME } = await import("../action/digest.mjs");
   const tmp = mkdtempSync(join(tmpdir(), "slim-action-"));
   try {
-    mkdirSync(join(tmp, "action"), { recursive: true });
+    const yml = "name: stub\nruns:\n  using: composite\n  steps: []\n";
+    for (const name of ["check", "bloat", "upstream"] as const) {
+      mkdirSync(join(tmp, "action", name), { recursive: true });
+      writeFileSync(join(tmp, "action", name, "action.yml"), yml);
+    }
     writeFileSync(join(tmp, "action", "run.mjs"), runner);
+    writeFileSync(join(tmp, "action", "digest.mjs"), digestSrc);
     const stub = (msg: string) => `process.stdout.write(${JSON.stringify(msg)} + "\\n");\n`;
     mkdirSync(join(tmp, "dist", "github"), { recursive: true });
     mkdirSync(join(tmp, "src", "github"), { recursive: true });
     writeFileSync(join(tmp, "dist", "github", "check-action.js"), stub("DIST"));
     writeFileSync(join(tmp, "src", "github", "check-action.ts"), stub("SRC"));
+    const { sha256 } = actionManifest(tmp);
+    writeFileSync(
+      join(tmp, "dist", STAMP_NAME),
+      `${JSON.stringify({ ok: true, actionSha256: sha256 })}\n`,
+    );
 
     const both = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
       encoding: "utf8",
@@ -92,27 +108,45 @@ test("action runner is committed JS and prefers dist", () => {
     assert.equal(both.status, 0, both.stderr);
     assert.equal(both.stdout.trim(), "DIST");
 
+    const pinOk = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
+      encoding: "utf8",
+      env: { ...process.env, SLIM_ACTION_DIGEST: sha256 },
+    });
+    assert.equal(pinOk.status, 0, pinOk.stderr);
+    assert.equal(pinOk.stdout.trim(), "DIST");
+
+    const pinBad = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
+      encoding: "utf8",
+      env: { ...process.env, SLIM_ACTION_DIGEST: "a".repeat(64) },
+    });
+    assert.equal(pinBad.status, 4);
+    assert.match(pinBad.stderr, /action digest mismatch/);
+    assert.notEqual(pinBad.stdout.trim(), "SRC");
+
+    writeFileSync(
+      join(tmp, "dist", STAMP_NAME),
+      `${JSON.stringify({ ok: true, actionSha256: "b".repeat(64) })}\n`,
+    );
+    const stale = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
+      encoding: "utf8",
+    });
+    assert.equal(stale.status, 4);
+    assert.match(stale.stderr, /stale action distributable/);
+
+    rmSync(join(tmp, "dist", STAMP_NAME), { force: true });
+    const noStamp = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
+      encoding: "utf8",
+    });
+    assert.equal(noStamp.status, 4);
+    assert.match(noStamp.stderr, new RegExp(`missing dist/${STAMP_NAME}`));
+
     rmSync(join(tmp, "dist"), { recursive: true, force: true });
     const srcOnly = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
       encoding: "utf8",
     });
-    assert.equal(srcOnly.status, 0, srcOnly.stderr);
-    assert.equal(srcOnly.stdout.trim(), "SRC");
-
-    const requireDist = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
-      encoding: "utf8",
-      env: { ...process.env, SLIM_REQUIRE_DIST: "1" },
-    });
-    assert.equal(requireDist.status, 4);
-    assert.match(requireDist.stderr, /SLIM_REQUIRE_DIST/);
-    assert.notEqual(requireDist.stdout.trim(), "SRC");
-
-    rmSync(join(tmp, "src"), { recursive: true, force: true });
-    const neither = spawnSync(process.execPath, [join(tmp, "action", "run.mjs"), "check"], {
-      encoding: "utf8",
-    });
-    assert.equal(neither.status, 4);
-    assert.match(neither.stderr, /missing dist\/github\/check-action\.js/);
+    assert.equal(srcOnly.status, 4);
+    assert.match(srcOnly.stderr, /missing dist\/github\/check-action\.js/);
+    assert.notEqual(srcOnly.stdout.trim(), "SRC");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

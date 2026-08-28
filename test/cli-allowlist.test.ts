@@ -46,6 +46,18 @@ test("scan --llm is usage", async () => {
   assert.equal(stdout.trim(), "");
 });
 
+test("bloat --json is usage with error document on stdout", async () => {
+  const { code, stdout, stderr } = await capture(() => runCli(["bloat", "--json"]));
+  assert.equal(code, EXIT_USAGE);
+  assert.match(stderr, /bloat does not support --json/);
+  assert.match(stderr, /Usage:/);
+  const doc = JSON.parse(stdout) as Record<string, unknown>;
+  assert.equal(validateNamed("error", doc), null);
+  assert.equal(doc.ok, false);
+  assert.equal(doc.exit, EXIT_USAGE);
+  assert.equal(doc.status, "usage");
+});
+
 test("JSON commands still accept --json", () => {
   for (const command of ["scan", "inspect", "check", "upstream", "doctor"] as const) {
     assert.ok(COMMAND_FLAGS[command]?.has("json"), command);
@@ -54,6 +66,7 @@ test("JSON commands still accept --json", () => {
     assert.equal(args.json, true);
   }
   assert.equal(COMMAND_FLAGS.replace?.has("json"), false);
+  assert.equal(COMMAND_FLAGS.bloat?.has("json"), false);
 });
 
 test("watch --json is allowed as upstream", async () => {

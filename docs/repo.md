@@ -72,6 +72,6 @@ Slice identity is `.slim/<pkg>/envelope.json` plus the module under `src/slim/`.
 - **CONTRIBUTING / SECURITY / CODE_OF_CONDUCT:** as in those files. Report Slim bugs privately; a slice mismatch is a Slim bug.
 - **CI:** Linux, macOS, Windows × Node 22.18 and 24. Node 26 Current is not in CI until LTS.
 - **Release:** tag `v*` → test, similarity, pack, `npm publish --dry-run`, sha256, then `npm publish --provenance`.
-- **Actions:** published `uses: slim-hq/slim/action/check@v1` (and bloat/upstream). Dist is gitignored, so published Actions may fall back to source; this repo’s workflows set `SLIM_REQUIRE_DIST=1`.
+- **Actions:** published `uses: slim-hq/slim/action/check@v1` (and bloat/upstream) run only compiled `dist/github/*-action.js`. Missing or stale distributable code exits 4. This repo gitignores `dist/`; dogfood workflows `npm run build` then `uses: ./action/*`. Published tags must include the compiled Action files.
 
 No `packages/` monorepo, no telemetry, no commander/chalk/ora, no hosted advisory proxy.

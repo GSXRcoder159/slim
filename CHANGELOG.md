@@ -2,7 +2,7 @@
 
 ## 0.1.0
 
-First production CLI. Scan, inspect, replace, check, upstream/watch, and doctor. Catalog covers lodash (and aliases), moment format, uuid v4, ms, nanoid, clsx, whatwg-url, bluebird, and mime-types. LLM generation is optional and uses the same gates as catalog slices.
+First production CLI. Scan, inspect, replace, check, bloat, upstream/watch, and doctor. Catalog covers lodash (and aliases), moment format, uuid v4, ms, nanoid, clsx, whatwg-url, bluebird, and mime-types. LLM generation is optional and uses the same gates as catalog slices. Published GitHub Actions run only the compiled Action distributable.
 
 ### Revert / migration
 

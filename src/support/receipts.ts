@@ -162,6 +162,35 @@ export function sourceReceipt(opts: {
   };
 }
 
+export function actionReceipt(opts: {
+  command: "check" | "bloat" | "upstream";
+  fixture: string;
+  commit: string;
+  actionDigest: string;
+  startedAt: Date;
+  endedAt: Date;
+  log: string;
+  workflowRun?: string | null;
+}): QualificationReceipt {
+  return {
+    schemaVersion: 1,
+    checkId: "test/github/action-live.test.ts",
+    command: opts.command,
+    fixture: opts.fixture,
+    environment: `${process.platform} node-${process.version}`,
+    provider: null,
+    service: null,
+    startedAt: opts.startedAt.toISOString(),
+    endedAt: opts.endedAt.toISOString(),
+    outcome: "pass",
+    commit: opts.commit,
+    npmDigest: null,
+    actionDigest: opts.actionDigest,
+    workflowRun: opts.workflowRun ?? null,
+    logDigest: createHash("sha256").update(opts.log).digest("hex"),
+  };
+}
+
 export function forbiddenKey(value: unknown, path = ""): string | null {
   if (Array.isArray(value)) {
     for (let i = 0; i < value.length; i++) {

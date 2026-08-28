@@ -36,13 +36,13 @@ Confirmations: none. `--no-pr` skips GitHub. CI is non-interactive.
 
 The shipped CLI uses **0–4 only**. SIGINT is the process default (typically 130), not a SlimExit.
 
-`slim-bloat` (the Action) runs the compiled bloat checker (`action/run.mjs bloat`), not `scan --diff`. Default exit 0 when the PR comment path is unused. The action fails (exit 1) when a production `BLOAT_PACKAGES` dependency has no Slim replacement.
+`slim bloat` (and the bloat Action) flags production `BLOAT_PACKAGES` with no Slim replacement. Ignores `devDependencies` and import sites. Exit 0 when none remain; exit 1 when any remain. Not `scan --diff`. No PR comment path.
 
 ### Flags
 
 `-h` / `--help` is accepted on every command.
 
-`--json` is **not** global. It is supported on `scan`, `inspect`, `check`, `upstream`/`watch`, and `doctor` only. `replace --json` is a usage error (exit 2): usage on stderr and a `docs/error.schema.json` document on stdout. Successful replace machine output is `.slim/<pkg>/evidence.json`, `.slim/manifest.json`, and `slim.json` replacements.
+`--json` is **not** global. It is supported on `scan`, `inspect`, `check`, `upstream`/`watch`, and `doctor` only. `replace --json` is a usage error (exit 2): usage on stderr and a `docs/error.schema.json` document on stdout. Successful replace machine output is `.slim/<pkg>/evidence.json`, `.slim/manifest.json`, and `slim.json` replacements. `bloat --json` is the same usage error.
 
 `--version`, `--cwd`, `--quiet`, and `--verbose` are **not** shipped. `--help` with a command prints that command’s help and exits 0. Bare `slim` and `slim --help` print top-level help on stdout and exit 0. An unknown command prints `unknown command:` plus help on stderr and exits 2. Unsupported flags on a known command are usage (exit 2).
 
@@ -138,6 +138,10 @@ For each recorded slice (or one pkg):
 Empty replacements / no manifest → exit 0 (so adding the Action to a repo that has not slimmed yet is free). `--update-envelope` is not a flag; drift always fails.
 
 JSON `{ schemaVersion, ok, exit, status, packages[] }` includes per-package `drift`, `standing`, and `residualRisk` from evidence. Human mode prints the same status and residual risk. Missing evidence is never treated as empty residual risk.
+
+### `slim bloat`
+
+No network. No `--json`. Scans `package.json` `dependencies` for `BLOAT_PACKAGES` without a recorded Slim replacement. `devDependencies` and import-only uses are ignored. Exit 0 prints `slim-bloat: ok`. Exit 1 lists the fat production deps. Same command the bloat Action runs.
 
 ### `slim watch`  (alias `slim upstream`)
 
@@ -270,7 +274,11 @@ v1 prints estimated original min and measured replacement bytes in evidence. No 
 
 ## 5. GitHub Actions
 
-Three composite actions in this repo (`check`, `bloat`, `upstream`). They wrap the CLI via `action/run.mjs`, which prefers `dist/github/*.js`. This repository’s workflows run `npm run build` first and set `SLIM_REQUIRE_DIST=1` so CI cannot pass on strip-types source when the distributable is missing. Published `uses: slim-hq/slim/action/check@v1` still falls back to source when dist is absent (GitHub checkouts do not include gitignored `dist/`). Users still `actions/checkout` first.
+Three composite actions (`check`, `bloat`, `upstream`) wrap the packed CLI via `action/run.mjs`. They execute only compiled `dist/github/*-action.js` whose SHA-256 (`actionSha256` in `dist/.slim-build.json`) matches the Action distributable. Missing or stale compiled files exit 4. There is no `--experimental-strip-types` source fallback.
+
+Published `uses: slim-hq/slim/action/check@v1` requires the git ref to contain that compiled `dist/` (the same file set as `npm pack`). This repository gitignores `dist/`; dogfood workflows run `npm run build` then `uses: ./action/*`. A published tag without `dist/` is explicit non-success, not a silent source downgrade.
+
+Consumers must check out the project, set up Node >= 22.18, and install the project (`npm ci`) so `typescript` is resolvable. Copy [`docs/examples/slim-check.yml`](./examples/slim-check.yml), [`slim-bloat.yml`](./examples/slim-bloat.yml), and [`slim-watch.yml`](./examples/slim-watch.yml).
 
 ### `slim-check` (on every PR)
 
@@ -287,10 +295,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+      - run: npm ci
       - uses: slim-hq/slim/action/check@v1
 ```
 
-`action/check/action.yml` requires Node >= 22.18 and runs `action/run.mjs check`. Fails the PR on envelope drift, missing evidence, missing standing/hardening tests, or a failing standing/hardening suite. No recorded replacements → pass.
+`action/check/action.yml` requires Node >= 22.18 and runs `slim check`. Fails the PR on envelope drift, missing evidence, missing standing/hardening tests, or a failing standing/hardening suite. No recorded replacements → pass.
 
 ### `slim-bloat` (optional, PRs that add fat deps)
 
@@ -301,29 +313,20 @@ on:
 jobs:
   bloat:
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-      contents: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
-          fetch-depth: 0
+          node-version: "22.18"
+      - run: npm ci
       - uses: slim-hq/slim/action/bloat@v1
 ```
 
-`action/bloat/action.yml` runs `action/run.mjs bloat` (compiled `dist/github/bloat-action.js` when present). It flags production `BLOAT_PACKAGES` without a Slim replacement; it does not run `slim scan --diff`.
-
-```
-This PR adds lodash (71 kB min / 25.8 kB gz). Call sites look like 2 functions.
-Inspect: npx slim inspect lodash
-Replace: npx slim replace lodash
-```
-
-Default: comment, exit 0. Input `fail: true` → exit 1.
+Same semantics as `slim bloat`: production `BLOAT_PACKAGES` without a Slim replacement fail the job (exit 1). No `fail:` input. No PR comment.
 
 ### Watch workflow (immune system)
 
-This repository dogfoods `.github/workflows/slim-upstream.yml` (compiled CLI, `SLIM_REQUIRE_DIST`, `./action/upstream`). Consumer template: `docs/examples/slim-watch.yml`. See §9.
+This repository dogfoods `.github/workflows/slim-upstream.yml` (`npm run build`, `./action/upstream`). Consumer template: `docs/examples/slim-watch.yml`. See §9.
 
 ---
 
@@ -363,7 +366,7 @@ Slim never phones home. Watch uses public APIs from the machine that runs it (yo
 
 There is no daemon.
 
-1. **Default:** GitHub Action, weekly. Copy `docs/examples/slim-watch.yml` or use `uses: slim-hq/slim/action/upstream` after a dist build.
+1. **Default:** GitHub Action, weekly. Copy `docs/examples/slim-watch.yml` (`uses: slim-hq/slim/action/upstream@v1` after checkout, Node 22.18, and `npm ci`).
 2. **Laptop:** `slim watch` whenever. cron `0 9 * * 1 slim watch` if they insist.
 3. `doctor` warns if slices exist and the workflow file is missing.
 
@@ -385,7 +388,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22.18"
-      - run: npx --yes slim@1 watch --pr
+      - run: npm ci
+      - uses: slim-hq/slim/action/upstream@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```

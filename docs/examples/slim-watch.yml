@@ -1,6 +1,6 @@
-# Consumer example: weekly watch using the published CLI.
+# Consumer example: weekly watch using the published upstream Action.
 # This repository's dogfood workflow is .github/workflows/slim-upstream.yml
-# (build dist, SLIM_REQUIRE_DIST, ./action/upstream).
+# (npm run build, then ./action/upstream).
 name: slim-watch
 on:
   schedule:
@@ -17,7 +17,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22.18"
-      - run: npx --yes slim@1 watch --pr
+      - run: npm ci
+      - uses: slim-hq/slim/action/upstream@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - if: failure()

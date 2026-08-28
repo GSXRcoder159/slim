@@ -8,8 +8,6 @@ on:
 jobs:
   upstream:
     runs-on: ubuntu-latest
-    env:
-      SLIM_REQUIRE_DIST: "1"
     permissions:
       contents: write
       pull-requests: write

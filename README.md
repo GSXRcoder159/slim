@@ -35,6 +35,7 @@ slim scan [dir] [--json]
 slim inspect <pkg> [--json] [--allow-unknown]
 slim replace <pkg> [--budget-ms 30000] [--no-trace] [--no-pr] [--dry-run] [--keep-original] [--no-install] [--allow-unknown] [--force] [--out src/slim] [--llm] [--template-only] [--max-attempts 3] [--allow-flaky] [--workers n] [--seed n]
 slim check [pkg] [--json]
+slim bloat
 slim upstream [--pr] [--json]
 slim watch                  # alias of upstream
 slim doctor [--strict] [--json]
@@ -42,7 +43,13 @@ slim doctor [--strict] [--json]
 
 Exit codes: `0` ok · `1` fail · `2` usage · `3` refused / no catalog and no LLM key · `4` environment
 
-`--json` is not global. It is supported on `scan`, `inspect`, `check`, `upstream`/`watch`, and `doctor`. `replace --json` is usage (exit 2). The advertised surface is [`docs/support-inventory.json`](docs/support-inventory.json).
+`--json` is not global. It is supported on `scan`, `inspect`, `check`, `upstream`/`watch`, and `doctor`. `replace --json` and `bloat --json` are usage (exit 2). The advertised surface is [`docs/support-inventory.json`](docs/support-inventory.json).
+
+## GitHub Actions
+
+Published Actions (`slim-hq/slim/action/check@v1`, `bloat`, `upstream`) run only compiled distributable code. Missing or stale `dist/` is exit 4, not a source fallback.
+
+Every consumer workflow needs checkout, Node `>=22.18`, and `npm ci` before `uses:`. Copy [`docs/examples/slim-check.yml`](docs/examples/slim-check.yml), [`slim-bloat.yml`](docs/examples/slim-bloat.yml), and [`slim-watch.yml`](docs/examples/slim-watch.yml). The upstream Action needs `contents: write` and `pull-requests: write` plus `GITHUB_TOKEN` when it opens a PR.
 
 ## How it works
 
@@ -81,7 +88,7 @@ The generator receives envelope JSON plus public `.d.ts` / README **only**, and 
 
 LLM slices pass the same AST, export-contract, size, fuzz, standing-test, and evidence gates as catalog slices. Generated `Object.setPrototypeOf`, `__proto__` assignment, and `Object.defineProperty` on `*.prototype` fail before any project write. Catalog `defineData` may still define an own `__proto__` data property on a user object (hardening, not prototype mutation). Provider HTTP failures (timeout, 429, 5xx) exit 4. Unsafe or exhausted repairs exit 1. Nothing is written to the project until fuzz passes. Evidence records provider, model, prompt hash, attempts, and summarized counterexamples — never API keys.
 
-Live packed `replace --llm` proof for advertised providers is `SLIM_LLM_LIVE=1` plus the matching API key. Live packed `upstream` proof for advertised OSV and npm-registry sources is `SLIM_UPSTREAM_LIVE=1`. Live packed `replace` PR proof is `SLIM_PR_LIVE=1` (GitHub CLI with repo create/push/PR plus `delete_repo`, or `SLIM_PR_TRANSFER_OWNER`) and `SLIM_RECEIPTS_DIR` for the receipt. Missing credentials or missing current receipts fail `npm run qualify`; they do not vanish from `npm test`.
+Live packed `replace --llm` proof for advertised providers is `SLIM_LLM_LIVE=1` plus the matching API key. Live packed `upstream` proof for advertised OSV and npm-registry sources is `SLIM_UPSTREAM_LIVE=1`. Live packed `replace` PR proof is `SLIM_PR_LIVE=1` (GitHub CLI with repo create/push/PR plus `delete_repo`, or `SLIM_PR_TRANSFER_OWNER`) and `SLIM_RECEIPTS_DIR` for the receipt. Live packed Action proof for advertised check/bloat/upstream Actions is `SLIM_ACTION_LIVE=1` (same GitHub CLI plus a disposable consumer workflow on every advertised OS/Node cell). Missing credentials or missing current receipts fail `npm run qualify`; they do not vanish from `npm test`.
 
 ## Vitest
 
