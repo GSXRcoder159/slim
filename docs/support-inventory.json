@@ -108,7 +108,8 @@
       "docs": [
         "docs/help.txt",
         "docs/dx.md",
-        "README.md"
+        "README.md",
+        "docs/help-commands.txt"
       ],
       "checkId": "test/cli.test.ts",
       "receiptClass": "local"
@@ -1449,7 +1450,8 @@
       "name": "check",
       "docs": [
         "action/check/action.yml",
-        "docs/dx.md"
+        "docs/dx.md",
+        "docs/examples/slim-check.yml"
       ],
       "checkId": "test/github/action-live.test.ts",
       "receiptClass": "live"
@@ -1460,7 +1462,8 @@
       "name": "bloat",
       "docs": [
         "action/bloat/action.yml",
-        "docs/dx.md"
+        "docs/dx.md",
+        "docs/examples/slim-bloat.yml"
       ],
       "checkId": "test/github/action-live.test.ts",
       "receiptClass": "live"
@@ -1471,7 +1474,8 @@
       "name": "upstream",
       "docs": [
         "action/upstream/action.yml",
-        "docs/dx.md"
+        "docs/dx.md",
+        "docs/examples/slim-watch.yml"
       ],
       "checkId": "test/github/action-live.test.ts",
       "receiptClass": "live"

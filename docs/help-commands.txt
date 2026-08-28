@@ -74,11 +74,11 @@ replacement. Ignores devDependencies and import sites. No --json.
 Exit 0 when none are found. Exit 1 when any remain.
 Example:  slim bloat
 ------------------------------------------------------------------------
-slim watch — see if upstream advisories/releases touch your slice
+slim upstream — see if upstream advisories/releases touch your slice
 
 Usage:
-  slim watch
-  slim upstream                (alias)
+  slim upstream [--pr] [--json]
+  slim watch                   (alias of upstream)
 
       --pr               Open a PR if a slice is exposed or unmapped
       --json             One schema-valid document on stdout (docs/upstream.schema.json)

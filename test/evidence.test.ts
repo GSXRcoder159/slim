@@ -284,6 +284,26 @@ test("writeEvidence records evidence hash and module digest in markdown", () => 
   assert.match(md, new RegExp(`Module digest: \`${moduleDigest}\``));
 });
 
+test("writeEvidence hashes moduleSource when the slice is not on disk yet", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-ev-src-"));
+  const source = "export function get() { return 2; }\n";
+  const { mdPath } = writeEvidence({
+    root,
+    env: env(),
+    replacementBytes: Buffer.byteLength(source),
+    originalMin: 1000,
+    fuzz,
+    catalogIds: ["lodash.get"],
+    coverageHoles: [],
+    bundle: null,
+    revert: sampleRevert(),
+    moduleSource: source,
+  });
+  const md = readFileSync(mdPath, "utf8");
+  const moduleDigest = createHash("sha256").update(source).digest("hex");
+  assert.match(md, new RegExp(`Module digest: \`${moduleDigest}\``));
+});
+
 
 test("findBundleEntry reads wrangler.toml main", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-bdl-"));

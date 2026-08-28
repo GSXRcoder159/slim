@@ -80,6 +80,54 @@ export async function measureClaims(root = ROOT): Promise<ClaimsDoc> {
   };
 }
 
+export function assertClaimsCurrent(committed: ClaimsDoc, live: ClaimsDoc): void {
+  if (committed.slimVersion !== live.slimVersion) {
+    throw new Error(`stale measurements slimVersion ${committed.slimVersion} !== ${live.slimVersion}`);
+  }
+  const sliceC = committed.files.goldenLodashSlice;
+  const sliceL = live.files.goldenLodashSlice;
+  if (!sliceC || !sliceL) throw new Error("missing goldenLodashSlice");
+  if (sliceC.bytes.provenance !== "measured" || sliceL.bytes.provenance !== "measured") {
+    throw new Error("goldenLodashSlice.bytes provenance must be measured");
+  }
+  if (sliceC.bytes.value !== sliceL.bytes.value) {
+    throw new Error(`stale goldenLodashSlice.bytes ${sliceC.bytes.value} !== ${sliceL.bytes.value}`);
+  }
+  if (sliceC.gzipBytes.provenance !== "measured" || sliceL.gzipBytes.provenance !== "measured") {
+    throw new Error("goldenLodashSlice.gzipBytes provenance must be measured");
+  }
+  if (sliceC.gzipBytes.value !== sliceL.gzipBytes.value) {
+    throw new Error(`stale goldenLodashSlice.gzip ${sliceC.gzipBytes.value} !== ${sliceL.gzipBytes.value}`);
+  }
+  if (sliceC.parseNs.provenance !== "measured" || !(sliceC.parseNs.value > 0)) {
+    throw new Error("goldenLodashSlice.parseNs must be measured with value > 0");
+  }
+  if (sliceL.parseNs.provenance !== "measured" || !(sliceL.parseNs.value > 0)) {
+    throw new Error("live goldenLodashSlice.parseNs must be measured with value > 0");
+  }
+  if (committed.estimatedOriginalMin.lodash.provenance !== "estimated") {
+    throw new Error("estimatedOriginalMin.lodash provenance must be estimated");
+  }
+  if (committed.estimatedOriginalMin.lodash.value !== live.estimatedOriginalMin.lodash.value) {
+    throw new Error(
+      `stale estimatedOriginalMin ${committed.estimatedOriginalMin.lodash.value} !== ${live.estimatedOriginalMin.lodash.value}`,
+    );
+  }
+  const oracleC = committed.files.lodashOracleEntry;
+  const oracleL = live.files.lodashOracleEntry;
+  if (oracleC && oracleL) {
+    if (oracleC.bytes.provenance !== "measured" || oracleC.gzipBytes.provenance !== "measured") {
+      throw new Error("lodashOracleEntry provenance must be measured");
+    }
+    if (oracleC.bytes.value !== oracleL.bytes.value) {
+      throw new Error(`stale lodashOracleEntry.bytes ${oracleC.bytes.value} !== ${oracleL.bytes.value}`);
+    }
+    if (oracleC.gzipBytes.value !== oracleL.gzipBytes.value) {
+      throw new Error(`stale lodashOracleEntry.gzip ${oracleC.gzipBytes.value} !== ${oracleL.gzipBytes.value}`);
+    }
+  }
+}
+
 export function writeClaims(doc: ClaimsDoc, root = ROOT): string {
   const out = join(root, "docs/measurements.json");
   writeFileSync(out, JSON.stringify(doc, null, 2) + "\n");

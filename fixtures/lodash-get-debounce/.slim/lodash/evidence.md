@@ -14,10 +14,12 @@ Differential fuzzing over the inferred envelope is strong evidence, not proof.
 - Unknowns: 0
 - Catalog: lodash.get, lodash.debounce
 - Envelope hash: `217c102e5c34a74ba017061f1a5574a2ada6cd6a6497e6797e6eb97eafa706c4`
+- Evidence hash: `b79e20bfa9eeda8db25b2d4b7bcf3b7f13124d6b46c34450c560f0db56841ba1`
+- Module digest: `0f98884df95f6c2d6151847b635b54318e2b031f112ded8047f9e1019a07c366`
 
 ## 3. Byte delta
 
-71000 B estimated original min → 6981 B replacement
+71000 B estimated original min → 6997 B replacement
 
 ## 4. Edge
 
@@ -26,13 +28,13 @@ Cloudflare isolate CPU is a vendor startup budget. Slim does not publish a measu
 
 ## 5. Fuzz
 
-- cases: 1771205
-- comparisons: 1771225
+- cases: 30023
+- comparisons: 30043
 - timerCases: 10
 - traces replayed: 12
 - disagreements: 0
-- wall: 30005 ms
-- seed: 141647386
+- wall: 182 ms
+- seed: 1
 
 ## 6. Coverage holes
 

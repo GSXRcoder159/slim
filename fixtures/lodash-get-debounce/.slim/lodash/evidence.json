@@ -16,16 +16,16 @@
   "unknowns": 0,
   "byteDelta": {
     "originalMin": 71000,
-    "replacement": 6981,
+    "replacement": 6997,
     "gzipOriginal": 25560
   },
   "fuzz": {
-    "cases": 1771205,
-    "comparisons": 1771225,
+    "cases": 30023,
+    "comparisons": 30043,
     "timerCases": 10,
     "tracesReplayed": 12,
-    "wallMs": 30005,
-    "seed": 141647386,
+    "wallMs": 182,
+    "seed": 1,
     "disagreements": 0
   },
   "coverageHoles": [

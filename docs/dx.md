@@ -113,7 +113,7 @@ Steps, in order, stop on first failure. After the first project write, failure *
 7. Write slice (and a `.cjs` companion when CJS `require()` sites exist). Rewrite imports/requires to the slice. Remove only the replaced package and family siblings that have import sites in this envelope.
 8. Refresh the lockfile with `npm install` / `pnpm install` / `yarn install` / `bun install`. Package-manager caches go to a temp dir (`os.tmpdir()/slim-pm-cache`); Slim does not create a store inside the target unless the project already had one. Failure → exit 1 (or 4 if the package manager is missing) and rollback, then a frozen install to restore `node_modules`. `--no-install` skips this. `--keep-original` skips package.json and lockfile changes.
 9. Write evidence (including revert steps), standing tests, manifest, envelope. Run merge-gate (`testCommand` or `scripts.test`). Failure → rollback.
-10. Unless `--no-pr`: after merge-gate, create `slim/<pkg>` from `HEAD` without switching the user's branch or writing `.git/index`. Cross-check title, body (package, versions, envelope/evidence/module digests, fuzz stats), files, base, head, and labels (`slim`, `slim:replace`) against the accepted evidence before any push. Commit only Slim files, `git push` without `--force`, then `gh pr create --repo --base --head --label` or GitHub REST with `GITHUB_TOKEN`/`GH_TOKEN`. PRs target origin (not a fork parent). Local or remote branch collision, commit failure, push failure, and `gh`/REST failure are nonzero; the user's branch and index stay recoverable. Push failure deletes the local Slim branch; PR API failure also deletes the remote Slim branch. No `gh` and no token → exit 4 after local writes, with no git refs created. `--no-pr` performs no branch, commit, push, or network.
+10. Unless `--no-pr`: after merge-gate, create `slim/<fileBase(pkg)>` from `HEAD` without switching the user's branch or writing `.git/index`. `fileBase` strips a leading `@` and replaces `/` with `-` (`lodash` → `slim/lodash`, `@scope/name` → `slim/scope-name`). Cross-check title, body (package, versions, envelope/evidence/module digests, fuzz stats), files, base, head, and labels (`slim`, `slim:replace`) against the accepted evidence before any push. Commit only Slim files, `git push` without `--force`, then `gh pr create --repo --base --head --label` or GitHub REST with `GITHUB_TOKEN`/`GH_TOKEN`. PRs target origin (not a fork parent). Local or remote branch collision, commit failure, push failure, and `gh`/REST failure are nonzero; the user's branch and index stay recoverable. Push failure deletes the local Slim branch; PR API failure also deletes the remote Slim branch. No `gh` and no token → exit 4 after local writes, with no git refs created. `--no-pr` performs no branch, commit, push, or network.
 
 Default without `--no-pr`: attempt a PR after a successful merge-gate. There is no TTY confirm and no `--yes` / `--no-commit` flag.
 
@@ -143,7 +143,7 @@ JSON `{ schemaVersion, ok, exit, status, packages[] }` includes per-package `dri
 
 No network. No `--json`. Scans `package.json` `dependencies` for `BLOAT_PACKAGES` without a recorded Slim replacement. `devDependencies` and import-only uses are ignored. Exit 0 prints `slim-bloat: ok`. Exit 1 lists the fat production deps. Same command the bloat Action runs.
 
-### `slim watch`  (alias `slim upstream`)
+### `slim upstream`  (`watch` is the alias)
 
 ```
     --pr                Open a PR if a slice is exposed or unmapped
@@ -221,10 +221,11 @@ lodash@4.17.21  MIT  71.0 kB min / 25.8 kB gz
     debounce leading, maxWait
     get path as function
 
-  size (est.)
-    package:     71.0 kB min  →  ~1.8 kB
-    Worker gzip / cold-start CPU: not measured by Slim (vendor isolate budget). See docs/measurements.json for Node parse/size of the golden slice.
-    Lambda unpacked, if you also ship this: −1.4 MB node_modules/lodash
+  size (measured Node parse/size of the golden slice; see docs/measurements.json)
+    package:     71.0 kB estimated original min  →  6997 B / 2125 B gzip replacement
+    Worker gzip / cold-start CPU: not measured by Slim (vendor isolate budget).
+    Unbundled Lambda `node_modules/lodash` directory size is not a Slim-published measurement.
+    Oracle `lodash.js` bytes/gzip live in docs/measurements.json when lodash is installed.
 
   next:  slim replace lodash
 ```
@@ -235,7 +236,7 @@ lodash@4.17.21  MIT  71.0 kB min / 25.8 kB gz
 $ slim replace lodash
 envelope         get, debounce
 generate         src/slim/lodash.ts  (~250 lines)
-oracle fuzz      200/200 match lodash@4.17.21
+oracle fuzz      (illustrative n/n; golden evidence.json is the receipt)
 standing tests   12 pass
 project tests    npm test  (3 pass)
 imports          src/handler.ts
@@ -247,7 +248,7 @@ package.json     - lodash
   .slim/lodash/evidence.md
 
 Open PR after merge-gate (no TTY confirm)
-branch  slim/lodash
+branch  slim/lodash          (slim/<fileBase(pkg)>; scoped packages become slim/scope-name)
 pr      https://github.com/acme/edge-api/pull/842
 
 Read .slim/lodash/evidence.md (~90s) and src/slim/lodash.ts
@@ -262,7 +263,7 @@ See §8. They open `.slim/lodash/evidence.md`, then the ~250-line file. The PR b
 
 Workers: isolate CPU is a **vendor** startup budget. Slim does not publish a measured Worker gzip or cold-start number. Node parse/size receipts: [`docs/measurements.json`](./measurements.json).
 
-Lambda: **bundled** (esbuild) behaves like Workers. **Unbundled** `node_modules` is unzip + V8 compile; deleting lodash is ~1.4 MB unpacked when that path applies.
+Lambda: **bundled** (esbuild) behaves like Workers. **Unbundled** `node_modules` is unzip + V8 compile. Slim publishes measured `lodash.js` bytes in [`docs/measurements.json`](./measurements.json) when that file is installed; it does not publish a full `node_modules/lodash` directory size.
 
 v1 prints estimated original min and measured replacement bytes in evidence. No “50% faster p95.” No invented Worker gzip delta.
 
@@ -276,7 +277,7 @@ v1 prints estimated original min and measured replacement bytes in evidence. No 
 
 Three composite actions (`check`, `bloat`, `upstream`) wrap the packed CLI via `action/run.mjs`. They execute only compiled `dist/github/*-action.js` whose SHA-256 (`actionSha256` in `dist/.slim-build.json`) matches the Action distributable. Missing or stale compiled files exit 4. There is no `--experimental-strip-types` source fallback.
 
-Published `uses: slim-hq/slim/action/check@v1` requires the git ref to contain that compiled `dist/` (the same file set as `npm pack`). This repository gitignores `dist/`; dogfood workflows run `npm run build` then `uses: ./action/*`. A published tag without `dist/` is explicit non-success, not a silent source downgrade.
+Published `uses: slim-hq/slim/action/check@v1` requires the git ref to contain that compiled `dist/` (the same file set as `npm pack`). This repository gitignores `dist/`; dogfood workflows run `npm run build` then `uses: ./action/*`. A published tag without `dist/` is explicit non-success, not a silent source downgrade. The published upstream Action always sets `SLIM_UPSTREAM_PR=1` (opens a PR when a slice is exposed or unmapped). The CLI `--pr` flag remains optional.
 
 Consumers must check out the project, set up Node >= 22.18, and install the project (`npm ci`) so `typescript` is resolvable. Copy [`docs/examples/slim-check.yml`](./examples/slim-check.yml), [`slim-bloat.yml`](./examples/slim-bloat.yml), and [`slim-watch.yml`](./examples/slim-watch.yml).
 
@@ -324,9 +325,9 @@ jobs:
 
 Same semantics as `slim bloat`: production `BLOAT_PACKAGES` without a Slim replacement fail the job (exit 1). No `fail:` input. No PR comment.
 
-### Watch workflow (immune system)
+### Watch workflow
 
-This repository dogfoods `.github/workflows/slim-upstream.yml` (`npm run build`, `./action/upstream`). Consumer template: `docs/examples/slim-watch.yml`. See §9.
+This repository dogfoods `.github/workflows/slim-upstream.yml` (`npm run build`, `./action/upstream`, Monday `0 8 * * 1`). Consumer template: `docs/examples/slim-watch.yml` (`uses: slim-hq/slim/action/upstream@v1`, Monday `0 14 * * 1`, `GITHUB_TOKEN`). The cron values are independent schedules, not a product contract.
 
 ---
 
@@ -358,7 +359,7 @@ Sample: [`evidence.lodash.sample.md`](./evidence.lodash.sample.md).
 
 ---
 
-## 9. Upstream immune system (no SaaS)
+## 9. Upstream watch (no SaaS)
 
 Slim never phones home. Watch uses public APIs from the machine that runs it (your laptop or GitHub-hosted runner).
 
@@ -436,12 +437,12 @@ v1 implements the **full core loop**: envelope, generate, fuzz, PR, standing tes
 
 | In v1 | Later (same CLI, wider envelopes) |
 | --- | --- |
-| All 6 commands + aliases + exit codes above | `slim replace --all` (dangerous; not default) |
+| Seven commands (`scan`, `inspect`, `replace`, `check`, `bloat`, `upstream`, `doctor`) plus `watch` alias and the exit codes above | `slim replace --all` (dangerous; not default) |
 | Catalog envelopes in [`packages.md`](./packages.md) | moment locales, js-yaml tags, markdown, ajv, AES, path-to-regexp |
 | Synthesize + oracle fuzz | Extract-from-upstream mode when the method file is already small |
-| Call-site scanner without TypeScript as a dependency | Use the project’s `typescript` if present |
+| Call-site scanner using the **project’s** `typescript`; Slim itself has zero runtime deps | optional bundled parser |
 | `src/slim` + optional `slim.json` | package.json `"slim"` key, workspaces |
-| Actions: check, bloat, watch | IDE, language besides JS/TS, axios→fetch rewriter |
+| Actions: check, bloat, upstream | IDE, language besides JS/TS, axios→fetch rewriter |
 | Zero production deps for Slim itself | still zero, if we can help it |
 
 Out of scope on purpose: billing, accounts, a hosted slice registry, auto-merge, rewriting HTTP clients, top-10k corpus scoring, merged-PR pricing, enterprise licensing, PDF generation, Node 26 CI.

@@ -32,3 +32,15 @@ jobs:
           node ../../dist/main.js check
       - name: n-gram similarity gate
         run: node --experimental-strip-types scripts/similarity-gate.ts
+
+  golden-refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+      - run: npm ci
+      - run: npm run build
+      - run: npm run refresh:golden -- --check

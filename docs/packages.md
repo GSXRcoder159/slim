@@ -22,7 +22,7 @@ Shipped catalog packages only. Slice sizes are estimates except where `docs/meas
 
 | Package | Typical slice | Original min / gz | Slim (est.) | Hardness |
 | --- | --- | --- | --- | --- |
-| **lodash** (+ `lodash-es`, per-method packages, `underscore`) | `get`, `pick`, `debounce` | 71.0 kB / 25.8 kB (`4.17.21`) | ~1.8 kB / 0.9 kB | easy–med |
+| **lodash** (+ `lodash-es`, per-method packages, `underscore`) | `get`, `pick`, `debounce` | 71.0 kB / 25.8 kB (`4.17.21`) | 6997 B / 2125 B gzip (`measured`, golden `get`+`debounce`) | easy–med |
 | **whatwg-url** (`url-parse` → same) | `URL` / `URLSearchParams` | 470.9 kB / 168.5 kB | **0** (platform `URL`) | easy |
 | **mime-types** (`mime-db`, `mime`) | `lookup` / `extension` allowlist | 162.5 kB / 24.1 kB | ~0.4 kB | easy |
 | **bluebird** | `resolve`, `reject`, `all`, `race`, `delay`, `promisify` | 79.0 kB / 22.4 kB | ~0.8 kB | easy |

@@ -28,13 +28,13 @@ slim/
     lodash-dynamic-refuse/ native-addon-refuse/
   action/                   # check, bloat, upstream composites → action/run.mjs
   docs/                     # dx, packages, schemas, examples
-  scripts/                  # build.mjs (wipe dist, tsc, catalog copy, stamp), similarity-gate, refresh-golden, measure-claims
-  .github/workflows/        # ci (OS × Node matrix), release, slim-check, slim-bloat, slim-upstream
+  scripts/                  # build.mjs, similarity-gate, refresh-golden, measure-claims, qualify-receipts
+  .github/workflows/        # ci (OS × Node matrix + golden-refresh), release, slim-check, slim-bloat, slim-upstream
 ```
 
-TypeScript compiles to `dist/` via `npm run build` (`scripts/build.mjs` runs `tsc` with `noEmitOnError`, deletes stale outputs, copies catalog `.ts` sources, writes `dist/.slim-build.json`). `"type": "module"`. `package.json` `"files"` ships `dist`, `action/`, root `slim.schema.json`, `docs/*.schema.json`, `LICENSE`, `README.md`, `CHANGELOG.md`. Tests, fixtures, and `src/` are not packed. Do not commit `dist/` or `*.tgz`.
+TypeScript compiles to `dist/` via `npm run build` (`scripts/build.mjs` runs `tsc` with `noEmitOnError`, deletes stale outputs, copies catalog `.ts` sources, writes `dist/.slim-build.json`). `"type": "module"`. `package.json` `"files"` ships `dist`, `action/`, root `slim.schema.json`, `docs/*.schema.json`, `docs/support-inventory.json`, `LICENSE`, `README.md`, `CHANGELOG.md`. Tests, fixtures, and `src/` are not packed. Do not commit `dist/` or `*.tgz`.
 
-Fixtures are mini-apps. Tests invoke `dist/main.js` or `src/main.ts` under `--experimental-strip-types`.
+Fixtures are mini-apps. Tests invoke `dist/main.js` or `src/main.ts` under `--experimental-strip-types`. The golden Worker fixture is `fixtures/lodash-get-debounce/`. Declared refresh inputs live in `.slim/refresh-inputs.json`. `npm run refresh:golden` rewrites that fixture with `--template-only --seed 1 --workers 1 --budget-ms 30000`. `npm run refresh:golden -- --check` refreshes twice in temp dirs and fails if artifacts are not equivalent. `npm run measure:claims` rewrites `docs/measurements.json`. CI runs the check job and `npm test` (docs + measurement stale gates).
 
 ---
 
@@ -70,7 +70,7 @@ Slice identity is `.slim/<pkg>/envelope.json` plus the module under `src/slim/`.
 
 - **LICENSE:** MIT for the CLI. Generated slices are SPDX MIT. Do not copy upstream LICENSE files into user trees. n-gram similarity is a CI heuristic, not a legal opinion.
 - **CONTRIBUTING / SECURITY / CODE_OF_CONDUCT:** as in those files. Report Slim bugs privately; a slice mismatch is a Slim bug.
-- **CI:** Linux, macOS, Windows × Node 22.18 and 24. Node 26 Current is not in CI until LTS.
+- **CI:** Linux, macOS, Windows × Node 22.18 and 24, plus a required `golden-refresh` job (`refresh:golden -- --check`). Node 26 Current is not in CI until LTS.
 - **Release:** tag `v*` → test, similarity, pack, `npm publish --dry-run`, sha256, then `npm publish --provenance`.
 - **Actions:** published `uses: slim-hq/slim/action/check@v1` (and bloat/upstream) run only compiled `dist/github/*-action.js`. Missing or stale distributable code exits 4. This repo gitignores `dist/`; dogfood workflows `npm run build` then `uses: ./action/*`. Published tags must include the compiled Action files.
 

@@ -327,6 +327,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
       env,
       replacementBytes: Buffer.byteLength(source),
       originalMin: originalSize.minBytes,
+      moduleSource: source,
       fuzz: {
         cases: report.cases,
         comparisons: report.comparisons,

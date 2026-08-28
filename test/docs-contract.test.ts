@@ -136,6 +136,54 @@ test("CI matrix is OS × Node 22.18 and 24", () => {
   assert.match(ci, /fail-fast:\s*false/);
 });
 
+test("CI runs golden-refresh --check on ubuntu Node 22.18", () => {
+  const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  assert.match(ci, /golden-refresh:/);
+  assert.match(ci, /refresh:golden -- --check/);
+  const job = ci.slice(ci.indexOf("golden-refresh:"));
+  assert.match(job, /ubuntu-latest/);
+  assert.match(job, /"22\.18"/);
+});
+
+test("public docs do not carry unsupported size, command, Action, or TypeScript claims", () => {
+  const files = [
+    join(ROOT, "README.md"),
+    join(ROOT, "docs/dx.md"),
+    join(ROOT, "docs/packages.md"),
+    join(ROOT, "docs/help-commands.txt"),
+    join(ROOT, "docs/help.txt"),
+    join(ROOT, "docs/repo.md"),
+  ];
+  const hits: string[] = [];
+  for (const f of files) {
+    const text = readFileSync(f, "utf8");
+    if (/~1\.8 kB/.test(text)) hits.push(`${relative(ROOT, f)}: ~1.8 kB`);
+    if (/All 6 commands/.test(text)) hits.push(`${relative(ROOT, f)}: All 6 commands`);
+    if (/without TypeScript as a dependency/.test(text)) {
+      hits.push(`${relative(ROOT, f)}: without TypeScript as a dependency`);
+    }
+    if (/Actions:\s*check,\s*bloat,\s*watch/.test(text)) {
+      hits.push(`${relative(ROOT, f)}: Actions: check, bloat, watch`);
+    }
+    if (/~1\.4 MB/.test(text)) hits.push(`${relative(ROOT, f)}: ~1.4 MB`);
+    if (/immune system/i.test(text)) hits.push(`${relative(ROOT, f)}: immune system`);
+  }
+  assert.deepEqual(hits, []);
+});
+
+test("help-commands names watch as the alias of upstream", () => {
+  const text = readFileSync(join(ROOT, "docs/help-commands.txt"), "utf8");
+  assert.match(text, /slim upstream —/);
+  assert.match(text, /slim watch\s+\(alias of upstream\)/);
+  assert.doesNotMatch(text, /slim upstream\s+\(alias\)/);
+});
+
+test("LLM prompt does not claim not-derived", () => {
+  const prompt = readFileSync(join(ROOT, "src/generate/prompt.ts"), "utf8");
+  assert.doesNotMatch(prompt, /not derived/i);
+});
+
+
 test("release qualifies before provenance publish", () => {
   const rel = readFileSync(join(ROOT, ".github/workflows/release.yml"), "utf8");
   assert.match(rel, /npm test/);

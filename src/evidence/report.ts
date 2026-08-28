@@ -66,6 +66,7 @@ export function writeEvidence(opts: {
   bundle?: BundleDelta | null;
   revert: RevertPlan;
   generation?: Partial<GenerationEvidence>;
+  moduleSource?: string | Buffer;
 }): { mdPath: string; jsonPath: string; residualRisk: string[] } {
   const dir = join(opts.root, ".slim", opts.env.package.name);
   mkdirSync(dir, { recursive: true });
@@ -99,10 +100,15 @@ export function writeEvidence(opts: {
   const mdPath = join(dir, "evidence.md");
   writeFileSync(jsonPath, JSON.stringify(json, null, 2) + "\n");
   const evidenceHash = createHash("sha256").update(readFileSync(jsonPath)).digest("hex");
-  const moduleAbs = join(opts.root, opts.revert.module);
-  const moduleDigest = existsSync(moduleAbs)
-    ? createHash("sha256").update(readFileSync(moduleAbs)).digest("hex")
-    : undefined;
+  const moduleDigest = (() => {
+    if (opts.moduleSource !== undefined) {
+      return createHash("sha256").update(opts.moduleSource).digest("hex");
+    }
+    const moduleAbs = join(opts.root, opts.revert.module);
+    return existsSync(moduleAbs)
+      ? createHash("sha256").update(readFileSync(moduleAbs)).digest("hex")
+      : undefined;
+  })();
   const md = renderEvidenceMd(json, opts.env, opts.catalogIds, { evidenceHash, moduleDigest });
   writeFileSync(mdPath, md);
   return { mdPath, jsonPath, residualRisk: residual };

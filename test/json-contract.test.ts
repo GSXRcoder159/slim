@@ -217,14 +217,15 @@ test("docs/help-commands check has --json and not --update-envelope", () => {
   assert.ok(section.split("\n").length <= 40, `check help is ${section.split("\n").length} lines`);
 });
 
-test("docs/help-commands watch documents incomplete state and no replacements", () => {
+test("docs/help-commands upstream documents incomplete state and no replacements", () => {
   const text = readFileSync(join(ROOT, "docs/help-commands.txt"), "utf8");
-  const start = text.indexOf("slim watch —");
+  const start = text.indexOf("slim upstream —");
   const end = text.indexOf("--------", start + 10);
   const section = text.slice(start, end === -1 ? undefined : end);
   assert.match(section, /no replacements/);
   assert.match(section, /malformed replacement state/);
-  assert.ok(section.split("\n").length <= 40, `watch help is ${section.split("\n").length} lines`);
+  assert.match(section, /slim watch\s+\(alias of upstream\)/);
+  assert.ok(section.split("\n").length <= 40, `upstream help is ${section.split("\n").length} lines`);
 });
 
 test("upstream --json with no manifest is incomplete-state, not not-exposed", async () => {
