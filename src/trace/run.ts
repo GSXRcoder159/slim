@@ -33,15 +33,23 @@ const HOST_TEST_ENV = [
   "VITEST_POOL_ID",
 ];
 
+function readEnvPath(env: NodeJS.ProcessEnv): string {
+  return env.PATH ?? env.Path ?? env.path ?? "";
+}
+
+function writeEnvPath(env: NodeJS.ProcessEnv, value: string): void {
+  delete env.Path;
+  delete env.path;
+  env.PATH = value;
+}
+
 export function withLocalBinPath(
   root: string,
   env: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
   const bin = join(root, "node_modules", ".bin");
-  const out: NodeJS.ProcessEnv = {
-    ...env,
-    PATH: `${bin}${delimiter}${env.PATH ?? ""}`,
-  };
+  const out: NodeJS.ProcessEnv = { ...env };
+  writeEnvPath(out, `${bin}${delimiter}${readEnvPath(out)}`);
   for (const k of HOST_TEST_ENV) delete out[k];
   return out;
 }

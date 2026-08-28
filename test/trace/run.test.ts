@@ -140,6 +140,16 @@ test("withLocalBinPath strips host test-runner IPC env", () => {
   assert.match(env.PATH ?? "", /node_modules[\\/]\.bin/);
 });
 
+test("withLocalBinPath keeps a Windows Path value on a single PATH key", () => {
+  const env = withLocalBinPath("C:\\app", {
+    Path: "C:\\Program Files\\nodejs;C:\\Windows\\system32",
+  });
+  assert.equal(env.Path, undefined);
+  assert.equal(env.path, undefined);
+  assert.match(env.PATH ?? "", /node_modules[\\/]\.bin/);
+  assert.match(env.PATH ?? "", /nodejs/);
+});
+
 test("nonzero test runner fails closed", () => {
   const dir = mkdtempSync(join(tmpdir(), "slim-run-fail-"));
   mkdirSync(join(dir, "src"), { recursive: true });
