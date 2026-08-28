@@ -60,11 +60,11 @@ Inventory of third-party packages (declared deps plus imported undeclared names)
 --json                One schema-valid document on stdout (docs/scan.schema.json)
 ```
 
-Optional `[dir]` is a project directory. Relative imports, absolute paths, URLs, Node builtins, and `file:`/`workspace:`/`link:`/`portal:` packages are omitted. `import type` / `export type` / type-only named bindings are not runtime sites; a declared package used only for types is `unused` with `typeOnlySites > 0`. `verdict` is `candidate` | `review` | `refuse` | `unused` — never `slim` or `closed`. Size `minBytes` provenance is `measured` (complete unpacked walk), `estimated` (known min table), `partial` (cap/unreadable/omitted), or `unknown`. `gzipBytes` is always a 0.36 estimate. Lockfile versions are `exact`, or `unknown` with `versionState` `range-only` / `malformed` / `unavailable`.
+Optional `[dir]` is a project directory. Relative imports, absolute paths, URLs, Node builtins, and `file:`/`workspace:`/`link:`/`portal:` packages are omitted. `import type` / `export type` / type-only named bindings are not runtime sites; a declared package used only for types is `unused` with `typeOnlySites > 0`. `verdict` is `candidate` | `review` | `refuse` | `unused` — never `slim` or `closed`. Size `minBytes` provenance is `measured` (complete unpacked walk, name not in the known min table), `estimated` (known min table after a complete install walk), `partial` (incomplete walk: cap, unreadable, omitted, broken or escaping link — including known-size packages; `sizeState` is `review`), or `unknown` (no install tree, including known-size packages; table `minBytes` may still be present). `gzipBytes` is always 0.36 × `minBytes` (a guess of the displayed min, not a second measurement). `sizeState: review` is measurement quality, not ranking `verdict: review`. Lockfile versions are `exact`, or `unknown` with `versionState` `range-only` / `malformed` / `unavailable`.
 
 Stdout (human): a table of every row including unused and undeclared, with size provenance and type-only notes. JSON: `{ schemaVersion: 2, lockfile, rows }` with no absolute `root`. No `--all`, `--min-size`, `--diff`, `--fail`, or `--limit`.
 
-Does not network. Unpacked or estimated size is local; missing size is `unknown`.
+Does not network. Size is local. A missing install is `unknown` provenance (catalog `minBytes` may still appear); an incomplete walk is `partial`, never `estimated` or `measured`.
 
 ### `slim inspect <pkg>`
 

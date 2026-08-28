@@ -776,6 +776,47 @@ test("scan reports partial provenance when the installed tree is unreadable", ()
   assert.match(formatScanHuman(report), /partial/);
 });
 
+test("scan reports partial not estimated for a known-size package with a broken install link", () => {
+  const root = mini({
+    "src/app.ts": `import { get } from "lodash";\nexport const a = get({}, "x");\n`,
+  });
+  const nm = join(root, "node_modules", "lodash");
+  mkdirSync(nm, { recursive: true });
+  writeFileSync(join(nm, "package.json"), JSON.stringify({ name: "lodash", version: "4.17.21" }));
+  writeFileSync(join(nm, "index.js"), "module.exports = {};\n");
+  symlinkSync(join(nm, "missing-target"), join(nm, "broken"));
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "lodash");
+  assert.ok(row);
+  assert.equal(row!.sizeProvenance, "partial");
+  assert.equal(row!.sizeState, "review");
+  assert.equal(row!.minBytes, 71_000);
+  assert.equal(row!.verdict, "candidate");
+  assert.match(row!.note, /symlink|unreadable/i);
+  const json = scanReportJson(report);
+  assert.ok(json.startsWith("{"));
+  const human = formatScanHuman(report);
+  const lodashLine = human.split("\n").find((line) => /^\s*lodash\b/.test(line) || line.startsWith("lodash"));
+  assert.ok(lodashLine);
+  assert.match(lodashLine!, /partial/);
+  assert.doesNotMatch(lodashLine!, /estimated/);
+});
+
+test("scan reports unknown not estimated for a known-size package with no install", () => {
+  const root = mini({
+    "src/app.ts": `import { get } from "lodash";\nexport const a = get({}, "x");\n`,
+  });
+  const report = scanProject(root);
+  const row = report.rows.find((r) => r.name === "lodash");
+  assert.ok(row);
+  assert.equal(row!.sizeProvenance, "unknown");
+  assert.equal(row!.sizeState, "unknown");
+  assert.equal(row!.minBytes, 71_000);
+  assert.equal(row!.verdict, "candidate");
+  assert.match(row!.note, /not installed/i);
+  scanReportJson(report);
+});
+
 test("scan sizeState does not copy ranking review over a complete measurement", () => {
   const imports = Array.from(
     { length: 12 },

@@ -167,7 +167,7 @@ export function scanProject(cwd = process.cwd()): ScanReport {
     const sizeProvenance: SizeProvenance = size.source;
     const sizeState: SizeState =
       verdict === "refuse" ? "refused" : sizeProvenance === "partial" ? "review" : sizeProvenance;
-    const note =
+    let note =
       refuse?.why ??
       (relation === "declared-unused" && typeOnlySites > 0
         ? "type-only imports only"
@@ -176,6 +176,9 @@ export function scanProject(cwd = process.cwd()): ScanReport {
           : relation === "imported-undeclared"
             ? "imported but not declared in package.json"
             : "");
+    if ((sizeProvenance === "partial" || sizeProvenance === "unknown") && size.reason) {
+      note = note ? `${note}; ${size.reason}` : size.reason;
+    }
     rows.push({
       name,
       family: fam?.family ?? name,

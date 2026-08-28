@@ -71,6 +71,38 @@ test("known-min packages stay estimated even when unpacked bytes exist", () => {
   assert.equal(size.minBytes, 71_000);
 });
 
+test("known-min packages stay partial when a dangling symlink blocks a complete walk", () => {
+  const project = mkdtempSync(join(tmpdir(), "slim-size-lodash-link-"));
+  const nm = join(project, "node_modules", "lodash");
+  mkdirSync(nm, { recursive: true });
+  writeFileSync(join(nm, "index.js"), "module.exports = {};\n");
+  symlinkSync(join(nm, "missing-target"), join(nm, "broken"));
+  const size = estimatePackageSize(project, "lodash");
+  assert.equal(size.source, "partial");
+  assert.equal(size.minBytes, 71_000);
+  assert.match(size.reason, /symlink|unreadable/i);
+});
+
+test("known-min packages stay partial when the walk hits the file cap", () => {
+  const project = mkdtempSync(join(tmpdir(), "slim-size-lodash-cap-"));
+  const nm = join(project, "node_modules", "lodash");
+  mkdirSync(nm, { recursive: true });
+  for (let i = 0; i < 8; i++) writeFileSync(join(nm, `f${i}.txt`), "xxxx");
+  const size = estimatePackageSize(project, "lodash", { capFiles: 2 });
+  assert.equal(size.source, "partial");
+  assert.equal(size.minBytes, 71_000);
+  assert.match(size.reason, /cap|limit/i);
+});
+
+test("known-min packages stay unknown when the install is missing", () => {
+  const project = mkdtempSync(join(tmpdir(), "slim-size-lodash-missing-"));
+  mkdirSync(join(project, "node_modules"), { recursive: true });
+  const size = estimatePackageSize(project, "lodash");
+  assert.equal(size.source, "unknown");
+  assert.equal(size.minBytes, 71_000);
+  assert.match(size.reason, /not installed/i);
+});
+
 test("missing install without a known min is unknown", () => {
   const project = mkdtempSync(join(tmpdir(), "slim-size-missing-"));
   mkdirSync(join(project, "node_modules"), { recursive: true });

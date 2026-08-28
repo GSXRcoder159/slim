@@ -29,6 +29,7 @@ export interface SizeEstimate {
   minBytes: number | null;
   source: "estimated" | "measured" | "unknown" | "partial";
   unpackedBytes: number | null;
+  reason: string;
 }
 
 export interface DirSize {
@@ -121,23 +122,22 @@ export function estimatePackageSize(
 ): SizeEstimate {
   const known = KNOWN_MIN_BYTES[name];
   const nm = join(projectRoot, "node_modules", name);
-  let unpacked: number | null = null;
-  let complete = true;
-  if (existsSync(nm)) {
-    const walked = dirSize(nm, opts.capFiles ?? 4000);
-    unpacked = walked.bytes;
-    complete = walked.complete;
+  if (!existsSync(nm)) {
+    return { minBytes: known ?? null, source: "unknown", unpackedBytes: null, reason: "not installed" };
+  }
+  const walked = dirSize(nm, opts.capFiles ?? 4000);
+  if (!walked.complete) {
+    return {
+      minBytes: known ?? walked.bytes,
+      source: "partial",
+      unpackedBytes: walked.bytes,
+      reason: walked.reason,
+    };
   }
   if (known != null) {
-    return { minBytes: known, source: "estimated", unpackedBytes: unpacked };
+    return { minBytes: known, source: "estimated", unpackedBytes: walked.bytes, reason: "" };
   }
-  if (unpacked != null && complete) {
-    return { minBytes: unpacked, source: "measured", unpackedBytes: unpacked };
-  }
-  if (unpacked != null) {
-    return { minBytes: unpacked, source: "partial", unpackedBytes: unpacked };
-  }
-  return { minBytes: null, source: "unknown", unpackedBytes: null };
+  return { minBytes: walked.bytes, source: "measured", unpackedBytes: walked.bytes, reason: "" };
 }
 
 export function gzipGuess(minBytes: number): number {
