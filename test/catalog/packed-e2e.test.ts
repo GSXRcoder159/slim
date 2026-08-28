@@ -407,7 +407,7 @@ test("parseURL runs", () => {
     assert.equal(existsSync(join(refuseUrl, "src/slim")), false);
     assert.equal(readFileSync(join(refuseUrl, "package.json"), "utf8"), beforeUrl);
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
-    rmSync(packDir, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    rmSync(packDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

@@ -35,12 +35,7 @@ jobs:
       - name: emit osNode receipt
         env:
           COPYFILE_DISABLE: "1"
-        run: |
-          node --experimental-strip-types scripts/emit-local-receipts.ts \
-            --only osNode \
-            --pack \
-            --commit "${{ github.sha }}" \
-            --receipts qualification/receipts
+        run: node --experimental-strip-types scripts/emit-local-receipts.ts --only osNode --pack --commit "${{ github.sha }}" --receipts qualification/receipts
       - uses: actions/upload-artifact@v4
         with:
           name: receipt-osNode-${{ matrix.os }}-${{ matrix.node }}
