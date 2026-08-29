@@ -23,7 +23,7 @@ export async function npmLatest(
     version?: unknown;
     "dist-tags"?: { latest?: unknown };
     versions?: unknown;
-    time?: { modified?: unknown };
+    time?: unknown;
   };
   const version =
     typeof rec["dist-tags"]?.latest === "string"
@@ -34,9 +34,22 @@ export async function npmLatest(
   if (!version) {
     return sourceErr("malformed", "npm registry response missing version");
   }
-  const versions = rec.versions && typeof rec.versions === "object" && !Array.isArray(rec.versions)
-    ? Object.keys(rec.versions as Record<string, unknown>)
-    : undefined;
-  const time = typeof rec.time?.modified === "string" ? rec.time.modified : undefined;
-  return sourceOk({ version, time, versions });
+  if (!rec.versions || typeof rec.versions !== "object" || Array.isArray(rec.versions)) {
+    return sourceErr("malformed", "npm registry versions is not an object");
+  }
+  const versions = Object.keys(rec.versions as Record<string, unknown>);
+  if (!versions.includes(version)) {
+    return sourceErr("malformed", "npm latest missing from versions");
+  }
+  if (!rec.time || typeof rec.time !== "object" || Array.isArray(rec.time)) {
+    return sourceErr("malformed", "npm registry time is not an object");
+  }
+  const modified = (rec.time as { modified?: unknown }).modified;
+  if (typeof modified !== "string" || !modified) {
+    return sourceErr("malformed", "npm registry time.modified is not a string");
+  }
+  if (Number.isNaN(Date.parse(modified))) {
+    return sourceErr("malformed", "npm registry time.modified is not a date");
+  }
+  return sourceOk({ version, time: modified, versions });
 }

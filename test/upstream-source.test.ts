@@ -101,10 +101,32 @@ test("queryOsv empty vulns is success with []", async () => {
   assert.deepEqual(r.value, []);
 });
 
-test("queryOsv missing vulns is success with []", async () => {
+test("queryOsv missing vulns is malformed, not an empty advisory set", async () => {
   const r = await queryOsv("lodash", "4.17.21", async () => jsonResponse(200, {}));
-  assert.equal(r.status, "success");
-  assert.deepEqual(r.value, []);
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /vulns/i);
+  assert.equal(r.value, undefined);
+});
+
+test("queryOsv null vulns is malformed", async () => {
+  const r = await queryOsv("lodash", "4.17.21", async () => jsonResponse(200, { vulns: null }));
+  assert.equal(r.status, "malformed");
+  assert.equal(r.value, undefined);
+});
+
+test("queryOsv empty-string vuln id is malformed", async () => {
+  const r = await queryOsv("lodash", "4.17.21", async () =>
+    jsonResponse(200, { vulns: [{ id: "", summary: "empty" }] }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /missing id/);
+  assert.equal(r.value, undefined);
+});
+
+test("queryOsv non-object vuln entry is malformed", async () => {
+  const r = await queryOsv("lodash", "4.17.21", async () => jsonResponse(200, { vulns: ["GHSA-x"] }));
+  assert.equal(r.status, "malformed");
+  assert.equal(r.value, undefined);
 });
 
 test("queryOsv returns advisories with affected ranges", async () => {
@@ -152,23 +174,143 @@ test("npmLatest non-string version is malformed", async () => {
   assert.equal(r.status, "malformed");
 });
 
-test("npmLatest success returns version and version list", async () => {
+test("npmLatest success returns version, versions, and time", async () => {
   const r = await npmLatest("lodash", async () =>
     jsonResponse(200, {
       "dist-tags": { latest: "4.17.21" },
       versions: { "4.17.20": {}, "4.17.21": {} },
-      time: { modified: "2020-01-01" },
+      time: { modified: "2020-01-01T00:00:00.000Z" },
     }),
   );
   assert.equal(r.status, "success");
   assert.equal(r.value?.version, "4.17.21");
   assert.deepEqual(r.value?.versions?.sort(), ["4.17.20", "4.17.21"]);
+  assert.equal(r.value?.time, "2020-01-01T00:00:00.000Z");
 });
 
-test("npmLatest /latest document with version field succeeds", async () => {
-  const r = await npmLatest("lodash", async () => jsonResponse(200, { version: "4.17.21", time: { modified: "t" } }));
+test("npmLatest /latest-style version fallback still requires versions and time", async () => {
+  const r = await npmLatest("lodash", async () =>
+    jsonResponse(200, {
+      version: "4.17.21",
+      versions: { "4.17.21": {} },
+      time: { modified: "2020-01-01T00:00:00.000Z" },
+    }),
+  );
   assert.equal(r.status, "success");
   assert.equal(r.value?.version, "4.17.21");
+});
+
+test("npmLatest missing versions is malformed", async () => {
+  const r = await npmLatest("lodash", async () =>
+    jsonResponse(200, { "dist-tags": { latest: "4.17.21" }, time: { modified: "2020-01-01T00:00:00.000Z" } }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /versions/i);
+  assert.equal(r.value, undefined);
+});
+
+test("npmLatest versions array is malformed", async () => {
+  const r = await npmLatest("lodash", async () =>
+    jsonResponse(200, {
+      "dist-tags": { latest: "4.17.21" },
+      versions: ["4.17.21"],
+      time: { modified: "2020-01-01T00:00:00.000Z" },
+    }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /versions/i);
+});
+
+test("npmLatest versions string is malformed", async () => {
+  const r = await npmLatest("lodash", async () =>
+    jsonResponse(200, {
+      "dist-tags": { latest: "4.17.21" },
+      versions: "4.17.21",
+      time: { modified: "2020-01-01T00:00:00.000Z" },
+    }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /versions/i);
+});
+
+test("npmLatest latest missing from versions is malformed", async () => {
+  const r = await npmLatest("lodash", async () =>
+    jsonResponse(200, {
+      "dist-tags": { latest: "4.17.21" },
+      versions: { "4.17.20": {} },
+      time: { modified: "2020-01-01T00:00:00.000Z" },
+    }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /versions/i);
+});
+
+test("npmLatest missing time is malformed", async () => {
+  const r = await npmLatest("lodash", async () =>
+    jsonResponse(200, { "dist-tags": { latest: "4.17.21" }, versions: { "4.17.21": {} } }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /time/i);
+});
+
+test("npmLatest time string is malformed", async () => {
+  const r = await npmLatest("lodash", async () =>
+    jsonResponse(200, {
+      "dist-tags": { latest: "4.17.21" },
+      versions: { "4.17.21": {} },
+      time: "2020-01-01T00:00:00.000Z",
+    }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /time/i);
+});
+
+test("npmLatest time array is malformed", async () => {
+  const r = await npmLatest("lodash", async () =>
+    jsonResponse(200, {
+      "dist-tags": { latest: "4.17.21" },
+      versions: { "4.17.21": {} },
+      time: ["2020-01-01T00:00:00.000Z"],
+    }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /time/i);
+});
+
+test("npmLatest non-string time.modified is malformed", async () => {
+  const r = await npmLatest("lodash", async () =>
+    jsonResponse(200, {
+      "dist-tags": { latest: "4.17.21" },
+      versions: { "4.17.21": {} },
+      time: { modified: 1 },
+    }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /time/i);
+});
+
+test("npmLatest empty time.modified is malformed", async () => {
+  const r = await npmLatest("lodash", async () =>
+    jsonResponse(200, {
+      "dist-tags": { latest: "4.17.21" },
+      versions: { "4.17.21": {} },
+      time: { modified: "" },
+    }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /time/i);
+});
+
+test("npmLatest unparseable time.modified is malformed", async () => {
+  const r = await npmLatest("lodash", async () =>
+    jsonResponse(200, {
+      "dist-tags": { latest: "4.17.21" },
+      versions: { "4.17.21": {} },
+      time: { modified: "not-a-date" },
+    }),
+  );
+  assert.equal(r.status, "malformed");
+  assert.match(r.detail, /time/i);
 });
 
 test("sourceOk / sourceErr helpers", () => {

@@ -9,7 +9,8 @@ import { ENVELOPE_VERSION, emptyHyrum, hashEnvelope, type Envelope } from "../sr
 import type { FuzzReport } from "../src/fuzz/run.ts";
 import { sliceExposure } from "../src/upstream/slice.ts";
 import { runUpstream, type UpstreamDeps } from "../src/upstream.ts";
-import type { OsvVuln } from "../src/upstream/osv.ts";
+import { queryOsv, type OsvVuln } from "../src/upstream/osv.ts";
+import { npmLatest } from "../src/upstream/npm.ts";
 import { sourceErr, sourceOk } from "../src/upstream/status.ts";
 import { minimalEvidence, minimalManifest, rebindEvidenceArtifacts } from "./helpers/documents.ts";
 
@@ -715,6 +716,206 @@ test("successful empty advisory set may print slice not exposed", async () => {
   );
   assert.equal(code, EXIT_OK);
   assert.match(stdout, /slice not exposed/);
+});
+
+function jsonResponse(status: number, body: unknown): Response {
+  const text = typeof body === "string" ? body : JSON.stringify(body);
+  return new Response(text, { status, headers: { "content-type": "application/json" } });
+}
+
+const PACKUMENT_PIN = {
+  "dist-tags": { latest: "4.17.21" },
+  versions: { "4.17.21": {} },
+  time: { modified: "2020-01-01T00:00:00.000Z" },
+};
+
+function fetchNpmOsv(npm: unknown, osv: unknown): typeof fetch {
+  return async (url) => {
+    const href = String(url);
+    if (href.includes("registry.npmjs.org")) {
+      if (typeof npm === "object" && npm && "status" in npm) {
+        const rec = npm as { status: number; body: unknown };
+        return jsonResponse(rec.status, rec.body);
+      }
+      return jsonResponse(200, npm);
+    }
+    if (osv === "timeout") {
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }
+    if (typeof osv === "object" && osv && "status" in osv && "body" in (osv as object)) {
+      const rec = osv as { status: number; body: unknown };
+      return jsonResponse(rec.status, rec.body);
+    }
+    return jsonResponse(200, osv);
+  };
+}
+
+function parserDeps(root: string, fetchImpl: typeof fetch): UpstreamDeps {
+  return baseDeps({
+    cwd: root,
+    npmLatest: (name) => npmLatest(name, fetchImpl),
+    queryOsv: (name, version) => queryOsv(name, version, fetchImpl),
+  });
+}
+
+test("parser missing OSV vulns folds to source-unavailable, never slice not exposed", async () => {
+  const { root } = writeFixture();
+  const fetchImpl = fetchNpmOsv(PACKUMENT_PIN, {});
+  const json = await capture(() =>
+    runUpstream(parseCli(["upstream", "--json"]), parserDeps(root, fetchImpl)),
+  );
+  const doc = assertBlockedSource(json, "osv", "malformed");
+  assert.match(doc.sources.osv.detail, /vulns/i);
+  const human = await capture(() => runUpstream(parseCli(["upstream"]), parserDeps(root, fetchImpl)));
+  assert.equal(human.code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(human.stdout + human.stderr), false);
+  assert.match(human.stderr, /osv:/i);
+  assert.match(human.stderr, /vulns/i);
+});
+
+test("parser empty OSV vulns array may print slice not exposed", async () => {
+  const { root } = writeFixture();
+  const fetchImpl = fetchNpmOsv(PACKUMENT_PIN, { vulns: [] });
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(parseCli(["upstream"]), parserDeps(root, fetchImpl)),
+  );
+  assert.equal(code, EXIT_OK);
+  assert.match(stdout, /slice not exposed/);
+  const json = await capture(() =>
+    runUpstream(parseCli(["upstream", "--json"]), parserDeps(root, fetchImpl)),
+  );
+  const doc = parseUpstream(json.stdout);
+  assert.equal(doc.conclusion, "not-exposed");
+  assert.equal(doc.sources.osv.status, "success");
+  assert.equal(doc.sources.npm.status, "success");
+  assert.equal(/slice not exposed/i.test(stderr), false);
+});
+
+test("parser npm versions array folds to malformed, never slice not exposed", async () => {
+  const { root } = writeFixture();
+  const fetchImpl = fetchNpmOsv(
+    { "dist-tags": { latest: "4.17.21" }, versions: ["4.17.21"], time: { modified: "2020-01-01T00:00:00.000Z" } },
+    { vulns: [] },
+  );
+  const json = await capture(() =>
+    runUpstream(parseCli(["upstream", "--json"]), parserDeps(root, fetchImpl)),
+  );
+  const doc = assertBlockedSource(json, "npm", "malformed");
+  assert.match(doc.sources.npm.detail, /versions/i);
+  const human = await capture(() => runUpstream(parseCli(["upstream"]), parserDeps(root, fetchImpl)));
+  assert.equal(human.code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(human.stdout + human.stderr), false);
+  assert.match(human.stderr, /npm:/i);
+  assert.match(human.stderr, /versions/i);
+});
+
+test("parser npm missing time folds to malformed, never slice not exposed", async () => {
+  const { root } = writeFixture();
+  const fetchImpl = fetchNpmOsv(
+    { "dist-tags": { latest: "4.17.21" }, versions: { "4.17.21": {} } },
+    { vulns: [] },
+  );
+  const json = await capture(() =>
+    runUpstream(parseCli(["upstream", "--json"]), parserDeps(root, fetchImpl)),
+  );
+  const doc = assertBlockedSource(json, "npm", "malformed");
+  assert.match(doc.sources.npm.detail, /time/i);
+  const human = await capture(() => runUpstream(parseCli(["upstream"]), parserDeps(root, fetchImpl)));
+  assert.equal(human.code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(human.stdout + human.stderr), false);
+  assert.match(human.stderr, /npm:/i);
+  assert.match(human.stderr, /time/i);
+});
+
+test("parser invalid JSON folds to malformed, never slice not exposed", async () => {
+  const { root } = writeFixture();
+  const fetchImpl: typeof fetch = async (url) => {
+    if (String(url).includes("registry.npmjs.org")) return jsonResponse(200, PACKUMENT_PIN);
+    return jsonResponse(200, "not-json");
+  };
+  const json = await capture(() =>
+    runUpstream(parseCli(["upstream", "--json"]), parserDeps(root, fetchImpl)),
+  );
+  const doc = assertBlockedSource(json, "osv", "malformed");
+  assert.match(doc.sources.osv.detail, /not JSON/);
+  const human = await capture(() => runUpstream(parseCli(["upstream"]), parserDeps(root, fetchImpl)));
+  assert.equal(human.code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(human.stdout + human.stderr), false);
+  assert.match(human.stderr, /osv:/i);
+});
+
+test("parser HTTP 503 is unavailable, distinct from timeout and malformed", async () => {
+  const { root } = writeFixture();
+  const fetchImpl = fetchNpmOsv(PACKUMENT_PIN, { status: 503, body: { error: "no" } });
+  const json = await capture(() =>
+    runUpstream(parseCli(["upstream", "--json"]), parserDeps(root, fetchImpl)),
+  );
+  const doc = assertBlockedSource(json, "osv", "unavailable");
+  assert.match(doc.sources.osv.detail, /HTTP 503/);
+  const human = await capture(() => runUpstream(parseCli(["upstream"]), parserDeps(root, fetchImpl)));
+  assert.equal(human.code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(human.stdout + human.stderr), false);
+  assert.match(human.stderr, /osv:/i);
+  assert.match(human.stderr, /HTTP 503/);
+});
+
+test("parser timeout is timeout, never slice not exposed", async () => {
+  const { root } = writeFixture();
+  const fetchImpl = fetchNpmOsv(PACKUMENT_PIN, "timeout");
+  const json = await capture(() =>
+    runUpstream(parseCli(["upstream", "--json"]), parserDeps(root, fetchImpl)),
+  );
+  const doc = assertBlockedSource(json, "osv", "timeout");
+  assert.match(doc.sources.osv.detail, /timeout/i);
+  const human = await capture(() => runUpstream(parseCli(["upstream"]), parserDeps(root, fetchImpl)));
+  assert.equal(human.code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(human.stdout + human.stderr), false);
+  assert.match(human.stderr, /osv:/i);
+  assert.match(human.stderr, /timeout/i);
+});
+
+test("parser latest older than pin is stale through npmLatest", async () => {
+  const { root } = writeFixture();
+  const fetchImpl = fetchNpmOsv(
+    {
+      "dist-tags": { latest: "4.17.0" },
+      versions: { "4.17.0": {}, "4.17.21": {} },
+      time: { modified: "2020-01-01T00:00:00.000Z" },
+    },
+    { vulns: [] },
+  );
+  const json = await capture(() =>
+    runUpstream(parseCli(["upstream", "--json"]), parserDeps(root, fetchImpl)),
+  );
+  const doc = assertBlockedSource(json, "npm", "stale");
+  assert.match(doc.sources.npm.detail, /older than pinned/);
+  const human = await capture(() => runUpstream(parseCli(["upstream"]), parserDeps(root, fetchImpl)));
+  assert.equal(human.code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(human.stdout + human.stderr), false);
+  assert.match(human.stderr, /npm:/i);
+  assert.match(human.stderr, /older than pinned/);
+});
+
+test("parser pin absent from versions is stale through npmLatest", async () => {
+  const { root } = writeFixture();
+  const fetchImpl = fetchNpmOsv(
+    {
+      "dist-tags": { latest: "4.17.22" },
+      versions: { "4.17.20": {}, "4.17.22": {} },
+      time: { modified: "2020-01-01T00:00:00.000Z" },
+    },
+    { vulns: [] },
+  );
+  const json = await capture(() =>
+    runUpstream(parseCli(["upstream", "--json"]), parserDeps(root, fetchImpl)),
+  );
+  const doc = assertBlockedSource(json, "npm", "stale");
+  assert.match(doc.sources.npm.detail, /absent from npm registry/);
+  const human = await capture(() => runUpstream(parseCli(["upstream"]), parserDeps(root, fetchImpl)));
+  assert.equal(human.code, EXIT_ENV);
+  assert.equal(/slice not exposed/i.test(human.stdout + human.stderr), false);
+  assert.match(human.stderr, /npm:/i);
+  assert.match(human.stderr, /absent/);
 });
 
 test("missing envelope blocks automatic action", async () => {

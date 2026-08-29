@@ -86,7 +86,7 @@ Usage:
       --json             One schema-valid document on stdout (docs/upstream.schema.json)
 
 Not a SaaS. Queries osv.dev and the npm registry from this machine.
-OSV/npm outage, malformed response, timeout, or stale version → exit 4.
+OSV/npm outage, missing/malformed vulns, malformed packument fields, timeout, or stale version → exit 4.
 Never prints "slice not exposed" when a source could not be determined.
 Missing replacement state → exit 1, `missing-state`. Malformed, escaping, or unsafe state → exit 1, `malformed-state`.
 Empty replacements print "no replacements" (exit 0).

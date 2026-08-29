@@ -150,7 +150,7 @@ test("writeReceipt rejects forbidden prompt payloads", () => {
 test("sourceReceipt is schema-valid with service identity", () => {
   const rec = sourceReceipt({
     service: "osv",
-    fixture: "ms-watch",
+    fixture: "request-watch",
     commit: COMMIT,
     npmDigest: NPM,
     startedAt: new Date("2026-08-27T14:00:00.000Z"),
@@ -214,7 +214,7 @@ test("qualify stale commit on npm-registry receipt fails closed", () => {
     npmEntry.id,
     sourceReceipt({
       service: "npm-registry",
-      fixture: "ms-watch",
+      fixture: "request-watch",
       commit: "d".repeat(40),
       npmDigest: NPM,
       startedAt: new Date("2026-08-27T14:00:00.000Z"),
@@ -241,7 +241,7 @@ test("qualify wrong service on OSV receipt fails closed", () => {
     osv.id,
     sourceReceipt({
       service: "npm-registry",
-      fixture: "ms-watch",
+      fixture: "request-watch",
       commit: COMMIT,
       npmDigest: NPM,
       startedAt: new Date("2026-08-27T14:00:00.000Z"),
@@ -570,7 +570,7 @@ test("live receipt missing workflow run fails closed", () => {
     osvEntry.id,
     sourceReceipt({
       service: "osv",
-      fixture: "ms-watch",
+      fixture: "request-watch",
       commit: COMMIT,
       npmDigest: NPM,
       startedAt: new Date("2026-08-27T14:00:00.000Z"),
@@ -592,7 +592,7 @@ test("live candidate missing workflow run fails closed", () => {
     osvEntry.id,
     sourceReceipt({
       service: "osv",
-      fixture: "ms-watch",
+      fixture: "request-watch",
       commit: COMMIT,
       npmDigest: NPM,
       startedAt: new Date("2026-08-27T14:00:00.000Z"),
@@ -614,7 +614,7 @@ test("live workflow run mismatch fails closed", () => {
     osvEntry.id,
     sourceReceipt({
       service: "osv",
-      fixture: "ms-watch",
+      fixture: "request-watch",
       commit: COMMIT,
       npmDigest: NPM,
       startedAt: new Date("2026-08-27T14:00:00.000Z"),

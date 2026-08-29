@@ -1,9 +1,10 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { npmContentDigest } from "../src/release/digest.ts";
 import { canonicalInventory } from "../src/support/inventory.ts";
 import { sourceReceipt, writeReceipt } from "../src/support/receipts.ts";
@@ -11,7 +12,9 @@ import { installFixture, packSlim, ROOT, runSlim } from "./helpers/llm-replace.t
 import { minimalEnvelope, minimalEvidence, minimalManifest, rebindEvidenceArtifacts } from "./helpers/documents.ts";
 
 const LIVE = process.env.SLIM_UPSTREAM_LIVE === "1";
-const FIXTURE = "ms-watch";
+// OSV omits `vulns` on empty HTTP 200 `{}`. Slim treats that as malformed.
+// Live proof needs a current latest whose query returns a vulns array (request@2.88.2).
+const FIXTURE = "request-watch";
 
 let packDir = "";
 let tarball = "";
@@ -29,30 +32,47 @@ after(() => {
   if (packDir) rmSync(packDir, { recursive: true, force: true });
 });
 
+function linkTypescript(root: string): void {
+  const tsDir = dirname(createRequire(import.meta.url).resolve("typescript/package.json"));
+  mkdirSync(join(root, "node_modules"), { recursive: true });
+  const dest = join(root, "node_modules", "typescript");
+  if (!existsSync(dest)) symlinkSync(tsDir, dest);
+}
+
 function writeWatchFixture(dest: string): void {
-  const env = minimalEnvelope("ms", ["ms"], "2.1.3");
-  mkdirSync(join(dest, ".slim", "ms"), { recursive: true });
+  const env = minimalEnvelope("request", ["noop"], "2.88.2");
+  mkdirSync(join(dest, ".slim", "request"), { recursive: true });
   mkdirSync(join(dest, "src", "slim"), { recursive: true });
   writeFileSync(
     join(dest, "package.json"),
-    JSON.stringify({ name: "ms-watch", private: true, type: "module", version: "1.0.0" }),
+    JSON.stringify({ name: "request-watch", private: true, type: "module", version: "1.0.0" }),
   );
   writeFileSync(join(dest, ".slim", "manifest.json"), JSON.stringify(minimalManifest(env), null, 2));
-  writeFileSync(join(dest, ".slim", "ms", "envelope.json"), JSON.stringify(env, null, 2));
+  writeFileSync(join(dest, ".slim", "request", "envelope.json"), JSON.stringify(env, null, 2));
   writeFileSync(
-    join(dest, ".slim", "ms", "evidence.json"),
-    JSON.stringify(minimalEvidence(env, { generation: { kind: "catalog", catalogIds: ["ms.ms"], attempts: 1, specSource: "catalog", counterexamples: [] } })),
+    join(dest, ".slim", "request", "evidence.json"),
+    JSON.stringify(
+      minimalEvidence(env, {
+        generation: {
+          kind: "catalog",
+          catalogIds: ["request.noop"],
+          attempts: 1,
+          specSource: "catalog",
+          counterexamples: [],
+        },
+      }),
+    ),
   );
-  writeFileSync(join(dest, "src", "slim", "ms.ts"), "export function ms(_v?: unknown): unknown { return 0; }\n");
+  writeFileSync(join(dest, "src", "slim", "request.ts"), "export function noop(): void {}\n");
   writeFileSync(
-    join(dest, "src", "slim", "ms.test.ts"),
+    join(dest, "src", "slim", "request.test.ts"),
     `import { test } from "node:test";\ntest("standing", () => {});\n`,
   );
   writeFileSync(
-    join(dest, "src", "slim", "ms.hardened.test.ts"),
+    join(dest, "src", "slim", "request.hardened.test.ts"),
     `import { test } from "node:test";\ntest("hardened", () => {});\n`,
   );
-  rebindEvidenceArtifacts(dest, "ms", "src/slim");
+  rebindEvidenceArtifacts(dest, "request", "src/slim");
 }
 
 test("support inventory advertises osv and npm-registry as required live sources", () => {
@@ -77,18 +97,21 @@ test("live packed upstream consults OSV and npm", { timeout: 180_000 }, async ()
   try {
     writeWatchFixture(dest);
     const slimJs = installFixture(dest, tarball);
+    linkTypescript(dest);
     const digest = process.env.SLIM_NPM_DIGEST ?? npmDigest;
     const extra: NodeJS.ProcessEnv = {};
     if (digest) extra.SLIM_NPM_DIGEST = digest;
     const out = await runSlim(slimJs, ["upstream", "--json"], dest, extra, 120_000);
     const combined = `${out.stdout}\n${out.stderr}`;
+    assert.ok(out.stdout.trim().startsWith("{"), combined);
     const doc = JSON.parse(out.stdout.trim()) as {
       conclusion: string;
       action: string;
       exit: number;
       findings: unknown[];
-      sources: { osv: { status: string; detail: string }; npm: { status: string; detail: string } };
+      sources?: { osv: { status: string; detail: string }; npm: { status: string; detail: string } };
     };
+    assert.ok(doc.sources, combined);
     assert.equal(doc.sources.osv.status, "success", doc.sources.osv.detail);
     assert.equal(doc.sources.npm.status, "success", doc.sources.npm.detail);
     assert.notEqual(doc.conclusion, "source-unavailable");

@@ -69,11 +69,11 @@ export async function queryOsv(
     return sourceErr("malformed", "osv.dev body is not an object");
   }
   const vulns = (json as { vulns?: unknown }).vulns;
-  if (vulns === undefined) return sourceOk([]);
+  if (vulns === undefined) return sourceErr("malformed", "osv.dev vulns is missing");
   if (!Array.isArray(vulns)) return sourceErr("malformed", "osv.dev vulns is not an array");
   const out: OsvVuln[] = [];
   for (const v of vulns) {
-    if (!v || typeof v !== "object" || typeof (v as OsvVuln).id !== "string") {
+    if (!v || typeof v !== "object" || typeof (v as OsvVuln).id !== "string" || !(v as OsvVuln).id) {
       return sourceErr("malformed", "osv.dev vuln missing id");
     }
     out.push(v as OsvVuln);

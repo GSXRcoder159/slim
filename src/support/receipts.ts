@@ -52,7 +52,7 @@ export const RECEIPT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const LIVE_FIXTURES: Record<string, readonly string[]> = {
   "test/llm-live.test.ts": ["tiny-add"],
-  "test/upstream-live.test.ts": ["ms-watch"],
+  "test/upstream-live.test.ts": ["request-watch"],
   "test/github/pr-live.test.ts": ["ms"],
   "test/release-live.test.ts": ["release-rehearse"],
   "test/github/action-live.test.ts": ["packed-action-consumer"],
