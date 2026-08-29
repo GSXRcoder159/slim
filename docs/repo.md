@@ -47,7 +47,7 @@ Allowed fields (unknown key = doctor/check warning; `replace` refuses unknown ke
 | Field | Default | Why |
 | --- | --- | --- |
 | `outDir` | `src/slim` | commitable slices |
-| `budgetMs` | `30000` (`300000` if `CI=1`) | fuzz wall clock |
+| `budgetMs` | `30000` (`300000` if `CI=1`) | extra-case quota; independent 5s case stall |
 | `include` | gitignore-aware whole repo | monorepo narrowing |
 | `ignore` | `[]` | generated clients |
 | `testCommand` | detect `npm test` / skip | project tests after replace |

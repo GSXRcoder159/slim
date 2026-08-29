@@ -6,7 +6,7 @@ export const STARTUP_MS = 2000;
 /** Bound on Worker.terminate() during pool close / replace. */
 export const SHUTDOWN_MS = 250;
 
-/** Process-wall slack covering worker spawn. Alias of STARTUP_MS; documented bound is budgetMs + STARTUP_MS + SHUTDOWN_MS. */
+/** Process-wall slack covering worker spawn. Alias of STARTUP_MS. Not a whole-run kill switch. */
 export const BUDGET_SLACK_MS = STARTUP_MS;
 
 /** Extra pickFuzzArgs cases after the required prefix. Not a wall-clock drain. */

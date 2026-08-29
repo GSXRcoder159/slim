@@ -16,6 +16,7 @@ import { BUDGET_SLACK_MS, STARTUP_MS, SHUTDOWN_MS, wallMs } from "../../src/fuzz
 import { defaultWorkerCount, runFuzz, type FuzzReport } from "../../src/fuzz/run.ts";
 import {
   createPool,
+  JOB_TIMEOUT_CAP_MS,
   toCloneableJob,
   workerExecArgv,
   workerThreadUrl,
@@ -214,7 +215,7 @@ test(
     });
     assert.ok(report.cases > 0);
     assert.ok(report.timerCases > 0);
-    assert.ok(report.wallMs <= 100 + BUDGET_SLACK_MS, `wallMs=${report.wallMs}`);
+    assert.equal(report.disagreements.length, 0);
   },
 );
 
@@ -250,7 +251,7 @@ test(
       workers: 2,
     });
     assert.ok(report.cases > 0);
-    assert.ok(report.wallMs <= 100 + BUDGET_SLACK_MS, `wallMs=${report.wallMs}`);
+    assert.equal(report.disagreements.length, 0);
   },
 );
 
@@ -681,7 +682,7 @@ test("worker crash is EXIT_ENV and pool closes", { timeout: 8000 }, async () => 
   );
 });
 
-test("worker timeout is EXIT_ENV", { timeout: 8000 }, async () => {
+test("worker timeout is EXIT_ENV", { timeout: 20_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), "slim-hang-"));
   const orig = join(dir, "orig.mjs");
   const slim = join(dir, "slim.mjs");
@@ -951,7 +952,7 @@ test("empty work set with zero extra quota is insufficient budget", async () => 
   );
 });
 
-test("hung worker timeout then a healthy run still works", { timeout: 15_000 }, async () => {
+test("hung worker timeout then a healthy run still works", { timeout: 25_000 }, async () => {
   const hung = mkdtempSync(join(tmpdir(), "slim-p5-hung2-"));
   writeFileSync(join(hung, "orig.mjs"), "export function id() { for (;;) {} }\n");
   writeFileSync(join(hung, "slim.mjs"), ID_SRC);
@@ -971,7 +972,7 @@ test("hung worker timeout then a healthy run still works", { timeout: 15_000 }, 
   );
   const elapsed = wallMs() - t0;
   assert.ok(
-    elapsed <= 80 + STARTUP_MS + SHUTDOWN_MS + BUDGET_SLACK_MS,
+    elapsed <= STARTUP_MS + JOB_TIMEOUT_CAP_MS + SHUTDOWN_MS + BUDGET_SLACK_MS,
     `hung worker overran documented bound: ${elapsed}ms`,
   );
   const { orig, slim } = writePair(ID_SRC);
@@ -1000,7 +1001,7 @@ test("returned pool report is frozen after close", { timeout: 8000 }, async () =
   assert.ok(Object.isFrozen(report.disagreements));
 });
 
-test("crash, serialize, hang, and startup failures have distinct messages", { timeout: 15_000 }, async () => {
+test("crash, serialize, hang, and startup failures have distinct messages", { timeout: 30_000 }, async () => {
   const crashDir = mkdtempSync(join(tmpdir(), "slim-p5-c-"));
   writeFileSync(join(crashDir, "orig.mjs"), "export function id() { process.exit(1); }\n");
   writeFileSync(join(crashDir, "slim.mjs"), ID_SRC);
@@ -1080,8 +1081,23 @@ test("crash, serialize, hang, and startup failures have distinct messages", { ti
   assert.ok(
     serialize instanceof SlimExit && serialize.code === EXIT_FAIL && /serialization/i.test(serialize.message),
   );
-  const msgs = [crash.message, hang.message, startup.message, serialize.message];
-  assert.equal(new Set(msgs).size, 4, `messages were not distinct: ${msgs.join(" | ")}`);
+  const budget = await runFuzz({
+    original: { id: (x: unknown) => x },
+    replacement: { id: (x: unknown) => x },
+    envelope: baseEnvelope({ symbols: [valueSym("id", [])] }),
+    budgetMs: 0,
+    seed: 1,
+    workers: 1,
+  }).then(
+    () => null,
+    (e: unknown) => e,
+  );
+  assert.ok(
+    budget instanceof SlimExit && budget.code === EXIT_ENV && /insufficient budget/i.test(budget.message),
+  );
+  const msgs = [crash.message, hang.message, startup.message, serialize.message, budget.message];
+  assert.equal(new Set(msgs).size, 5, `messages were not distinct: ${msgs.join(" | ")}`);
+  assert.doesNotMatch(budget.message, /timeout/i);
 });
 
 test("worker-pool determinism holds across 10 serial repeats", { timeout: 30_000 }, async () => {
@@ -1125,3 +1141,256 @@ test("worker-thread posts ready after load", { timeout: 8000 }, async () => {
     await w.terminate();
   }
 });
+
+const SLOW_ID_SRC = `
+export function id(x) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);
+  return x;
+}
+`;
+
+test(
+  "progressing pool run is not aborted when wall time exceeds budget+startup+shutdown",
+  { timeout: 30_000 },
+  async () => {
+    const { orig, slim } = writePair(SLOW_ID_SRC);
+    const budgetMs = 10;
+    const t0 = wallMs();
+    const report = await runFuzz({
+      origModule: orig,
+      slimModule: slim,
+      envelope: idEnvelope(),
+      budgetMs,
+      seed: 1,
+      workers: 2,
+    });
+    const elapsed = wallMs() - t0;
+    assert.ok(report.cases > 0, "planned cases must run");
+    assert.equal(report.disagreements.length, 0, report.disagreements.map((d) => d.reason).join("; "));
+    assert.ok(
+      elapsed > budgetMs + STARTUP_MS + SHUTDOWN_MS,
+      `expected wall ${elapsed}ms to exceed quota watchdog ${budgetMs + STARTUP_MS + SHUTDOWN_MS}`,
+    );
+    const again = await runFuzz({
+      origModule: orig,
+      slimModule: slim,
+      envelope: idEnvelope(),
+      budgetMs,
+      seed: 1,
+      workers: 2,
+    });
+    assert.deepEqual(comparable(report), comparable(again));
+  },
+);
+
+async function withCpuBurn<T>(fn: () => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(tmpdir(), "slim-p5-burn-"));
+  const src = join(dir, "burn.mjs");
+  writeFileSync(
+    src,
+    `import { workerData } from "node:worker_threads";
+const flag = new Int32Array(workerData);
+while (Atomics.load(flag, 0) === 0) {
+  for (let i = 0; i < 5e5; i++) {}
+}
+`,
+  );
+  const flag = new Int32Array(new SharedArrayBuffer(4));
+  const burners = [0, 1, 2, 3].map(
+    () =>
+      new Worker(src, {
+        execArgv: workerExecArgv(),
+        workerData: flag,
+      }),
+  );
+  try {
+    return await fn();
+  } finally {
+    Atomics.store(flag, 0, 1);
+    await Promise.all(burners.map((w) => w.terminate()));
+  }
+}
+
+test(
+  "100ms budget fuzz under CPU contention still completes for workers 1 and 2",
+  { timeout: 60_000 },
+  async () => {
+    await withCpuBurn(async () => {
+      const debouncePair = writePair(ID_DEBOUNCE_SRC);
+      const idPair = writePair(ID_SRC);
+      const debounceEnv = baseEnvelope({
+        clock: true,
+        symbols: [
+          valueSym("id", [
+            {
+              id: "i1",
+              loc: loc(),
+              exportName: "id",
+              memberPath: ["id"],
+              thisBinding: { kind: "unbound" },
+              argc: { min: 1, max: 1, observed: [1] },
+              argShapes: [{ kind: "any" }],
+              spread: false,
+              resultMembers: [],
+            },
+          ]),
+        ],
+      });
+      const one = await runFuzz({
+        origModule: debouncePair.orig,
+        slimModule: debouncePair.slim,
+        envelope: debounceEnv,
+        budgetMs: 100,
+        seed: 1,
+        workers: 1,
+      });
+      const two = await runFuzz({
+        origModule: idPair.orig,
+        slimModule: idPair.slim,
+        envelope: idEnvelope(),
+        budgetMs: 100,
+        seed: 2,
+        workers: 2,
+      });
+      assert.ok(one.cases > 0);
+      assert.equal(one.disagreements.length, 0);
+      assert.ok(two.cases > 0);
+      assert.equal(two.disagreements.length, 0);
+    });
+  },
+);
+
+function workerLikeResources(): string[] {
+  const info =
+    (process as NodeJS.Process & { getActiveResourcesInfo?: () => string[] }).getActiveResourcesInfo?.() ??
+    [];
+  return info.filter((n) => n === "MessagePort" || /Worker/i.test(n));
+}
+
+test(
+  "late result after case timeout does not resurrect the job",
+  { timeout: 15_000 },
+  async () => {
+    const { orig, slim } = writePair(`
+export function id(x) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+  return x;
+}
+`);
+    const pool = createPool({
+      workers: 2,
+      origModule: orig,
+      slimModule: slim,
+      symbols: ["id"],
+      timeoutMs: 50,
+    });
+    try {
+      await pool.ready();
+      const first = await pool.runCase({ symbol: "id", args: [1], kind: "call" }).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      assert.ok(
+        first instanceof SlimExit && first.code === EXIT_ENV && /timeout/i.test(first.message),
+      );
+      await new Promise((r) => setTimeout(r, 400));
+      const second = await pool.runCase({ symbol: "id", args: [1], kind: "call" }, 2000);
+      assert.equal(second.ok, true);
+      assert.ok(first instanceof SlimExit);
+    } finally {
+      await pool.close();
+    }
+  },
+);
+
+test(
+  "close during hung case rejects in-flight work and leaves no live worker",
+  { timeout: 15_000 },
+  async () => {
+    const hung = mkdtempSync(join(tmpdir(), "slim-p5-close-"));
+    writeFileSync(join(hung, "orig.mjs"), "export function id() { for (;;) {} }\n");
+    writeFileSync(join(hung, "slim.mjs"), ID_SRC);
+    const before = workerLikeResources().length;
+    const pool = createPool({
+      workers: 2,
+      origModule: join(hung, "orig.mjs"),
+      slimModule: join(hung, "slim.mjs"),
+      symbols: ["id"],
+      timeoutMs: JOB_TIMEOUT_CAP_MS,
+    });
+    try {
+      await pool.ready();
+      const running = pool.runCase({ symbol: "id", args: [], kind: "call" }).then(
+        (r) => r,
+        (e: unknown) => e,
+      );
+      await new Promise((r) => setTimeout(r, 30));
+      await pool.close();
+      const err = await running;
+      assert.ok(
+        err instanceof SlimExit &&
+          err.code === EXIT_ENV &&
+          /pool closed|timeout/i.test(err.message),
+      );
+      await assert.rejects(
+        () => pool.runCase({ symbol: "id", args: [], kind: "call" }),
+        (e: unknown) => e instanceof SlimExit && /pool closed/i.test((e as Error).message),
+      );
+    } finally {
+      await pool.close();
+    }
+    await new Promise((r) => setTimeout(r, 50));
+    const after = workerLikeResources().length;
+    assert.ok(after <= before, `leaked worker resources: before=${before} after=${after}`);
+  },
+);
+
+test(
+  "hung runFuzz cleanup leaves no extra worker resources",
+  { timeout: 20_000 },
+  async () => {
+    const hung = mkdtempSync(join(tmpdir(), "slim-p5-reap-"));
+    writeFileSync(join(hung, "orig.mjs"), "export function id() { for (;;) {} }\n");
+    writeFileSync(join(hung, "slim.mjs"), ID_SRC);
+    const before = workerLikeResources().length;
+    await assert.rejects(
+      () =>
+        runFuzz({
+          origModule: join(hung, "orig.mjs"),
+          slimModule: join(hung, "slim.mjs"),
+          envelope: idEnvelope(),
+          budgetMs: 80,
+          seed: 1,
+          workers: 2,
+        }),
+      (e: unknown) => e instanceof SlimExit && /timeout/i.test((e as Error).message),
+    );
+    await new Promise((r) => setTimeout(r, 50));
+    const after = workerLikeResources().length;
+    assert.ok(after <= before, `leaked worker resources: before=${before} after=${after}`);
+  },
+);
+
+test(
+  "parallel runFuzz matches serial baseline for workers 1 and 2",
+  { timeout: 30_000 },
+  async () => {
+    const { orig, slim } = writeGetPair();
+    const opts = {
+      origModule: orig,
+      slimModule: slim,
+      envelope: getEnvelope(),
+      budgetMs: 20,
+      seed: 42,
+    };
+    const serial1 = comparable(await runFuzz({ ...opts, workers: 1 }));
+    const serial2 = comparable(await runFuzz({ ...opts, workers: 2 }));
+    const [p1, p2] = await Promise.all([
+      runFuzz({ ...opts, workers: 1 }),
+      runFuzz({ ...opts, workers: 2 }),
+    ]);
+    assert.deepEqual(comparable(p1), serial1);
+    assert.deepEqual(comparable(p2), serial2);
+    assert.deepEqual(serial1, serial2);
+  },
+);

@@ -22,7 +22,8 @@ import type { HyrumFlags, SlimValue } from "../envelope/types.ts";
 import { deserializeEvent, serializeEvent, snapshot } from "../trace/serialize.ts";
 
 const MINIMIZE_MS = 2000;
-const JOB_TIMEOUT_CAP_MS = 5000;
+/** Per-case stall timeout after worker ready. Independent of --budget-ms extra-case quota. */
+export const JOB_TIMEOUT_CAP_MS = 5000;
 
 export interface FuzzJob {
   symbol: string;
@@ -107,8 +108,8 @@ export function workerExecArgv(argv: readonly string[] = process.execArgv): stri
   return out;
 }
 
-export function defaultJobTimeoutMs(budgetMs: number): number {
-  return Math.max(50, Math.min(JOB_TIMEOUT_CAP_MS, Math.max(0, budgetMs) + 50));
+export function defaultJobTimeoutMs(): number {
+  return JOB_TIMEOUT_CAP_MS;
 }
 
 function terminateSoon(w: Worker, ms = SHUTDOWN_MS): Promise<void> {
@@ -129,8 +130,9 @@ function terminateSoon(w: Worker, ms = SHUTDOWN_MS): Promise<void> {
       }
       resolve();
     };
+    w.once("exit", finish);
     timeoutFn(finish, ms);
-    Promise.resolve(w.terminate()).then(finish, finish);
+    Promise.resolve(w.terminate()).then(() => undefined, finish);
   });
 }
 
@@ -172,6 +174,8 @@ function createThreadPool(opts: {
   const inflight = new Map<Worker, number>();
   const readyAt = new WeakMap<Worker, Promise<void>>();
   const spawnedAt = new WeakMap<Worker, number>();
+  const retired = new WeakSet<Worker>();
+  const becameReady = new WeakSet<Worker>();
   const slimModule = withSlimQuery(opts.slimModule, opts.slimHash);
 
   function failJob(id: number, err: unknown): void {
@@ -221,6 +225,7 @@ function createThreadPool(opts: {
     spawnedAt.set(w, wallMs());
     w.on("message", (msg: { type: string; id?: number; result?: FuzzResult; error?: string }) => {
       if (msg.type === "ready") {
+        becameReady.add(w);
         settleReady();
         return;
       }
@@ -246,6 +251,10 @@ function createThreadPool(opts: {
       failReady(crash);
       const id = inflight.get(w);
       if (id !== undefined) failJob(id, crash);
+      else if (!closed && becameReady.has(w)) {
+        const fresh = replaceWorker(w);
+        if (fresh) release(fresh);
+      }
     });
     w.on("exit", (code) => {
       if (closed) return;
@@ -253,11 +262,17 @@ function createThreadPool(opts: {
       failReady(crash);
       const id = inflight.get(w);
       if (id !== undefined) failJob(id, crash);
+      else if (becameReady.has(w)) {
+        const fresh = replaceWorker(w);
+        if (fresh) release(fresh);
+      }
     });
     return w;
   }
 
   function retire(dead: Worker): void {
+    if (retired.has(dead)) return;
+    retired.add(dead);
     inflight.delete(dead);
     const idleAt = idle.indexOf(dead);
     if (idleAt >= 0) idle.splice(idleAt, 1);
@@ -272,6 +287,10 @@ function createThreadPool(opts: {
   }
 
   function replaceWorker(dead: Worker): Worker | undefined {
+    if (retired.has(dead)) {
+      retire(dead);
+      return undefined;
+    }
     retire(dead);
     if (closed) return undefined;
     const w = spawn();
@@ -296,8 +315,16 @@ function createThreadPool(opts: {
   async function acquire(): Promise<Worker> {
     if (closed) throw new SlimExit(EXIT_ENV, "fuzz worker pool closed");
     const w = idle.pop() ?? (await new Promise<Worker>((resolve, reject) => waiters.push({ resolve, reject })));
-    await waitReady(w);
-    return w;
+    try {
+      await waitReady(w);
+      return w;
+    } catch (e) {
+      if (!closed) {
+        const fresh = replaceWorker(w);
+        if (fresh) release(fresh);
+      }
+      throw e;
+    }
   }
 
   function release(w: Worker): void {

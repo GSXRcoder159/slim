@@ -13,7 +13,7 @@ import {
   pickObservedArgc,
 } from "./gen.ts";
 import { deserializeEvent } from "../trace/serialize.ts";
-import { STARTUP_MS, SHUTDOWN_MS, extraCaseQuota, createFakeClock, nativeClear, nativeTimeout, wallMs, type FakeClock } from "./clock.ts";
+import { extraCaseQuota, createFakeClock, wallMs, type FakeClock } from "./clock.ts";
 import {
   taxonomyForObserved,
   isTimerSymbol,
@@ -210,7 +210,7 @@ async function runFuzzPool(opts: {
   const report = emptyReport(opts.seed, opts.allowFlaky);
   const symbols = opts.envelope.symbols.map((s) => s.exportName);
 
-  const timeoutMs = defaultJobTimeoutMs(opts.budgetMs);
+  const timeoutMs = defaultJobTimeoutMs();
   const pool = createPool({
     workers: opts.workers,
     origModule: opts.origModule,
@@ -225,8 +225,7 @@ async function runFuzzPool(opts: {
   try {
     await pool.ready();
     const plan = planCases(opts);
-    const bound = t0 + Math.max(0, opts.budgetMs) + STARTUP_MS + SHUTDOWN_MS;
-    await executePlanOnPool(pool, plan, report, opts.workers, timeoutMs, bound);
+    await executePlanOnPool(pool, plan, report, opts.workers, timeoutMs);
     throwIfEmpty(report);
   } finally {
     await pool.close();
@@ -338,7 +337,6 @@ async function executePlanOnPool(
   report: FuzzReport,
   workers: number,
   timeoutMs: number,
-  bound: number,
 ): Promise<void> {
   const slots = new Map<number, { result?: FuzzResult; error?: unknown }>();
   const running = new Map<number, Promise<void>>();
@@ -364,7 +362,6 @@ async function executePlanOnPool(
   };
 
   while (applyAt < plan.length && report.disagreements.length < MAX_DISAGREEMENTS) {
-    if (wallMs() >= bound) throw new SlimExit(EXIT_ENV, "fuzz worker timeout");
     while (
       issued < plan.length &&
       running.size < width &&
@@ -375,18 +372,7 @@ async function executePlanOnPool(
     }
     if (!slots.has(applyAt)) {
       if (running.size === 0) break;
-      const rem = Math.max(1, bound - wallMs());
-      let timer: ReturnType<typeof nativeTimeout> | undefined;
-      try {
-        await Promise.race([
-          Promise.race([...running.values()]),
-          new Promise<never>((_, reject) => {
-            timer = nativeTimeout(() => reject(new SlimExit(EXIT_ENV, "fuzz worker timeout")), rem);
-          }),
-        ]);
-      } finally {
-        if (timer) nativeClear(timer);
-      }
+      await Promise.race([...running.values()]);
       continue;
     }
     const slot = slots.get(applyAt)!;

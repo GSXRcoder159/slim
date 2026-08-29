@@ -20,7 +20,7 @@
     "budgetMs": {
       "type": "integer",
       "minimum": 1,
-      "description": "Fuzz process wall clock in milliseconds (never the fake clock). Default 30000, or 300000 if CI=1. Run returns within budgetMs+2000ms."
+      "description": "Extra generated fuzz cases after traces, literal unions, and timer taxonomy. Independent 5s case stall after worker ready. Default 30000, or 300000 if CI=1."
     },
     "testCommand": {
       "type": ["string", "null"],
