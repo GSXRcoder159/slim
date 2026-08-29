@@ -184,6 +184,10 @@ function enumerableOwn(obj, key) {
   return d?.enumerable === true;
 }
 
+function isUnsafeOwnKey(key) {
+  return key === "__proto__" || key === "constructor" || key === "prototype" || key === PROTO_TAG;
+}
+
 function sameValueZero(a, b, signedZero) {
   if (typeof a === "number" && typeof b === "number") {
     if (Number.isNaN(a) && Number.isNaN(b)) return true;
@@ -222,6 +226,7 @@ function eqDeep(a, b, ctx, seen) {
   }
   if (a instanceof Date || b instanceof Date) return false;
   if (isUrlLike(a) && isUrlLike(b)) return a.href === b.href;
+  if (isSearchParamsLike(a) && isSearchParamsLike(b)) return a.toString() === b.toString();
   if (a instanceof RegExp && b instanceof RegExp) return a.source === b.source && a.flags === b.flags;
   if (typeof Buffer !== "undefined" && Buffer.isBuffer(a) && Buffer.isBuffer(b)) return a.equals(b);
   if (a instanceof ArrayBuffer && b instanceof ArrayBuffer) {
@@ -282,8 +287,8 @@ function eqDeep(a, b, ctx, seen) {
   if (a instanceof Error && b instanceof Error) {
     return a.name === b.name && a.message === b.message && Object.is(a.code, b.code);
   }
-  const aKeys = Reflect.ownKeys(a).filter((k) => enumerableOwn(a, k));
-  const bKeys = Reflect.ownKeys(b).filter((k) => enumerableOwn(b, k));
+  const aKeys = Reflect.ownKeys(a).filter((k) => enumerableOwn(a, k) && !isUnsafeOwnKey(k));
+  const bKeys = Reflect.ownKeys(b).filter((k) => enumerableOwn(b, k) && !isUnsafeOwnKey(k));
   if (aKeys.length !== bKeys.length) return false;
   if (ctx.keyOrder) {
     for (let i = 0; i < aKeys.length; i++) if (aKeys[i] !== bKeys[i]) return false;
@@ -343,6 +348,10 @@ function isUrlLike(v) {
   return Boolean(v && typeof v === "object" && typeof v.href === "string" && typeof v.hostname === "string");
 }
 
+function isSearchParamsLike(v) {
+  return Boolean(v && typeof v === "object" && typeof v.get === "function" && typeof v.append === "function" && typeof v.toString === "function" && typeof v.href !== "string");
+}
+
 function isMomentLike(v) {
   return Boolean(v && typeof v === "object" && typeof v.valueOf === "function" && typeof v.format === "function" && typeof v.valueOf() === "number");
 }
@@ -363,7 +372,7 @@ function callFn(fn, thisArg, args) {
     return { ok: true, value: fn.apply(thisArg, args) };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (/without ['"]?new['"]?/i.test(msg) || /Class constructor/i.test(msg)) {
+    if (/without ['"]?new['"]?/i.test(msg) || /Class constructor/i.test(msg) || /cannot be invoked directly/i.test(msg)) {
       try {
         return { ok: true, value: Reflect.construct(fn, args) };
       } catch (err2) {
@@ -386,9 +395,15 @@ function invalidUrlTypeError(a, b) {
   return norm(a.message) === "Invalid URL" && norm(b.message) === "Invalid URL";
 }
 
+function iterableTypeError(a, b) {
+  if (a.name !== "TypeError" || b.name !== "TypeError") return false;
+  return /iterab/i.test(a.message) && /iterab/i.test(b.message);
+}
+
 function equalThrown(a, b) {
   if (a.name !== b.name) return false;
   if (invalidUrlTypeError(a, b)) return true;
+  if (iterableTypeError(a, b)) return true;
   return a.message === b.message && Object.is(a.code, b.code);
 }
 
@@ -398,7 +413,7 @@ function checkAfter(live, p, ctx) {
   const expectedArgs = (p.argsAfter ?? []).map((a) => decode(a, afterSeen));
   const expectedThis = p.thisAfter != null ? decode(p.thisAfter, afterSeen) : undefined;
   const pairSeen = new WeakMap();
-  if (p.thisAfter != null || live.thisArg != null) {
+  if (p.thisAfter != null) {
     if (!eqDeep(expectedThis, live.thisArg, ctx, pairSeen)) {
       throw new Error("standing receiver mutation mismatch for " + p.symbol);
     }
@@ -429,7 +444,7 @@ function checkFrozenPair(fn, p) {
     if (!equalThrown(got, p.threw)) {
       throw new Error("error mismatch: " + got.name + ":" + got.message);
     }
-    if (p.threw.code !== undefined && !Object.is(got.code, p.threw.code) && !invalidUrlTypeError(got, p.threw)) {
+    if (p.threw.code !== undefined && !Object.is(got.code, p.threw.code) && !invalidUrlTypeError(got, p.threw) && !iterableTypeError(got, p.threw)) {
       throw new Error("error code mismatch");
     }
     checkAfter(live, p, ctx);

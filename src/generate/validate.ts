@@ -46,6 +46,8 @@ const ALLOWED_GLOBALS = new Set([
   "crypto",
   "arguments",
   "Uint8Array",
+  "ArrayBuffer",
+  "DataView",
   "URL",
   "URLSearchParams",
 ]);

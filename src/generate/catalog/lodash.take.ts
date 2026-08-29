@@ -4,10 +4,10 @@
  * Original Slim implementation of lodash.take. Not affiliated with lodash authors.
  */
 
-import { toArrayLike, toInteger } from "./_internal.ts";
+import { baseSlice, toInteger } from "./_internal.ts";
 
-export function take(array: unknown, n?: number): unknown[] {
-  const count = n === undefined ? 1 : toInteger(n);
-  if (count < 1) return [];
-  return toArrayLike(array).slice(0, count);
+export function take(array: unknown, n?: unknown, guard?: unknown): unknown[] {
+  if (!(array && (array as { length?: unknown }).length)) return [];
+  const count = guard || n === undefined ? 1 : toInteger(n);
+  return baseSlice(array as ArrayLike<unknown>, 0, count < 0 ? 0 : count);
 }

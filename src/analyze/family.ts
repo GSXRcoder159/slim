@@ -1,4 +1,5 @@
 import { isBuiltin } from "node:module";
+import { canonicalLodashSymbol } from "../generate/catalog/lodash-names.ts";
 
 export interface PackageFamily {
   name: string;
@@ -81,7 +82,8 @@ export function resolvePackageFamily(specifier: string): PackageFamily | null {
   if (!parsed) return null;
   let { name, subpath } = parsed;
   if (name.startsWith("lodash.") && name !== "lodash") {
-    subpath = name.slice("lodash.".length);
+    const suffix = name.slice("lodash.".length);
+    subpath = canonicalLodashSymbol(suffix) ?? suffix;
     name = "lodash";
   }
   const family = FAMILY_ALIAS[name] ?? name;

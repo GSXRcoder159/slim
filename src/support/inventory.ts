@@ -148,7 +148,7 @@ export function canonicalInventory(): SupportInventory {
         name: alias,
         aliasOf: "lodash",
         docs: ["docs/packages.md"],
-        checkId: "test/catalog/index.test.ts",
+        checkId: "test/catalog/packed-e2e.test.ts",
         receiptClass: "local",
       }),
     );

@@ -186,6 +186,80 @@ test("equalResults compares returns, throws, and arg mutations", () => {
   assert.match(equalResults(mutated, clean).reason ?? "", /mutation/i);
 });
 
+test("equalResults treats catalog proto-hardening as agreement", () => {
+  const orig: CallOutcome = {
+    ok: true,
+    value: { polluted: true },
+    argsAfter: [{ polluted: true }, "__proto__"],
+  };
+  const slim: CallOutcome = {
+    ok: true,
+    value: {},
+    argsAfter: [{}, "__proto__"],
+  };
+  assert.equal(equalResults(orig, slim).ok, true);
+  const stillMismatch: CallOutcome = {
+    ok: true,
+    value: { a: 1 },
+    argsAfter: [{ a: 1 }, "a"],
+  };
+  const clean: CallOutcome = { ok: true, value: {}, argsAfter: [{}, "a"] };
+  assert.equal(equalResults(stillMismatch, clean).ok, false);
+});
+
+test("equal ignores own __proto__ keys (catalog hardening vs older lodash.clone)", () => {
+  const withProto: Record<string, unknown> = { a: 1 };
+  Object.defineProperty(withProto, "__proto__", {
+    value: { polluted: true },
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  assert.equal(equal(withProto, { a: 1 }), true);
+});
+
+test("equalResults treats own __proto__ clone args as hardening (json/prototype hyrum)", () => {
+  const src: Record<string, unknown> = { a: 1 };
+  Object.defineProperty(src, "__proto__", {
+    value: { polluted: true },
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  const orig: CallOutcome = {
+    ok: true,
+    value: Object.assign(Object.create({ polluted: true }), { a: 1 }),
+    argsAfter: [src],
+  };
+  const slimVal: Record<string, unknown> = { a: 1 };
+  Object.defineProperty(slimVal, "__proto__", {
+    value: { polluted: true },
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  const slim: CallOutcome = { ok: true, value: slimVal, argsAfter: [src] };
+  assert.equal(equalResults(orig, slim, { json: true, prototype: true }).ok, true);
+  const stillMismatch: CallOutcome = {
+    ok: true,
+    value: { a: 1 },
+    argsAfter: [{ a: 1 }],
+  };
+  const clean: CallOutcome = { ok: true, value: { a: 2 }, argsAfter: [{ a: 1 }] };
+  assert.equal(equalResults(stillMismatch, clean, { json: true }).ok, false);
+});
+
+test("equal ignores slim.protoTag copied by lodash.clone", () => {
+  const tagged = { a: 1 };
+  Object.defineProperty(tagged, Symbol.for("slim.protoTag"), {
+    value: "object",
+    enumerable: true,
+    configurable: true,
+    writable: true,
+  });
+  assert.equal(equal(tagged, { a: 1 }), true);
+});
+
 test("invoke clones thisArg so orig cannot mutate slim's receiver", () => {
   const recv = { n: 0 };
   function bump(this: { n: number }) {

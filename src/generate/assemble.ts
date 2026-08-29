@@ -21,7 +21,7 @@ export function assembleCatalogModule(env: Envelope, projectRoot = slimRoot()): 
   const entryFiles: string[] = [];
   const ids: string[] = [];
   for (const sym of entrySymbols) {
-    const found = firstCatalogFile(family, sym);
+    const found = firstCatalogFile(family, catalogLookupSymbol(family, sym));
     if (!found) return null;
     ids.push(`${family}.${sym}`);
     if (!entryFiles.includes(found)) entryFiles.push(found);
@@ -54,7 +54,7 @@ export function assembleCatalogModule(env: Envelope, projectRoot = slimRoot()): 
   const assembledBody = parts.join("\n\n");
   const uniq = [...new Set(symbols.map((s) => (s === "first" ? "head" : s)))];
   let extra = "";
-  if (uniq.includes("head") && !symbols.includes("first")) {
+  if (uniq.includes("head") && !/\bexport\s+(?:const|function)\s+first\b/.test(assembledBody)) {
     extra += `\nexport const first = head;\n`;
   }
   let defaultExport = "";
@@ -212,6 +212,10 @@ function stripImports(src: string): string {
     .trim();
 }
 
+function catalogLookupSymbol(family: string, symbol: string): string {
+  return family === "lodash" && symbol === "first" ? "head" : symbol;
+}
+
 function catalogFileBases(family: string): string[] {
   const camel = family.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
   return camel === family ? [family] : [family, camel];
@@ -241,5 +245,5 @@ function firstExisting(...paths: string[]): string | null {
 }
 
 export function catalogFileFor(family: string, symbol: string): string {
-  return firstCatalogFile(family, symbol) ?? join(catalogRoot(), `${family}.${symbol}.ts`);
+  return firstCatalogFile(family, catalogLookupSymbol(family, symbol)) ?? join(catalogRoot(), `${family}.${symbol}.ts`);
 }

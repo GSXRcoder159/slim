@@ -5,7 +5,12 @@
  * Lodash ids are listed even if `lodash.ts` is produced by a sibling module.
  */
 
-import { CATALOG_ORACLES } from "./oracles.ts";
+import { CATALOG_ORACLES, LODASH_PER_METHOD_ORACLES } from "./oracles.ts";
+import {
+  canonicalLodashSymbol,
+  lodashNpmName,
+  LODASH_SYMBOLS,
+} from "./lodash-names.ts";
 import { createMoment, moment } from "./moment.ts";
 import { v4 } from "./uuid.ts";
 import { ms } from "./ms.ts";
@@ -64,42 +69,6 @@ export interface CatalogEntry {
   impl: Function;
   supports?: Record<string, unknown>;
 }
-
-const LODASH_SYMBOLS = [
-  "get",
-  "set",
-  "has",
-  "debounce",
-  "throttle",
-  "once",
-  "isEmpty",
-  "isNil",
-  "isEqual",
-  "pick",
-  "omit",
-  "clone",
-  "cloneDeep",
-  "map",
-  "filter",
-  "groupBy",
-  "uniq",
-  "compact",
-  "flatten",
-  "camelCase",
-  "kebabCase",
-  "snakeCase",
-  "identity",
-  "noop",
-  "defaultTo",
-  "chunk",
-  "take",
-  "head",
-  "first",
-  "last",
-  "keys",
-  "values",
-  "assign",
-] as const;
 
 const PKG_ALIAS: Record<string, string> = {
   "lodash-es": "lodash",
@@ -206,16 +175,25 @@ function canonicalPkg(pkg: string): string {
   return canonicalCatalogPkg(pkg);
 }
 
-function lodashForcedSymbol(pkg: string): string | undefined {
+function lodashPerMethodSuffix(pkg: string): string | undefined {
   if (pkg.startsWith("lodash.")) return pkg.slice("lodash.".length);
   return undefined;
+}
+
+function lodashForcedSymbol(pkg: string): string | undefined {
+  const suffix = lodashPerMethodSuffix(pkg);
+  if (suffix === undefined) return undefined;
+  return canonicalLodashSymbol(suffix);
 }
 
 export function catalogSymbols(pkg: string): string[] {
   const family = canonicalPkg(pkg);
   if (family === "lodash") {
-    const forced = lodashForcedSymbol(pkg);
-    if (forced) return [forced];
+    const suffix = lodashPerMethodSuffix(pkg);
+    if (suffix !== undefined) {
+      const forced = canonicalLodashSymbol(suffix);
+      return forced ? [forced] : [];
+    }
     return [...LODASH_SYMBOLS];
   }
   const seen = new Set<string>();
@@ -232,7 +210,9 @@ export function catalogSymbols(pkg: string): string[] {
 export function getCatalog(pkg: string, symbol: string): CatalogEntry | undefined {
   const family = canonicalPkg(pkg);
   if (family === "lodash") {
-    const wanted = lodashForcedSymbol(pkg) ?? symbol;
+    const suffix = lodashPerMethodSuffix(pkg);
+    if (suffix !== undefined && !canonicalLodashSymbol(suffix)) return undefined;
+    const wanted = lodashForcedSymbol(pkg) ?? canonicalLodashSymbol(symbol) ?? symbol;
     const canon = wanted === "first" ? "head" : wanted;
     if (!LODASH_SYMBOLS.includes(canon as (typeof LODASH_SYMBOLS)[number]) && wanted !== "first") {
       return undefined;
@@ -275,4 +255,4 @@ export function allCatalogEntries(): CatalogEntry[] {
   return ENTRIES.slice();
 }
 
-export { CATALOG_ORACLES, LODASH_SYMBOLS, PKG_ALIAS as CATALOG_PKG_ALIAS };
+export { CATALOG_ORACLES, LODASH_PER_METHOD_ORACLES, LODASH_SYMBOLS, PKG_ALIAS as CATALOG_PKG_ALIAS, lodashNpmName };

@@ -15,6 +15,7 @@ import {
 import { sessionLine } from "../../src/trace/session.ts";
 import { siblingModule } from "../../src/runtime-path.ts";
 import { execPm } from "../../src/rewrite/lockfile.ts";
+import { withRepoDistLock } from "../helpers/llm-replace.ts";
 import { ENVELOPE_VERSION, emptyHyrum } from "../../src/envelope/types.ts";
 import type { Envelope } from "../../src/envelope/types.ts";
 
@@ -329,11 +330,13 @@ test("siblingModule miss is the hook-missing failure", () => {
 });
 
 test("missing compiled hook fails runTraces closed", { timeout: 90_000 }, async () => {
-  if (!existsSync(join(ROOT, "dist", "trace", "match.js"))) {
-    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
-  }
   const dest = mkdtempSync(join(tmpdir(), "slim-run-nohook-"));
-  cpSync(join(ROOT, "dist"), join(dest, "dist"), { recursive: true });
+  withRepoDistLock(() => {
+    if (!existsSync(join(ROOT, "dist", "trace", "match.js"))) {
+      execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    }
+    cpSync(join(ROOT, "dist"), join(dest, "dist"), { recursive: true });
+  });
   unlinkSync(join(dest, "dist", "trace", "hook.js"));
   const { runTraces: packedRun } = await import(
     pathToFileURL(join(dest, "dist", "trace", "run.js")).href

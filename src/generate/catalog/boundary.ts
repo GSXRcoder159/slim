@@ -1,6 +1,7 @@
 import type { ArgShape, Envelope } from "../../envelope/types.ts";
 import { formatRefuse, type RefuseReason } from "../../scan/refuse.ts";
 import { catalogSymbols, canonicalCatalogPkg, matchCatalog } from "./index.ts";
+import { canonicalLodashSymbol } from "./lodash-names.ts";
 import { MIME_EXTENSION_TYPES, MIME_LOOKUP_EXTS } from "./mimeTypes.ts";
 
 const CATALOG_FAMILIES = new Set([
@@ -30,6 +31,18 @@ const IGNORED_EXPORTS = new Set(["*", "default", "(scan)"]);
 export function catalogBoundary(env: Envelope, pkg: string): RefuseReason | null {
   const family = canonicalCatalogPkg(pkg);
   if (!CATALOG_FAMILIES.has(family)) return null;
+
+  if (pkg.startsWith("lodash.")) {
+    const suffix = pkg.slice("lodash.".length);
+    if (!canonicalLodashSymbol(suffix)) {
+      return tooWide(
+        pkg,
+        family,
+        `package ${pkg}`,
+        `blocking: ${pkg} is not a registered lodash.* alias`,
+      );
+    }
+  }
 
   const used = env.symbols
     .map((s) => s.exportName)

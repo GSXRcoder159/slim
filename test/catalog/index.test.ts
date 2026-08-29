@@ -6,9 +6,11 @@ import { fileURLToPath } from "node:url";
 import {
   CATALOG_ORACLES,
   CATALOG_PKG_ALIAS,
+  LODASH_SYMBOLS,
   allCatalogEntries,
   catalogSymbols,
   getCatalog,
+  lodashNpmName,
   matchCatalog,
 } from "../../src/generate/catalog/index.ts";
 import { resolvePackageFamily } from "../../src/analyze/family.ts";
@@ -118,5 +120,42 @@ describe("catalog matcher", () => {
     assert.equal(perMethod?.family, "lodash");
     assert.equal(perMethod?.subpath, "get");
     assert.ok(catalogSymbols("mime").includes("lookup"));
+  });
+
+  it("case-folds lowercase lodash.* npm names onto registered camelCase symbols", () => {
+    assert.equal(lodashNpmName("isEmpty"), "lodash.isempty");
+    assert.equal(lodashNpmName("cloneDeep"), "lodash.clonedeep");
+    assert.equal(lodashNpmName("get"), "lodash.get");
+    for (const symbol of LODASH_SYMBOLS) {
+      const npmName = lodashNpmName(symbol);
+      assert.equal(npmName, `lodash.${symbol.toLowerCase()}`);
+      assert.deepEqual(catalogSymbols(npmName), [symbol]);
+      const got = getCatalog(npmName, symbol);
+      assert.equal(typeof got?.impl, "function", npmName);
+      assert.equal(got?.symbol, symbol, npmName);
+      const mixed = `lodash.${symbol}`;
+      assert.deepEqual(catalogSymbols(mixed), [symbol]);
+      const fam = resolvePackageFamily(npmName);
+      assert.equal(fam?.family, "lodash", npmName);
+      assert.equal(fam?.subpath, symbol, `${npmName} subpath`);
+      assert.equal(resolvePackageFamily(mixed)?.subpath, symbol, mixed);
+    }
+    const { matched, missing } = matchCatalog("lodash.clonedeep", ["cloneDeep"]);
+    assert.deepEqual(missing, []);
+    assert.equal(matched[0]?.symbol, "cloneDeep");
+    const empty = matchCatalog("lodash.isempty", ["isEmpty"]);
+    assert.deepEqual(empty.missing, []);
+    assert.equal(empty.matched[0]?.symbol, "isEmpty");
+  });
+
+  it("refuses unknown lodash.* packages instead of folding them into another symbol", () => {
+    assert.deepEqual(catalogSymbols("lodash.template"), []);
+    assert.equal(getCatalog("lodash.template", "template"), undefined);
+    const { matched, missing } = matchCatalog("lodash.template", ["template"]);
+    assert.deepEqual(missing, ["template"]);
+    assert.equal(matched.length, 0);
+    const fam = resolvePackageFamily("lodash.template");
+    assert.equal(fam?.family, "lodash");
+    assert.equal(fam?.subpath, "template");
   });
 });

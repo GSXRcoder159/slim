@@ -191,7 +191,7 @@ async function runCase(row: QualRow, c: QualCase, impl: unknown, oracle: unknown
     assert.notEqual(a, b, label);
     return;
   }
-  if (row.symbol === "cloneDeep" && c.name === "new root object") {
+  if (c.name === "new root object") {
     const src = c.args![0];
     const got = invoke(impl, c, row);
     assert.notEqual(got, src, label);

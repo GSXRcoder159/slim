@@ -4,15 +4,22 @@
  * Original Slim implementation of lodash.chunk. Not affiliated with lodash authors.
  */
 
-import { toArrayLike, toInteger } from "./_internal.ts";
+import { baseSlice, isIterateeCall, toInteger } from "./_internal.ts";
 
-export function chunk(array: unknown, size?: number): unknown[][] {
-  const list = toArrayLike(array);
-  const n = size === undefined ? 1 : toInteger(size);
-  if (n < 1 || list.length === 0) return [];
+export function chunk(array: unknown, size?: unknown, guard?: unknown): unknown[][] {
+  const n = guard
+    ? isIterateeCall(array, size, guard)
+      ? 1
+      : Math.max(toInteger(size), 0)
+    : size === undefined
+      ? 1
+      : Math.max(toInteger(size), 0);
+  const length = array == null ? 0 : (array as { length?: number }).length ?? 0;
+  if (!length || n < 1) return [];
+  const list = array as ArrayLike<unknown>;
   const out: unknown[][] = [];
-  for (let i = 0; i < list.length; i += n) {
-    out.push(list.slice(i, i + n));
+  for (let i = 0; i < length; ) {
+    out.push(baseSlice(list, i, (i += n)));
   }
   return out;
 }

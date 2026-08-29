@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, w
 import { dirname, join, relative, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import { resolveScriptFile, scriptSpawnOpts } from "./rewrite/lockfile.ts";
+import { inspect } from "node:util";
 import { randomInt } from "node:crypto";
 import { tmpdir } from "node:os";
 import type { CliArgs } from "./cli.ts";
@@ -53,6 +54,14 @@ function injectFail(step: string): void {
   }
 }
 
+function refuseCatalogBoundary(env: Envelope, args: CliArgs): void {
+  if (args.force || !args.pkg) return;
+  const boundary = catalogBoundary(env, args.pkg);
+  if (boundary) {
+    throw new SlimExit(EXIT_REFUSED, formatRefuse(boundary));
+  }
+}
+
 export async function runReplace(args: CliArgs): Promise<number> {
   if (!args.pkg) throw new SlimExit(EXIT_USAGE, "usage: slim replace <pkg>");
   const project = loadProject();
@@ -69,6 +78,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
     include: config.include,
     ignore: config.ignore,
   });
+  refuseCatalogBoundary(env, args);
 
   if (!args.noTrace) {
     const traceDir = mkdtempSync(join(tmpdir(), "slim-trace-"));
@@ -106,10 +116,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
 
   const symbols = env.symbols.map((s) => s.exportName).filter((n) => n !== "*" && n !== "(scan)");
   const catalog = matchCatalog(args.pkg, symbols);
-  const boundary = catalogBoundary(env, args.pkg);
-  if (boundary && !args.force) {
-    throw new SlimExit(EXIT_REFUSED, formatRefuse(boundary));
-  }
+  refuseCatalogBoundary(env, args);
   const llm = llmConfigFromEnv();
   let source: string;
   let catalogIds: string[] = [];
@@ -220,8 +227,9 @@ export async function runReplace(args: CliArgs): Promise<number> {
 
   if (report.disagreements.length) {
     const first = report.disagreements[0]!;
+    const argsPreview = inspect(first.args, { depth: 4, breakLength: 80, maxArrayLength: 8 });
     const msg = usedCatalog
-      ? `catalog disagreement (Slim bug, not LLM-patched): ${first.symbol} ${first.reason}`
+      ? `catalog disagreement (Slim bug, not LLM-patched): ${first.symbol} ${first.reason}\n${argsPreview}`
       : `fuzz disagreements remain: ${first.symbol} ${first.reason}`;
     throw new SlimExit(EXIT_FAIL, msg);
   }

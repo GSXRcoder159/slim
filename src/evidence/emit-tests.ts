@@ -190,7 +190,7 @@ test("debounce cancel-mid", () => {
     clock.advance(10);
     d.cancel();
     clock.advance(32);
-    eq(n, 0);
+    eq(n, ${name === "throttle" ? 1 : 0});
   } finally {
     clock.restore();
   }

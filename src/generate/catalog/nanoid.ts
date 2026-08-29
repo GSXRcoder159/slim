@@ -77,7 +77,7 @@ export function customAlphabet(
     throw new Error("nanoid: alphabet must not be empty");
   }
   const fallback = defaultSize | 0;
-  return function customNanoid(size: number = fallback): string {
+  return (size: number = fallback): string => {
     const n = size | 0;
     if (n < 0) {
       if (bytes) {

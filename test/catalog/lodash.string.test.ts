@@ -19,6 +19,11 @@ const samples = [
   "",
   ["Foo", "Bar"],
   "don't walk",
+  "Foo Bar\u2603\u0301",
+  "() => undefined",
+  "a+b",
+  "unicodé",
+  "unicodé\x00",
 ];
 
 describe("lodash string case", () => {

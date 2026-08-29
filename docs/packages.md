@@ -50,7 +50,7 @@ Every registered `allCatalogEntries()` id (typical-slice column above may stay s
 | bluebird | `resolve`, `reject`, `all`, `race`, `delay`, `promisify`, `Promise`, `default` |
 | mime-types | `lookup`, `extension` |
 
-Advertised aliases: `lodash-es`, `underscore`, `classnames`, `mime-db`, `mime`, `url-parse`, plus `lodash.<symbol>` per lodash symbol. `qs` / `query-string` are scan-family grouping only, not catalog.
+Advertised aliases: `lodash-es`, `underscore`, `classnames`, `mime-db`, `mime`, `url-parse`, plus `lodash.<symbol>` per lodash symbol. Per-method npm names are lowercase (`lodash.isempty`); `slim replace lodash.isempty` and `slim replace lodash.isEmpty` bind the same `isEmpty` symbol. `qs` / `query-string` are scan-family grouping only, not catalog.
 
 ### What “typical slice” is allowed to miss
 

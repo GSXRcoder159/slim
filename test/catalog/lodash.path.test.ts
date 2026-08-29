@@ -77,6 +77,7 @@ describe("lodash.set", () => {
     assert.equal(set(null, "a", 1), lodash.set(null, "a", 1));
     assert.equal(set(undefined, "a", 1), lodash.set(undefined, "a", 1));
     assert.deepEqual(set({ a: 1 }, [], 9), lodash.set({ a: 1 }, [], 9));
+    assert.deepEqual(set({}, {}, 1), lodash.set({}, {}, 1));
   });
 
   it("does not pollute Object.prototype via __proto__ / constructor / prototype", () => {

@@ -17,6 +17,28 @@ describe("catalogBoundary", () => {
     assert.match(r.whatToDo, /slim replace lodash/);
   });
 
+  it("refuses lodash.template even when only a default import is visible", () => {
+    const env = catalogEnvelope({
+      name: "lodash.template",
+      version: "4.18.1",
+      symbols: ["default"],
+      importKind: "default",
+    });
+    const r = catalogBoundary(env, "lodash.template");
+    assert.ok(r);
+    assert.equal(r.why, "envelope-too-wide");
+    assert.match(r.evidence, /template/);
+  });
+
+  it("allows lodash.isempty as the registered isEmpty slice", () => {
+    const env = catalogEnvelope({
+      name: "lodash.isempty",
+      version: "4.4.0",
+      symbols: ["isEmpty"],
+    });
+    assert.equal(catalogBoundary(env, "lodash.isempty"), null);
+  });
+
   it("refuses moment.locale result members", () => {
     const env = catalogEnvelope({
       name: "moment",

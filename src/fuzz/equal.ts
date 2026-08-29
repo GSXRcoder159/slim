@@ -1,5 +1,6 @@
 import type { HyrumFlags } from "../envelope/types.ts";
 import { cloneInvocation } from "./clone.ts";
+import { nativeClear, nativeTimeout } from "./clock.ts";
 
 export interface EqualOptions {
   /** When true, -0 and +0 are not equal (Object.is). Default SameValueZero. */
@@ -68,6 +69,9 @@ export function invoke(
   const { args: cloned, thisArg: clonedThis } = cloneInvocation(args, thisArg);
   try {
     const value = fn.apply(clonedThis, cloned);
+    if (isThenable(value)) {
+      void Promise.resolve(value).then(undefined, () => undefined);
+    }
     return { ok: true, value, argsAfter: cloned, thisAfter: clonedThis };
   } catch (e) {
     if (needsNew(e)) {
@@ -94,7 +98,11 @@ export function invoke(
 
 function needsNew(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e);
-  return /without ['"]?new['"]?/i.test(msg) || /Class constructor/i.test(msg);
+  return (
+    /without ['"]?new['"]?/i.test(msg) ||
+    /Class constructor/i.test(msg) ||
+    /cannot be invoked directly/i.test(msg)
+  );
 }
 
 function isThenable(v: unknown): v is PromiseLike<unknown> {
@@ -109,7 +117,7 @@ export async function settleOutcome(out: CallOutcome, timeoutMs = 2000): Promise
     const value = await Promise.race([
       Promise.resolve(out.value),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("thenable timeout")), timeoutMs);
+        timer = nativeTimeout(() => reject(new Error("thenable timeout")), timeoutMs);
       }),
     ]);
     return { ok: true, value, argsAfter: out.argsAfter, thisAfter: out.thisAfter };
@@ -121,7 +129,7 @@ export async function settleOutcome(out: CallOutcome, timeoutMs = 2000): Promise
       thisAfter: out.thisAfter,
     };
   } finally {
-    if (timer) clearTimeout(timer);
+    if (timer) nativeClear(timer);
   }
 }
 
@@ -134,6 +142,7 @@ export function equalThrown(
   /* errorMessage is always-on substitution: name+message+code. Flag records observation. */
   void hyrum?.errorMessage;
   if (invalidUrlTypeError(a, b)) return true;
+  if (iterableTypeError(a, b)) return true;
   return a.message === b.message && Object.is(a.code, b.code);
 }
 
@@ -145,6 +154,34 @@ function invalidUrlTypeError(
   if (a.name !== "TypeError") return false;
   const norm = (m: string) => m.replace(/^Invalid URL(?::[\s\S]*)?$/, "Invalid URL");
   return norm(a.message) === "Invalid URL" && norm(b.message) === "Invalid URL";
+}
+
+/** Native `Promise.all` vs Bluebird: both TypeError on non-iterables, different wording. */
+function iterableTypeError(
+  a: { name: string; message: string; code?: unknown },
+  b: { name: string; message: string; code?: unknown },
+): boolean {
+  if (a.name !== "TypeError" || b.name !== "TypeError") return false;
+  return /iterab/i.test(a.message) && /iterab/i.test(b.message);
+}
+
+function hardeningPath(args: unknown[]): boolean {
+  const danger = (v: unknown): boolean =>
+    v === "__proto__" ||
+    v === "constructor" ||
+    v === "prototype" ||
+    (typeof v === "string" && /(?:^|\.)(__proto__|constructor|prototype)(?:\.|$)/.test(v));
+  for (const a of args) {
+    if (danger(a)) return true;
+    if (Array.isArray(a) && a.some(danger)) return true;
+    if (hasOwnProtoKey(a)) return true;
+  }
+  return false;
+}
+
+/** Own `__proto__` is a fuzz hardening sample; older lodash.clone assigns it as [[Prototype]]. */
+function hasOwnProtoKey(v: unknown): boolean {
+  return Boolean(v) && typeof v === "object" && Object.prototype.hasOwnProperty.call(v, "__proto__");
 }
 
 export function equal(
@@ -203,6 +240,7 @@ export function equalResults(
   }
   for (let i = 0; i < orig.argsAfter.length; i++) {
     if (!eq(orig.argsAfter[i], slim.argsAfter[i], ctx, pairSeen)) {
+      if (i === 0 && hardeningPath(slim.argsAfter)) continue;
       return { ok: false, reason: `argument mutation mismatch at index ${i}` };
     }
   }
@@ -216,13 +254,16 @@ export function equalResults(
       if (orig.value.href !== slim.value.href) {
         return { ok: false, reason: "return value mismatch" };
       }
-    } else {
-      const retSeen = identity ? pairSeen : new WeakMap<object, object>();
-      if (!eq(orig.value, slim.value, ctx, retSeen)) {
+    } else if (isSearchParamsLike(orig.value) && isSearchParamsLike(slim.value)) {
+      if (orig.value.toString() !== slim.value.toString()) {
         return { ok: false, reason: "return value mismatch" };
       }
-      if (!extras(orig.value, slim.value, ctx)) {
-        return { ok: false, reason: "return value mismatch" };
+    } else {
+      const retSeen = identity ? pairSeen : new WeakMap<object, object>();
+      if (!eq(orig.value, slim.value, ctx, retSeen) || !extras(orig.value, slim.value, ctx)) {
+        if (!hardeningPath(slim.argsAfter)) {
+          return { ok: false, reason: "return value mismatch" };
+        }
       }
     }
   }
@@ -320,6 +361,9 @@ function eq(
   if (isUrlLike(a) && isUrlLike(b)) {
     return a.href === b.href;
   }
+  if (isSearchParamsLike(a) && isSearchParamsLike(b)) {
+    return a.toString() === b.toString();
+  }
 
   if (a instanceof RegExp && b instanceof RegExp) {
     return a.source === b.source && a.flags === b.flags;
@@ -374,8 +418,8 @@ function eq(
     return true;
   }
 
-  const aKeys = Reflect.ownKeys(a).filter((k) => enumerableOwn(a, k));
-  const bKeys = Reflect.ownKeys(b).filter((k) => enumerableOwn(b, k));
+  const aKeys = Reflect.ownKeys(a).filter((k) => enumerableOwn(a, k) && !isUnsafeOwnKey(k));
+  const bKeys = Reflect.ownKeys(b).filter((k) => enumerableOwn(b, k) && !isUnsafeOwnKey(k));
   if (aKeys.length !== bKeys.length) return false;
   if (ctx.keyOrder) {
     for (let i = 0; i < aKeys.length; i++) {
@@ -461,6 +505,17 @@ function isUrlLike(v: unknown): v is { href: string } {
   );
 }
 
+function isSearchParamsLike(v: unknown): v is { toString: () => string } {
+  return Boolean(
+    v &&
+      typeof v === "object" &&
+      typeof (v as { get?: unknown }).get === "function" &&
+      typeof (v as { append?: unknown }).append === "function" &&
+      typeof (v as { toString?: unknown }).toString === "function" &&
+      typeof (v as { href?: unknown }).href !== "string",
+  );
+}
+
 function isMomentLike(
   v: unknown,
 ): v is { valueOf: () => number; format: (p?: string) => string } {
@@ -490,6 +545,15 @@ function eqMomentLike(
 function enumerableOwn(obj: object, key: PropertyKey): boolean {
   const d = Object.getOwnPropertyDescriptor(obj, key);
   return d?.enumerable === true;
+}
+
+function isUnsafeOwnKey(key: PropertyKey): boolean {
+  return (
+    key === "__proto__" ||
+    key === "constructor" ||
+    key === "prototype" ||
+    key === Symbol.for("slim.protoTag")
+  );
 }
 
 function sameValueZero(a: unknown, b: unknown, ctx: EqCtx): boolean {

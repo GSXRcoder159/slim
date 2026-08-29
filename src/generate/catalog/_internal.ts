@@ -22,6 +22,21 @@ export function isObject(value: unknown): value is object {
   return value != null && (t === "object" || t === "function");
 }
 
+/** lodash `_isIterateeCall`: third arg is the collection when used as a `_.map` iteratee. */
+export function isIterateeCall(value: unknown, index: unknown, object: unknown): boolean {
+  if (!isObject(object)) return false;
+  if (typeof index === "number") {
+    if (!isArrayLike(object) || !isIndex(index)) return false;
+    if (index >= (object as ArrayLike<unknown>).length) return false;
+    const cur = (object as ArrayLike<unknown>)[index];
+    return cur === value || (Number.isNaN(cur as number) && Number.isNaN(value as number));
+  }
+  if (typeof index === "string" && index in object) {
+    return (object as Record<string, unknown>)[index] === value;
+  }
+  return false;
+}
+
 export function isLength(value: unknown): value is number {
   return typeof value === "number" && value >= 0 && value <= MAX_SAFE && Number.isFinite(value);
 }
@@ -149,8 +164,7 @@ export function parseStringPath(path: string): string[] {
 export function castPath(path: unknown, object?: unknown): PropertyKey[] {
   if (Array.isArray(path)) return path.map((p) => toKey(p));
   if (isKey(path, object)) return [toKey(path)];
-  if (typeof path === "string") return parseStringPath(path);
-  return [toKey(path)];
+  return parseStringPath(lodashToString(path));
 }
 
 function readProp(object: object, key: PropertyKey): unknown {
@@ -250,33 +264,64 @@ export function flattenRest(paths: unknown[]): unknown[] {
 
 export function copyEnumerable(object: object): Record<string, unknown> {
   const result: Record<string, unknown> = {};
+  if (
+    isArrayLike(object) &&
+    (Array.isArray(object) || isArguments(object) || isBuffer(object) || isTypedArray(object))
+  ) {
+    const n = (object as ArrayLike<unknown>).length;
+    for (let i = 0; i < n; i++) {
+      defineData(result, String(i), (object as ArrayLike<unknown>)[i]);
+    }
+    for (const key of Object.keys(object)) {
+      if (!(isIndex(key) && Number(key) < n)) {
+        defineData(result, key, (object as Record<string, unknown>)[key]);
+      }
+    }
+    return result;
+  }
   for (const key in object) {
     defineData(result, key, (object as Record<string, unknown>)[key]);
   }
   return result;
 }
 
-function shallowCloneContainer(value: unknown): unknown {
-  if (Array.isArray(value)) return value.slice();
-  if (isObject(value)) return { ...(value as object) };
-  return value;
+function isPlainObject(value: unknown): boolean {
+  if (value == null || typeof value !== "object" || getTag(value) !== "[object Object]") return false;
+  const proto = Object.getPrototypeOf(value);
+  if (proto === null) return true;
+  const Ctor = Object.prototype.hasOwnProperty.call(proto, "constructor") && proto.constructor;
+  return typeof Ctor === "function" && Ctor instanceof Ctor && Ctor === Object;
 }
 
+function omitClonePlain(value: unknown, seen: Map<object, Record<PropertyKey, unknown>>): unknown {
+  if (!isPlainObject(value)) return value;
+  const hit = seen.get(value as object);
+  if (hit) return hit;
+  const out: Record<PropertyKey, unknown> = {};
+  seen.set(value as object, out);
+  for (const key of Object.keys(value as object)) {
+    defineData(out, key, omitClonePlain((value as Record<string, unknown>)[key], seen));
+  }
+  for (const key in value as object) {
+    if (!Object.hasOwn(value as object, key)) {
+      defineData(out, key, omitClonePlain((value as Record<string, unknown>)[key], seen));
+    }
+  }
+  return out;
+}
+
+/** Walk and delete. Nested non-plain values keep identity (lodash `baseUnset`). */
 export function unsetPath(object: Record<string, unknown>, path: unknown): void {
   const segs = castPath(path, object);
   if (segs.length === 0) return;
-  let cur: Record<PropertyKey, unknown> = object;
+  let cur: Record<PropertyKey, unknown> | undefined = object;
   for (let i = 0; i < segs.length - 1; i++) {
     const key = segs[i];
-    if (key === undefined || isUnsafeKey(key)) return;
-    const next = cur[key];
-    if (!isObject(next)) return;
-    const cloned = shallowCloneContainer(next) as Record<PropertyKey, unknown>;
-    defineData(cur, key, cloned);
-    cur = cloned;
+    if (key === undefined || isUnsafeKey(key) || cur == null || !isObject(cur)) return;
+    cur = cur[key] as Record<PropertyKey, unknown>;
   }
   const last = segs[segs.length - 1];
-  if (last === undefined || isUnsafeKey(last)) return;
+  if (last === undefined || isUnsafeKey(last) || cur == null || !isObject(cur)) return;
   delete cur[last];
 }
 
@@ -291,8 +336,13 @@ export function pickPaths(object: unknown, paths: unknown[]): Record<string, unk
 
 export function omitPaths(object: unknown, paths: unknown[]): Record<string, unknown> {
   if (object == null) return {};
-  const result = copyEnumerable(Object(object) as object);
-  for (const p of flattenRest(paths)) unsetPath(result, p);
+  const segsList = flattenRest(paths).map((p) => castPath(p, object));
+  const isDeep = segsList.some((s) => s.length > 1);
+  let result: Record<string, unknown> = copyEnumerable(Object(object) as object);
+  if (isDeep) {
+    result = omitClonePlain(result, new Map()) as Record<string, unknown>;
+  }
+  for (const segs of segsList) unsetPath(result, segs);
   return result;
 }
 
@@ -329,14 +379,18 @@ export function identityFn<T>(value: T): T {
 }
 
 export function words(value: unknown): string[] {
-  const string = lodashToString(value).replace(/['\u2019]/g, "");
+  const string = lodashToString(value)
+    .normalize("NFD")
+    .replace(/['\u2019]/g, "")
+    .replace(/\p{M}+/gu, "");
   if (!string) return [];
   return string
     .replace(/([\p{Ll}\p{N}])(\p{Lu})/gu, "$1 $2")
     .replace(/(\p{Lu}+)(\p{Lu}\p{Ll})/gu, "$1 $2")
     .replace(/(\p{L})(\p{N})/gu, "$1 $2")
     .replace(/(\p{N})(\p{L})/gu, "$1 $2")
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/[\x00-\x2f\x3a-\x40\x5b-\x60\x7b-\xbf\xac\xb1\xd7\xf7]+/g, " ")
+    .replace(/[^\p{L}\p{N}\p{S}]+/gu, " ")
     .trim()
     .split(/\s+/)
     .filter(Boolean);
@@ -366,7 +420,12 @@ function unbox(value: unknown): unknown {
 }
 
 export function baseIsEqual(a: unknown, b: unknown): boolean {
-  return eq(a, b, [], []);
+  try {
+    return eq(a, b, [], []);
+  } catch (e) {
+    if (e instanceof RangeError) return false;
+    throw e;
+  }
 }
 
 function eq(a: unknown, b: unknown, stackA: unknown[], stackB: unknown[]): boolean {
@@ -379,14 +438,14 @@ function eq(a: unknown, b: unknown, stackA: unknown[], stackB: unknown[]): boole
 }
 
 function deepEq(a: unknown, b: unknown, stackA: unknown[], stackB: unknown[]): boolean {
+  const pos = stackA.indexOf(a);
+  if (pos !== -1) return stackB[pos] === b;
   if (isBoxed(a) || isBoxed(b)) return eq(unbox(a), unbox(b), stackA, stackB);
 
   const tagA = getTag(a);
   const tagB = getTag(b);
   if (tagA !== tagB) return false;
 
-  const pos = stackA.indexOf(a);
-  if (pos !== -1) return stackB[pos] === b;
   stackA.push(a);
   stackB.push(b);
 
@@ -538,15 +597,24 @@ export type Iteratee = (value: unknown, key: unknown, collection: unknown) => un
 export function resolveIteratee(iteratee?: unknown): Iteratee {
   if (iteratee == null) return identityFn;
   if (typeof iteratee === "function") return iteratee as Iteratee;
-  if (Array.isArray(iteratee) && iteratee.length >= 2) {
-    const path = iteratee[0];
-    const expected = iteratee[1];
-    return (obj) => baseIsEqual(baseGet(obj, path), expected);
+  if (Array.isArray(iteratee)) {
+    return matchesProperty(iteratee[0], iteratee[1]);
   }
   if (typeof iteratee === "object") {
     return (obj) => isMatch(obj, iteratee);
   }
   return (obj) => baseGet(obj, iteratee);
+}
+
+/** lodash `_baseMatchesProperty`: undefined matches only when the path exists. */
+function matchesProperty(path: unknown, srcValue: unknown): Iteratee {
+  return (object) => {
+    const objValue = baseGet(object, path);
+    if (objValue === srcValue) {
+      return objValue !== undefined || hasIn(object, path);
+    }
+    return baseIsEqual(srcValue, objValue);
+  };
 }
 
 export function forEachCollection(
@@ -579,6 +647,21 @@ export function toArrayLike(value: unknown): unknown[] {
   return [];
 }
 
+/** lodash `_baseSlice`: copies `start..end`, densifying holes to `undefined`. */
+export function baseSlice(array: ArrayLike<unknown>, start: number, end: number): unknown[] {
+  const len = array.length >>> 0;
+  let s = start;
+  let e = end;
+  if (s < 0) s = -s > len ? 0 : len + s;
+  e = e > len ? len : e;
+  if (e < 0) e += len;
+  const length = s > e ? 0 : ((e - s) >>> 0);
+  s >>>= 0;
+  const result: unknown[] = new Array(length);
+  for (let i = 0; i < length; i++) result[i] = array[s + i];
+  return result;
+}
+
 export function arrayKeys(object: unknown): string[] {
   if (object == null) return [];
   const boxed = Object(object) as object;
@@ -604,7 +687,11 @@ function ctorOf<T>(value: T, fallback: new (...args: never[]) => T): new (...arg
 }
 
 export function baseClone(value: unknown, deep: boolean, seen?: Map<object, unknown>): unknown {
-  if (typeof value === "function") return {};
+  if (typeof value === "function") {
+    const out: Record<string, unknown> = {};
+    copyOwn(value as object, out, deep, seen);
+    return out;
+  }
   if (value == null || typeof value !== "object") return value;
 
   const tag = getTag(value);
@@ -674,7 +761,7 @@ export function baseClone(value: unknown, deep: boolean, seen?: Map<object, unkn
     const out: unknown[] = new Array(value.length);
     if (deep && map) map.set(value, out);
     for (let i = 0; i < value.length; i++) {
-      if (i in value) out[i] = deep ? baseClone(value[i], true, map) : value[i];
+      out[i] = deep ? baseClone(value[i], true, map) : value[i];
     }
     for (const key of Object.keys(value)) {
       if (!isIndex(key)) {

@@ -10,6 +10,7 @@ import {
   resolveCallee,
   thisOf,
   unwrapExpr,
+  originCallSite,
 } from "./callee.ts";
 import {
   bindPatternOrIdent,
@@ -37,6 +38,7 @@ export function walkUses(
   const localSet = new Map(bindByLocal.map((b) => [b.local, b]));
   const dynamicAliases = new Map<string, "eval" | "Function">();
   const resultScopes: Array<Map<string, CallSite>> = [new Map()];
+  const callByNode = new WeakMap<ts.Node, CallSite>();
 
   const lookupResult = (name: string): CallSite | undefined => {
     for (let i = resultScopes.length - 1; i >= 0; i--) {
@@ -144,6 +146,7 @@ export function walkUses(
             resultMembers: [],
           };
           callSites.push(site);
+          callByNode.set(node, site);
           const resultLocal = localFromImportCall(ts, node);
           if (resultLocal) resultScopes[resultScopes.length - 1]!.set(resultLocal, site);
         }
@@ -182,6 +185,7 @@ export function walkUses(
             resultMembers: [],
           };
           callSites.push(site);
+          callByNode.set(node, site);
           const resultLocal = localFromImportCall(ts, node);
           if (resultLocal) resultScopes[resultScopes.length - 1]!.set(resultLocal, site);
           noteUnresolvedArgs(ts, sf, node, extra, unknowns, built, info.exportName);
@@ -270,15 +274,6 @@ export function walkUses(
     }
 
     if (ts.isPropertyAccessExpression(node)) {
-      const obj = unwrapExpr(ts, node.expression);
-      const resultSite = ts.isIdentifier(obj) ? lookupResult(obj.text) : undefined;
-      if (resultSite && ts.isIdentifier(node.name)) {
-        const mem = node.name.text;
-        if (!resultSite.resultMembers.includes(mem)) resultSite.resultMembers.push(mem);
-        const set = resultMembers.get(resultSite.exportName) ?? new Set();
-        set.add(mem);
-        resultMembers.set(resultSite.exportName, set);
-      }
       const info = resolveCallee(ts, node.expression, localSet, wanted);
       if (info && !info.dynamic && ts.isIdentifier(node.name)) {
         const parentCall = ts.isCallExpression(node.parent) && node.parent.expression === node;
@@ -308,6 +303,18 @@ export function walkUses(
     }
 
     ts.forEachChild(node, visit);
+    if (ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.name)) {
+      const resultSite = originCallSite(ts, node.expression, lookupResult, callByNode);
+      const fromIdent = ts.isIdentifier(unwrapExpr(ts, node.expression));
+      const invoked = ts.isCallExpression(node.parent) && node.parent.expression === node;
+      if (resultSite && (fromIdent || invoked)) {
+        const mem = node.name.text;
+        if (!resultSite.resultMembers.includes(mem)) resultSite.resultMembers.push(mem);
+        const set = resultMembers.get(resultSite.exportName) ?? new Set();
+        set.add(mem);
+        resultMembers.set(resultSite.exportName, set);
+      }
+    }
     if (ts.isVariableDeclaration(node)) {
       bindPatternOrIdent(ts, node.name, node.initializer, localSet, null);
       const kind = node.initializer ? isDynamicCodeCallee(ts, node.initializer, dynamicAliases) : null;

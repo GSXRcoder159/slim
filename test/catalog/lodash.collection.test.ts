@@ -21,6 +21,8 @@ describe("lodash.map", () => {
     assert.deepEqual(map("ab"), lodash.map("ab"));
     assert.deepEqual(map(null), lodash.map(null));
     assert.deepEqual(map([["a", "b"], ["c"]], 0), lodash.map([["a", "b"], ["c"]], 0));
+    assert.deepEqual(map("x", []), lodash.map("x", []));
+    assert.deepEqual(map([[1, 2, 3]], [1]), lodash.map([[1, 2, 3]], [1]));
   });
 
   it("passes value, key, collection", () => {
@@ -45,6 +47,7 @@ describe("lodash.filter", () => {
     assert.deepEqual(filter({ a: 0, b: 1, c: false, d: 2 }), lodash.filter({ a: 0, b: 1, c: false, d: 2 }));
     assert.deepEqual(filter(null), lodash.filter(null));
     assert.deepEqual(filter([{ a: 1, b: 2 }, { a: 1, b: 3 }], ["b", 2]), lodash.filter([{ a: 1, b: 2 }, { a: 1, b: 3 }], ["b", 2]));
+    assert.deepEqual(filter([{ a: 1 }], []), lodash.filter([{ a: 1 }], []));
   });
 });
 
@@ -79,6 +82,8 @@ describe("lodash.chunk / take / head / last", () => {
     assert.deepEqual(chunk([1, 2, 3, 4, 5], 2.7), lodash.chunk([1, 2, 3, 4, 5], 2.7));
     assert.deepEqual(chunk([1, 2, 3, 4], "2"), lodash.chunk([1, 2, 3, 4], "2"));
     assert.deepEqual(chunk("abcd", 2), lodash.chunk("abcd", 2));
+    assert.deepEqual(chunk("x", undefined, -2), lodash.chunk("x", undefined, -2));
+    assert.deepEqual(chunk(["a", "b", "c"], 2, ["a", "b", "c"]), lodash.chunk(["a", "b", "c"], 2, ["a", "b", "c"]));
   });
 
   it("take / head / last match lodash including empty and null", () => {
@@ -88,6 +93,12 @@ describe("lodash.chunk / take / head / last", () => {
     assert.deepEqual(take([1, 2, 3], 0), lodash.take([1, 2, 3], 0));
     assert.deepEqual(take([1, 2, 3], -1), lodash.take([1, 2, 3], -1));
     assert.deepEqual(take("abcd", 2), lodash.take("abcd", 2));
+    assert.deepEqual(take([1, 2, 3], 2, { extra: true }), lodash.take([1, 2, 3], 2, { extra: true }));
+    const sparse = new Array(3);
+    sparse[2] = 1;
+    assert.deepEqual(take(sparse, 2), lodash.take(sparse, 2));
+    assert.equal(0 in take(sparse, 2), 0 in lodash.take(sparse, 2));
+    assert.deepEqual(chunk(sparse, 2), lodash.chunk(sparse, 2));
     assert.equal(head([1, 2, 3]), lodash.head([1, 2, 3]));
     assert.equal(head([]), lodash.head([]));
     assert.equal(head(null), lodash.head(null));

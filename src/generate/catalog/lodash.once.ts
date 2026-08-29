@@ -10,7 +10,7 @@ export function once<F extends (...args: never[]) => unknown>(func: F): F {
   }
   let called = false;
   let result: ReturnType<F>;
-  return function wrapped(this: unknown, ...args: Parameters<F>): ReturnType<F> {
+  return function (this: unknown, ...args: Parameters<F>): ReturnType<F> {
     if (called) return result;
     called = true;
     result = func.apply(this, args) as ReturnType<F>;

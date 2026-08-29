@@ -272,6 +272,25 @@ test("d.cancel() and d.flush() record result members on symbol and call site", (
   assert.ok(db!.callSites.some((c) => c.resultMembers.includes("cancel") && c.resultMembers.includes("flush")));
 });
 
+test("chained moment().locale().format() records locale as a result member", () => {
+  const env = analyze(
+    {
+      "src/app.ts": `
+        import moment from "moment";
+        export function loc(): string {
+          return moment(new Date(2020, 0, 15)).locale("fr").format("YYYY-MM-DD");
+        }
+      `,
+    },
+    "moment",
+    { dependencies: { lodash: "^4.17.21", moment: "2.30.1" } },
+  );
+  const m = env.symbols.find((s) => s.exportName === "default" || s.exportName === "moment");
+  assert.ok(m, JSON.stringify(env.symbols.map((s) => s.exportName)));
+  assert.ok(m!.resultMembers.includes("locale"), String(m!.resultMembers));
+  assert.ok(m!.resultMembers.includes("format"), String(m!.resultMembers));
+});
+
 test("spread-args emits UnknownSite and argc.max is null", () => {
   const env = analyze({
     "src/app.ts": `

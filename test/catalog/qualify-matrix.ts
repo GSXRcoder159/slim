@@ -230,13 +230,13 @@ function lodashPick(): QualRow {
     na: {
       ...naPure,
       ...naNoThrow,
-      security: naNoSecurity.security,
-      identity: "returns a new object; nested values may alias and are checked in unit tests",
     },
     cases: {
       positive: [{ name: "listed keys", args: [{ a: 1, b: 2, c: 3 }, ["a", "c"]] }],
       negative: [{ name: "null object", args: [null, "a"] }],
       edge: [{ name: "nested path", args: [{ a: { b: 1, c: 2 } }, "a.b"] }],
+      identity: [{ name: "new root object", args: [{ a: 1, b: 2 }, ["a"]] }],
+      security: [{ name: "proto key", args: [{}, ["__proto__"]], mode: "hardened" }],
     },
   };
 }
@@ -248,13 +248,13 @@ function lodashOmit(): QualRow {
     na: {
       ...naPure,
       ...naNoThrow,
-      security: naNoSecurity.security,
-      identity: "returns a new object; nested values may alias and are checked in unit tests",
     },
     cases: {
       positive: [{ name: "listed keys", args: [{ a: 1, b: 2, c: 3 }, ["a", "c"]] }],
       negative: [{ name: "null object", args: [null, "a"] }],
       edge: [{ name: "nested path", args: [{ a: { b: 1, c: 2 }, d: 3 }, "a.b"] }],
+      identity: [{ name: "new root object", args: [{ a: 1, b: 2 }, ["a"]] }],
+      security: [{ name: "proto key", args: [protoSrc, ["x"]], mode: "hardened" }],
     },
   };
 }
@@ -267,12 +267,12 @@ function lodashClone(): QualRow {
       mutation: "clone does not mutate the source",
       timing: naPure.timing,
       throw: naNoThrow.throw,
-      identity: "shallow clone aliases nested values; the returned root is new",
     },
     cases: {
       positive: [{ name: "shallow array", args: [[{ a: 1 }]] }],
       negative: [{ name: "null", args: [null] }],
       edge: [{ name: "function becomes {}", args: [() => 1] }],
+      identity: [{ name: "new root object", args: [{ a: 1 }] }],
       security: [{ name: "proto json", args: [protoSrc], mode: "hardened" }],
     },
   };

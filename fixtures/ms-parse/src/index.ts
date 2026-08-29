@@ -7,3 +7,7 @@ export function hourMs(): number {
 export function formatMs(n: number): string {
   return ms(n);
 }
+
+export function parseToken(token: string): number {
+  return ms(token) as number;
+}

@@ -141,17 +141,19 @@ describe("lodash.clone / cloneDeep", () => {
     assert.equal(({} as { polluted?: boolean }).polluted, undefined);
   });
 
-  it("returns {} for functions and preserves class prototypes", () => {
+  it("returns {} for functions and copies their enumerable own keys", () => {
     assert.deepEqual(clone(() => 1), {});
+    const f = Object.assign(function named() {}, { a: 1 });
+    assert.deepEqual(clone(f), lodash.clone(f));
     class Foo {
       a = 1;
     }
-    const f = cloneDeep(new Foo());
-    assert.ok(f instanceof Foo);
-    assert.equal(f.a, 1);
+    const cloned = cloneDeep(new Foo());
+    assert.ok(cloned instanceof Foo);
+    assert.equal(cloned.a, 1);
   });
 
-  it("clones regex lastIndex and array holes", () => {
+  it("clones regex lastIndex and densifies array holes like lodash", () => {
     const r = /a/g;
     r.lastIndex = 3;
     const rc = clone(r);
@@ -160,7 +162,7 @@ describe("lodash.clone / cloneDeep", () => {
     assert.equal(rc.lastIndex, 3);
     const sparse = [, 1] as unknown[];
     const cs = cloneDeep(sparse);
-    assert.equal(0 in cs, false);
+    assert.equal(0 in cs, 0 in lodash.cloneDeep(sparse));
     assert.equal(cs[1], 1);
   });
 });

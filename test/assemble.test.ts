@@ -84,6 +84,20 @@ test("assemble get+debounce is standalone and names the exports", () => {
   assert.doesNotMatch(src!, /from ["']lodash/);
 });
 
+test("assemble head and first share one binding and do not pull the lodash bundle", () => {
+  for (const symbols of [["head"], ["first"], ["head", "first"]]) {
+    const e = env(symbols, [{ kind: "default", names: ["_"] }]);
+    const src = assembleCatalogModule(e);
+    assert.ok(src, String(symbols));
+    const firstBindings = src!.match(/\bexport\s+(?:const|function)\s+first\b/g) ?? [];
+    assert.equal(firstBindings.length, 1, `${symbols.join(",")}: duplicate first`);
+    assert.match(src!, /export function head/);
+    assert.doesNotMatch(src!, /export function get\b/);
+    const val = validateGenerated(ts, src!, { envelope: e });
+    assert.equal(val.ok, true, `${symbols.join(",")}: ${val.errors.join("; ")}`);
+  }
+});
+
 test("assembled header uses SPDX MIT and exact provenance lines", () => {
   const src = assembleCatalogModule(env(["get", "debounce"]));
   assert.ok(src);

@@ -1,5 +1,5 @@
 import type ts from "typescript";
-import type { ThisBinding } from "../envelope/types.ts";
+import type { ThisBinding, CallSite } from "../envelope/types.ts";
 import type { Binding } from "./model.ts";
 import { exportNameOf } from "./model.ts";
 import { specifierMatches } from "./reexports.ts";
@@ -200,4 +200,20 @@ function isRequireOfWanted(
   if (!arg) return false;
   if (!ts.isStringLiteral(arg) && !ts.isNoSubstitutionTemplateLiteral(arg)) return false;
   return specifierMatches(arg.text, wanted);
+}
+
+export function originCallSite(
+  ts: typeof import("typescript"),
+  expr: ts.Expression,
+  lookupIdent: (name: string) => CallSite | undefined,
+  callByNode: WeakMap<ts.Node, CallSite>,
+): CallSite | undefined {
+  const u = unwrapExpr(ts, expr);
+  if (ts.isIdentifier(u)) return lookupIdent(u.text);
+  if (ts.isCallExpression(u)) {
+    return callByNode.get(u) ?? originCallSite(ts, u.expression, lookupIdent, callByNode);
+  }
+  if (ts.isPropertyAccessExpression(u)) return originCallSite(ts, u.expression, lookupIdent, callByNode);
+  if (ts.isElementAccessExpression(u)) return originCallSite(ts, u.expression, lookupIdent, callByNode);
+  return undefined;
 }

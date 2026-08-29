@@ -35,6 +35,21 @@ describe("lodash.pick / omit", () => {
     assert.equal(omitted.inner, inner);
     assert.deepEqual(omit(Object.create({ a: 1, b: 2 }), "a"), lodash.omit(Object.create({ a: 1, b: 2 }), "a"));
   });
+
+  it("omits sparse array holes as own undefined keys", () => {
+    const sparse = new Array(3);
+    sparse[2] = 1;
+    assert.deepEqual(omit(sparse, ["a"]), lodash.omit(sparse, ["a"]));
+    assert.equal("0" in omit(sparse, ["a"]), true);
+  });
+
+  it("keeps nested Date identity when omitting a nested path", () => {
+    const d = new Date(0);
+    const object = { a: d, b: 1 };
+    const omitted = omit(object, "a.x");
+    assert.equal(omitted.a, d);
+    assert.deepEqual(omit({ a: d, b: 1 }, "a.x"), lodash.omit({ a: d, b: 1 }, "a.x"));
+  });
 });
 
 describe("lodash.keys / values", () => {
@@ -65,6 +80,8 @@ describe("lodash.assign", () => {
     assert.deepEqual(dest, { a: 1, b: 2 });
     assert.deepEqual(assign({ a: 1 }, null, { b: 2 }), lodash.assign({ a: 1 }, null, { b: 2 }));
     assert.deepEqual(assign({ a: 1 }, { a: 2, b: 3 }), lodash.assign({ a: 1 }, { a: 2, b: 3 }));
+    assert.deepEqual(assign({}, "ab"), lodash.assign({}, "ab"));
+    assert.deepEqual(Object.assign({}, assign("x", "y")), Object.assign({}, lodash.assign("x", "y")));
   });
 
   it("does not copy symbols or inherited properties", () => {

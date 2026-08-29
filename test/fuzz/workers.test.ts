@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -353,4 +353,22 @@ test("CJS function module exposes both default and its function name", async () 
   assert.equal(typeof orig.default, "function");
   assert.equal(typeof orig.get, "function");
   assert.equal(orig.get, orig.default);
+});
+
+test("loadOrig aliases anonymous lodash.* default onto the canonical symbol", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-loadorig-pick-"));
+  writeFileSync(join(dir, "package.json"), JSON.stringify({ type: "commonjs" }) + "\n");
+  mkdirSync(join(dir, "node_modules", "lodash.pick"), { recursive: true });
+  writeFileSync(
+    join(dir, "node_modules", "lodash.pick", "package.json"),
+    JSON.stringify({ name: "lodash.pick", main: "index.js" }) + "\n",
+  );
+  writeFileSync(
+    join(dir, "node_modules", "lodash.pick", "index.js"),
+    "module.exports = function(object, paths) { return { a: 1 }; };\n",
+  );
+  const orig = await loadOrig("lodash.pick", dir);
+  assert.equal(typeof orig.default, "function");
+  assert.equal(typeof orig.pick, "function");
+  assert.equal(orig.pick, orig.default);
 });

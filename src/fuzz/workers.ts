@@ -20,6 +20,7 @@ import {
 } from "./debounce-driver.ts";
 import type { HyrumFlags, SlimValue } from "../envelope/types.ts";
 import { deserializeEvent, serializeEvent, snapshot } from "../trace/serialize.ts";
+import { canonicalLodashSymbol } from "../generate/catalog/lodash-names.ts";
 
 const MINIMIZE_MS = 2000;
 /** Per-case stall timeout after worker ready. Independent of --budget-ms extra-case quota. */
@@ -469,10 +470,10 @@ export async function loadOrig(
 ): Promise<Record<string, Function>> {
   const req = createRequire(join(projectRoot, "package.json"));
   try {
-    return unwrapModule(req(spec));
+    return aliasLodashPerMethod(unwrapModule(req(spec)), spec);
   } catch {
     const m = await import(moduleHref(spec));
-    return unwrapModule(m);
+    return aliasLodashPerMethod(unwrapModule(m), spec);
   }
 }
 
@@ -509,6 +510,21 @@ function aliasFnName(out: Record<string, Function>, fn: Function): void {
   if (n && n !== "default" && /^[A-Za-z_$][\w$]*$/.test(n) && typeof out[n] !== "function") {
     out[n] = fn as (...args: unknown[]) => unknown;
   }
+}
+
+/** Per-method lodash packages often export an anonymous CJS function (`lodash.pick`). */
+function aliasLodashPerMethod(
+  out: Record<string, Function>,
+  spec: string,
+): Record<string, Function> {
+  const base = spec.replace(/\\/g, "/").split("/").pop() ?? spec;
+  if (!base.startsWith("lodash.")) return out;
+  const forced = canonicalLodashSymbol(base.slice("lodash.".length));
+  if (!forced) return out;
+  const fn = typeof out.default === "function" ? out.default : undefined;
+  if (typeof fn !== "function") return out;
+  if (typeof out[forced] !== "function") out[forced] = fn;
+  return out;
 }
 
 function pickFns(rec: object): Record<string, Function> {
@@ -623,36 +639,39 @@ export async function runJob(
     }
     return { symbol: job.symbol, ok: true };
   }
-  const raw = withFrozenNow(() =>
-    job.cryptoSeed === undefined
-      ? { o: invoke(origFn, job.args, job.thisArg), s: invoke(slimFn, job.args, job.thisArg) }
-      : {
-          o: withSeededCrypto(job.cryptoSeed, () =>
-            invoke(origFn, cryptoArgs(job.symbol, job.args), job.thisArg),
+  const invokeSide = (fn: Function): ReturnType<typeof invoke> =>
+    withFrozenNow(() =>
+      job.cryptoSeed === undefined
+        ? invoke(fn, job.args, job.thisArg)
+        : withSeededCrypto(job.cryptoSeed, () =>
+            invoke(fn, cryptoArgs(job.symbol, job.args), job.thisArg),
           ),
-          s: withSeededCrypto(job.cryptoSeed, () =>
-            invoke(slimFn, cryptoArgs(job.symbol, job.args), job.thisArg),
-          ),
-        },
-  );
-  const pair = { o: await settleOutcome(raw.o), s: await settleOutcome(raw.s) };
+    );
+  const pair = {
+    o: await settleOutcome(invokeSide(origFn)),
+    s: await settleOutcome(invokeSide(slimFn)),
+  };
   const cmp = equalResults(pair.o, pair.s, job.hyrum);
   if (cmp.ok) {
     return { symbol: job.symbol, ok: true, args: job.args };
   }
   const pred = (a: unknown[]): boolean => {
-    const trial = (): { o: ReturnType<typeof invoke>; s: ReturnType<typeof invoke> } => ({
-      o: invoke(origFn, a, job.thisArg),
-      s: invoke(slimFn, a, job.thisArg),
-    });
-    const both =
-      job.cryptoSeed === undefined
-        ? trial()
-        : {
-            o: withSeededCrypto(job.cryptoSeed, () => invoke(origFn, cryptoArgs(job.symbol, a), job.thisArg)),
-            s: withSeededCrypto(job.cryptoSeed, () => invoke(slimFn, cryptoArgs(job.symbol, a), job.thisArg)),
-          };
-    return !equalResults(both.o, both.s, job.hyrum).ok;
+    try {
+      const trial = (): { o: ReturnType<typeof invoke>; s: ReturnType<typeof invoke> } => ({
+        o: invoke(origFn, a, job.thisArg),
+        s: invoke(slimFn, a, job.thisArg),
+      });
+      const both =
+        job.cryptoSeed === undefined
+          ? trial()
+          : {
+              o: withSeededCrypto(job.cryptoSeed, () => invoke(origFn, cryptoArgs(job.symbol, a), job.thisArg)),
+              s: withSeededCrypto(job.cryptoSeed, () => invoke(slimFn, cryptoArgs(job.symbol, a), job.thisArg)),
+            };
+      return !equalResults(both.o, both.s, job.hyrum).ok;
+    } catch {
+      return false;
+    }
   };
   const minimized = minimize(job.args, pred, MINIMIZE_MS);
   return {

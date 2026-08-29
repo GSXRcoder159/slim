@@ -9,10 +9,35 @@ import { readdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CATALOG_ORACLES } from "../src/generate/catalog/oracles.ts";
+import { LODASH_SYMBOLS } from "../src/generate/catalog/lodash-names.ts";
 
 export const NGRAM_N = 12;
 export const MAX_HITS = 3;
 export const GOLDEN_SLICE = "fixtures/lodash-get-debounce/src/slim/lodash.ts";
+
+export function requiredTargetRels(): string[] {
+  const lodashFiles = [
+    ...new Set(LODASH_SYMBOLS.map((s) => (s === "first" ? "head" : s))),
+  ].map((s) => `src/generate/catalog/lodash.${s}.ts`);
+  return [
+    "src/generate/catalog/_internal.ts",
+    "src/generate/catalog/index.ts",
+    "src/generate/catalog/lodash-names.ts",
+    "src/generate/catalog/oracles.ts",
+    "src/generate/catalog/boundary.ts",
+    "src/generate/catalog/lodash.ts",
+    ...lodashFiles,
+    "src/generate/catalog/moment.ts",
+    "src/generate/catalog/uuid.ts",
+    "src/generate/catalog/ms.ts",
+    "src/generate/catalog/nanoid.ts",
+    "src/generate/catalog/clsx.ts",
+    "src/generate/catalog/whatwgUrl.ts",
+    "src/generate/catalog/bluebird.ts",
+    "src/generate/catalog/mimeTypes.ts",
+    GOLDEN_SLICE,
+  ].sort();
+}
 
 export const ORACLE_PATH_POLICY = [
   { pkg: "moment", prefix: "locale/", class: "intentionally-excluded" },
@@ -131,12 +156,14 @@ export function listOracleRels(opts?: { root?: string; oraclePkgs?: string[] }):
 export function runSimilarityGate(opts?: {
   root?: string;
   oraclePkgs?: string[];
+  requiredRels?: string[];
 }): {
   ok: boolean;
   missing: string[];
   worst: number;
   worstFile: string;
   excluded: string[];
+  targets: string[];
   failed?: string;
 } {
   const root = opts?.root ?? ROOT;
@@ -145,6 +172,7 @@ export function runSimilarityGate(opts?: {
   const catalog = walkFiles(join(root, "src/generate/catalog"), (f) => f.endsWith(".ts"));
   const slices = walkFiles(join(root, "fixtures"), sliceFile);
   const targets = [...catalog, ...slices].sort();
+  const targetRels = targets.map((f) => posix(relative(root, f))).sort();
   const missing: string[] = [];
   const oracles: string[] = [];
   const matched = new Set<string>();
@@ -163,13 +191,14 @@ export function runSimilarityGate(opts?: {
   const excluded = [...matched].sort();
   const fail = (
     failed: string,
-    extra?: Partial<{ missing: string[]; worst: number; worstFile: string; excluded: string[] }>,
+    extra?: Partial<{ missing: string[]; worst: number; worstFile: string; excluded: string[]; targets: string[] }>,
   ) => ({
     ok: false as const,
     missing: extra?.missing ?? missing,
     worst: extra?.worst ?? 0,
     worstFile: extra?.worstFile ?? "",
     excluded: extra?.excluded ?? excluded,
+    targets: extra?.targets ?? targetRels,
     failed,
   });
   if (missing.length) {
@@ -180,6 +209,13 @@ export function runSimilarityGate(opts?: {
   }
   if (!targets.length) {
     return fail("similarity-gate FAIL: no catalog or slice targets");
+  }
+  const required = opts?.requiredRels ?? (full ? requiredTargetRels() : []);
+  for (const rel of required) {
+    const abs = join(root, rel);
+    if (!existsSync(abs) || !targetRels.includes(posix(rel))) {
+      return fail(`similarity-gate FAIL: missing required target ${rel}`);
+    }
   }
   if (full) {
     if (!catalog.length) {
@@ -221,5 +257,5 @@ export function runSimilarityGate(opts?: {
       });
     }
   }
-  return { ok: true, missing: [], worst, worstFile, excluded };
+  return { ok: true, missing: [], worst, worstFile, excluded, targets: targetRels };
 }

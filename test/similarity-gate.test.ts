@@ -10,6 +10,7 @@ import {
   NGRAM_N,
   exclusionIds,
   listOracleRels,
+  requiredTargetRels,
   runSimilarityGate,
 } from "../scripts/similarity.ts";
 import { getCatalog } from "../src/generate/catalog/index.ts";
@@ -50,6 +51,14 @@ test("similarity gate passes against all pinned catalog oracles with classified 
   assert.equal(boundary.why, "envelope-too-wide");
   assert.match(boundary.evidence, /locale/);
   assert.ok(existsSync(join(ROOT, GOLDEN_SLICE)));
+  const required = requiredTargetRels();
+  assert.ok(required.includes(GOLDEN_SLICE));
+  assert.ok(required.includes("src/generate/catalog/lodash.get.ts"));
+  assert.ok(!required.includes("src/generate/catalog/lodash.first.ts"));
+  for (const rel of required) {
+    assert.ok(existsSync(join(ROOT, rel)), `required target missing on disk: ${rel}`);
+    assert.ok(r.targets.includes(rel), `full run omitted required target ${rel}`);
+  }
 });
 
 test("similarity gate fails closed when an oracle tree is missing", () => {
@@ -138,11 +147,34 @@ test("similarity gate fails on a copied-fragment fixture slice", () => {
   }
 });
 
-test("similarity gate worstFile is stable across two runs", () => {
+test("similarity gate worstFile and targets are stable across two runs", () => {
   const a = runSimilarityGate();
   const b = runSimilarityGate();
   assert.equal(a.ok, b.ok);
   assert.equal(a.worst, b.worst);
   assert.equal(a.worstFile, b.worstFile);
   assert.deepEqual(a.excluded, b.excluded);
+  assert.deepEqual(a.targets, b.targets);
+});
+
+test("similarity gate fails when a required catalog target is missing", () => {
+  mkdirSync(TMP, { recursive: true });
+  const tmp = mkdtempSync(join(TMP, "slim-sim-required-"));
+  try {
+    mkdirSync(join(tmp, "src/generate/catalog"), { recursive: true });
+    writeFileSync(join(tmp, "src/generate/catalog/lodash.set.ts"), "export const set = 1;\n");
+    mkdirSync(join(tmp, "node_modules/ms"), { recursive: true });
+    writeFileSync(join(tmp, "node_modules/ms/index.js"), "module.exports = 1;\n");
+    const r = runSimilarityGate({
+      root: tmp,
+      oraclePkgs: ["ms"],
+      requiredRels: ["src/generate/catalog/lodash.get.ts", "src/generate/catalog/lodash.set.ts"],
+    });
+    assert.equal(r.ok, false);
+    assert.match(r.failed ?? "", /missing required target src\/generate\/catalog\/lodash\.get\.ts/);
+    assert.ok(r.targets.includes("src/generate/catalog/lodash.set.ts"));
+    assert.ok(!r.targets.includes("src/generate/catalog/lodash.get.ts"));
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
 });
