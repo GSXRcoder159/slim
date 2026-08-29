@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { writeEvidence } from "../../src/evidence/report.ts";
 import { REPLACE_PR_LABELS, type CreatePrOpts } from "../../src/github/pr.ts";
 import { fileBase } from "../../src/rewrite/paths.ts";
-import { minimalEnvelope, minimalManifest } from "./documents.ts";
+import { minimalEnvelope, minimalManifest, plantReplacementTree } from "./documents.ts";
 
 export function plantReplaceTxn(opts?: { pkg?: string; root?: string }): CreatePrOpts & { pkg: string } {
   const pkg = opts?.pkg ?? "lodash";
@@ -14,6 +14,7 @@ export function plantReplaceTxn(opts?: { pkg?: string; root?: string }): CreateP
   mkdirSync(join(root, "src", "slim"), { recursive: true });
   mkdirSync(join(root, ".slim", pkg), { recursive: true });
   writeFileSync(join(root, moduleRel), "export function get() { return 1; }\n");
+  plantReplacementTree(root, { pkg, moduleRel, module: "export function get() { return 1; }\n" });
   writeFileSync(join(root, ".slim", pkg, "envelope.json"), JSON.stringify(env, null, 2) + "\n");
   writeFileSync(join(root, ".slim", "manifest.json"), JSON.stringify(minimalManifest(env, moduleRel), null, 2) + "\n");
   writeEvidence({

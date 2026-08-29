@@ -8,7 +8,7 @@ import { npmContentDigest } from "../src/release/digest.ts";
 import { canonicalInventory } from "../src/support/inventory.ts";
 import { sourceReceipt, writeReceipt } from "../src/support/receipts.ts";
 import { installFixture, packSlim, ROOT, runSlim } from "./helpers/llm-replace.ts";
-import { minimalEnvelope, minimalEvidence, minimalManifest } from "./helpers/documents.ts";
+import { minimalEnvelope, minimalEvidence, minimalManifest, rebindEvidenceArtifacts } from "./helpers/documents.ts";
 
 const LIVE = process.env.SLIM_UPSTREAM_LIVE === "1";
 const FIXTURE = "ms-watch";
@@ -52,6 +52,7 @@ function writeWatchFixture(dest: string): void {
     join(dest, "src", "slim", "ms.hardened.test.ts"),
     `import { test } from "node:test";\ntest("hardened", () => {});\n`,
   );
+  rebindEvidenceArtifacts(dest, "ms", "src/slim");
 }
 
 test("support inventory advertises osv and npm-registry as required live sources", () => {

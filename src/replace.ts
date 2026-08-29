@@ -340,6 +340,30 @@ export async function runReplace(args: CliArgs): Promise<number> {
       lockfile: project.lockfile,
       installCommand: installCommandFor(project.lockfile),
     };
+
+    const runner = detectRunner(project.root);
+    const testRunner = runner.kind === "vitest" ? "vitest" : "node:test";
+    const testAbs = join(project.root, standingTestRel);
+    txn.prepareWrite(testAbs);
+    const modSpec = toRelativeSpecifier(testAbs, slimPath);
+    emitStandingTests({
+      root: project.root,
+      outDir,
+      pkg: fileBase(env.package.name),
+      env,
+      traces: env.traces,
+      runner: testRunner,
+      moduleSpecifier: modSpec,
+    });
+    const hardenedAbs = slimPath.replace(/\.(ts|js|mjs|cjs)$/, ".hardened.test.ts");
+    txn.prepareWrite(hardenedAbs);
+    emitHardenedGetSetTest({
+      root: project.root,
+      moduleRel: relative(project.root, slimPath),
+      runner: testRunner,
+    });
+    injectFail("after-standing");
+
     const evidenceDir = join(project.root, ".slim", env.package.name);
     txn.prepareWrite(join(evidenceDir, "evidence.md"));
     txn.prepareWrite(join(evidenceDir, "evidence.json"));
@@ -383,29 +407,6 @@ export async function runReplace(args: CliArgs): Promise<number> {
           },
     });
     injectFail("after-evidence");
-
-    const runner = detectRunner(project.root);
-    const testRunner = runner.kind === "vitest" ? "vitest" : "node:test";
-    const testAbs = join(project.root, standingTestRel);
-    txn.prepareWrite(testAbs);
-    const modSpec = toRelativeSpecifier(testAbs, slimPath);
-    emitStandingTests({
-      root: project.root,
-      outDir,
-      pkg: fileBase(env.package.name),
-      env,
-      traces: env.traces,
-      runner: testRunner,
-      moduleSpecifier: modSpec,
-    });
-    const hardenedAbs = slimPath.replace(/\.(ts|js|mjs|cjs)$/, ".hardened.test.ts");
-    txn.prepareWrite(hardenedAbs);
-    emitHardenedGetSetTest({
-      root: project.root,
-      moduleRel: relative(project.root, slimPath),
-      runner: testRunner,
-    });
-    injectFail("after-standing");
 
     txn.prepareWrite(join(project.root, ".slim", "manifest.json"));
     writeManifest(project.root, env, slimPath);

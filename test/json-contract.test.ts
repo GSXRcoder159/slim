@@ -12,7 +12,7 @@ import { existsSync, symlinkSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { ENVELOPE_VERSION, emptyHyrum } from "../src/envelope/types.ts";
 import { sourceOk } from "../src/upstream/status.ts";
-import { minimalEnvelope, minimalEvidence, minimalManifest } from "./helpers/documents.ts";
+import { minimalEnvelope, minimalEvidence, minimalManifest, rebindEvidenceArtifacts } from "./helpers/documents.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -360,6 +360,7 @@ test("upstream --json failure is one document with findings, human on stderr", a
   writeFileSync(join(root, ".slim", "lodash", "evidence.json"), JSON.stringify(minimalEvidence(env)));
   writeFileSync(join(root, "src", "slim", "lodash.test.ts"), `import { test } from "node:test";\ntest("standing", () => {});\n`);
   writeFileSync(join(root, "src", "slim", "lodash.hardened.test.ts"), `import { test } from "node:test";\ntest("hardened", () => {});\n`);
+  rebindEvidenceArtifacts(root, "lodash", "src/slim");
   const { runUpstream } = await import("../src/upstream.ts");
   const { code, stdout, stderr } = await capture(async () => {
     try {

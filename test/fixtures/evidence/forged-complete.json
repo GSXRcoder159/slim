@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "slogan": "EVIDENCE, NOT PROOF",
+  "package": {
+    "name": "lodash",
+    "version": "4.17.21",
+    "family": "lodash",
+    "subpath": ""
+  },
+  "envelopeHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "symbols": ["get"],
+  "callSites": 0,
+  "unknowns": 0,
+  "byteDelta": {
+    "originalMin": 1000,
+    "replacement": 100,
+    "gzipOriginal": 360
+  },
+  "fuzz": {
+    "cases": 1,
+    "comparisons": 1,
+    "timerCases": 0,
+    "tracesReplayed": 0,
+    "wallMs": 1,
+    "seed": 1,
+    "disagreements": 0
+  },
+  "coverageHoles": [],
+  "residualRisk": ["strong evidence, not proof"],
+  "revert": {
+    "package": "lodash",
+    "version": "4.17.21",
+    "module": "src/slim/lodash.ts",
+    "tests": "src/slim/lodash.test.ts",
+    "cjsCompanion": null,
+    "rewrites": [],
+    "lockfile": "npm",
+    "installCommand": "npm install"
+  },
+  "generation": {
+    "kind": "catalog",
+    "catalogIds": ["lodash.get"],
+    "attempts": 1,
+    "specSource": "catalog",
+    "counterexamples": []
+  },
+  "artifacts": {
+    "moduleDigest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "standingDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "hardeningDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "oracleVersion": "4.17.21",
+    "fixtureRevision": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+  }
+}

@@ -1,6 +1,5 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { Envelope } from "../envelope/types.ts";
 import { hashEnvelope } from "../envelope/hash.ts";
 import { gzipGuess } from "../size/estimate.ts";
@@ -8,6 +7,7 @@ import { maybeBundleBytes, type BundleDelta } from "../size/bundle.ts";
 import { formatRevert, type RevertPlan } from "../rewrite/revert.ts";
 import type { SpecSource } from "../generate/public-api.ts";
 import { assertDocument } from "../schema/documents.ts";
+import { artifactDigests, sha256Bytes, type ArtifactDigests } from "./digests.ts";
 
 const EXAMPLE_CAP = 500;
 
@@ -53,6 +53,7 @@ export interface EvidenceJson {
   residualRisk: string[];
   revert: RevertPlan;
   generation?: GenerationEvidence;
+  artifacts: ArtifactDigests;
 }
 
 export function writeEvidence(opts: {
@@ -75,6 +76,14 @@ export function writeEvidence(opts: {
   const residual = residualRisk(opts.env, opts.fuzz);
   const bundle = opts.bundle === undefined ? maybeBundleBytes(opts.root) : opts.bundle;
   const generation = completeGeneration(opts.catalogIds, opts.generation);
+  const artifacts = artifactDigests({
+    root: opts.root,
+    pkg: opts.env.package.name,
+    outDir: dirname(opts.revert.module).replace(/\\/g, "/") || ".",
+    moduleRel: opts.revert.module,
+    oracleVersion: opts.env.package.version,
+    moduleSource: opts.moduleSource,
+  });
   const json: EvidenceJson = {
     schemaVersion: EVIDENCE_SCHEMA_VERSION,
     slogan: "EVIDENCE, NOT PROOF",
@@ -94,22 +103,14 @@ export function writeEvidence(opts: {
     residualRisk: residual,
     revert: opts.revert,
     generation,
+    artifacts,
   };
   assertDocument("evidence", json);
   const jsonPath = join(dir, "evidence.json");
   const mdPath = join(dir, "evidence.md");
   writeFileSync(jsonPath, JSON.stringify(json, null, 2) + "\n");
-  const evidenceHash = createHash("sha256").update(readFileSync(jsonPath)).digest("hex");
-  const moduleDigest = (() => {
-    if (opts.moduleSource !== undefined) {
-      return createHash("sha256").update(opts.moduleSource).digest("hex");
-    }
-    const moduleAbs = join(opts.root, opts.revert.module);
-    return existsSync(moduleAbs)
-      ? createHash("sha256").update(readFileSync(moduleAbs)).digest("hex")
-      : undefined;
-  })();
-  const md = renderEvidenceMd(json, opts.env, opts.catalogIds, { evidenceHash, moduleDigest });
+  const evidenceHash = sha256Bytes(readFileSync(jsonPath));
+  const md = renderEvidenceMd(json, opts.env, opts.catalogIds, { evidenceHash });
   writeFileSync(mdPath, md);
   return { mdPath, jsonPath, residualRisk: residual };
 }
@@ -139,7 +140,7 @@ export function renderEvidenceMd(
   json: EvidenceJson,
   env: Envelope,
   catalogIds: string[] = [],
-  digests: { evidenceHash?: string; moduleDigest?: string } = {},
+  digests: { evidenceHash?: string } = {},
 ): string {
   const orig = json.byteDelta.originalMin;
   const delta =
@@ -171,7 +172,7 @@ Differential fuzzing over the inferred envelope is strong evidence, not proof.
 - Call sites: ${json.callSites}
 - Unknowns: ${json.unknowns}
 - Catalog: ${catalogIds.join(", ") || json.generation?.catalogIds.join(", ") || "LLM"}
-- Envelope hash: \`${json.envelopeHash}\`${digestMd(digests)}${generationMd(json)}
+- Envelope hash: \`${json.envelopeHash}\`${digestMd(json, digests)}${generationMd(json)}
 
 ## 3. Byte delta
 
@@ -209,10 +210,17 @@ ${json.residualRisk.map((x) => `- ${x}`).join("\n")}
 `;
 }
 
-function digestMd(digests: { evidenceHash?: string; moduleDigest?: string }): string {
+function digestMd(json: EvidenceJson, digests: { evidenceHash?: string }): string {
   const lines: string[] = [];
   if (digests.evidenceHash) lines.push(`- Evidence hash: \`${digests.evidenceHash}\``);
-  if (digests.moduleDigest) lines.push(`- Module digest: \`${digests.moduleDigest}\``);
+  const a = json.artifacts;
+  if (a) {
+    lines.push(`- Module digest: \`${a.moduleDigest}\``);
+    lines.push(`- Standing digest: \`${a.standingDigest}\``);
+    lines.push(`- Hardening digest: \`${a.hardeningDigest}\``);
+    lines.push(`- Oracle version: \`${a.oracleVersion}\``);
+    lines.push(`- Fixture revision: \`${a.fixtureRevision}\``);
+  }
   return lines.length ? `\n${lines.join("\n")}` : "";
 }
 

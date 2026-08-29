@@ -11,7 +11,7 @@ import { sliceExposure } from "../src/upstream/slice.ts";
 import { runUpstream, type UpstreamDeps } from "../src/upstream.ts";
 import type { OsvVuln } from "../src/upstream/osv.ts";
 import { sourceErr, sourceOk } from "../src/upstream/status.ts";
-import { minimalEvidence, minimalManifest } from "./helpers/documents.ts";
+import { minimalEvidence, minimalManifest, rebindEvidenceArtifacts } from "./helpers/documents.ts";
 
 test("CWE-1321 with get in envelope is exposed", () => {
   const exp = sliceExposure(
@@ -140,6 +140,7 @@ function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: strin
       }),
     );
   }
+  rebindEvidenceArtifacts(root, pkg, "src/slim");
   return { root, moduleRel, pkg, symbols };
 }
 
@@ -389,6 +390,7 @@ test("missing oracle for one exposed package blocks every rewrite", async () => 
     module: "src/slim/underscore.ts",
   };
   writeFileSync(join(root, ".slim/manifest.json"), JSON.stringify(man, null, 2));
+  rebindEvidenceArtifacts(root, "underscore", "src/slim");
   const before2 = readFileSync(join(root, "src/slim/underscore.ts"), "utf8");
   let assembled = 0;
   const deps = baseDeps({
@@ -893,6 +895,7 @@ test("second-package regen failure rolls back the first package", async () => {
     module: "src/slim/underscore.ts",
   };
   writeFileSync(join(root, ".slim/manifest.json"), JSON.stringify(man, null, 2));
+  rebindEvidenceArtifacts(root, "underscore", "src/slim");
   const before2 = readFileSync(join(root, "src/slim/underscore.ts"), "utf8");
   const beforeMan = readFileSync(join(root, ".slim/manifest.json"), "utf8");
   const deps = baseDeps({

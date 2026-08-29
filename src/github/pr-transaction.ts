@@ -5,11 +5,11 @@
  * replacement (or upstream) transaction before any git mutation.
  */
 
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { hashEnvelope, type Envelope } from "../envelope/types.ts";
 import type { EvidenceJson } from "../evidence/report.ts";
+import { sha256File } from "../evidence/digests.ts";
 import { EXIT_FAIL, SlimExit } from "../exit.ts";
 import { fileBase } from "../rewrite/paths.ts";
 
@@ -29,13 +29,7 @@ export interface PrRequest {
   pkg?: string;
 }
 
-export function sha256Bytes(buf: Buffer | string): string {
-  return createHash("sha256").update(buf).digest("hex");
-}
-
-export function sha256File(path: string): string {
-  return sha256Bytes(readFileSync(path));
-}
+export { sha256Bytes, sha256File } from "../evidence/digests.ts";
 
 function field(body: string, re: RegExp, name: string): string {
   const m = body.match(re);

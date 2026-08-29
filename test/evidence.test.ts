@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeEnvelope } from "../src/envelope/close.ts";
 import { renderEvidenceMd, writeEvidence, type EvidenceJson } from "../src/evidence/report.ts";
+import { boundArtifacts, plantReplacementTree } from "./helpers/documents.ts";
 import { findBundleEntry, maybeBundleBytes } from "../src/size/bundle.ts";
 import { ENVELOPE_VERSION, emptyHyrum, envelopeForDisk } from "../src/envelope/types.ts";
 import type { Envelope } from "../src/envelope/types.ts";
@@ -66,6 +67,8 @@ const fuzz: EvidenceJson["fuzz"] = {
   disagreements: 0,
 };
 
+const artifacts = boundArtifacts({ oracleVersion: "1.0.0" });
+
 test("evidence markdown has sections 1 through 8 in order", () => {
   const json: EvidenceJson = {
     schemaVersion: 1,
@@ -80,6 +83,7 @@ test("evidence markdown has sections 1 through 8 in order", () => {
     coverageHoles: ["zero traces replayed"],
     residualRisk: ["always"],
     revert: sampleRevert(),
+    artifacts,
   };
   const md = renderEvidenceMd(json, env(), ["lodash.get"]);
   assert.match(md, /^# EVIDENCE, NOT PROOF/m);
@@ -109,6 +113,7 @@ test("Edge is n/a for non-lodash families", () => {
     coverageHoles: [],
     residualRisk: ["always"],
     revert: sampleRevert(),
+    artifacts,
   };
   const md = renderEvidenceMd(json, e, []);
   assert.match(md, /## 4\. Edge\n\nn\/a/);
@@ -133,6 +138,7 @@ test("byte delta includes esbuild dry-run line when bundle is present", () => {
     coverageHoles: [],
     residualRisk: ["always"],
     revert: sampleRevert(),
+    artifacts,
   };
   const md = renderEvidenceMd(json, env(), []);
   assert.match(md, /esbuild dry-run of `src\/index\.ts`: 1234 B/);
@@ -140,6 +146,7 @@ test("byte delta includes esbuild dry-run line when bundle is present", () => {
 
 test("writeEvidence residual risk is never empty", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-ev-"));
+  plantReplacementTree(root);
   const { mdPath } = writeEvidence({
     root,
     env: env(),
@@ -161,6 +168,7 @@ test("zero traces cannot claim trace-closed and residual risk names unobserved r
   assert.notEqual(closed.closure.confidence, "trace-closed");
   assert.match(closed.closure.reason, /runtime distribution/);
   const root = mkdtempSync(join(tmpdir(), "slim-ev-static-"));
+  plantReplacementTree(root);
   const { mdPath } = writeEvidence({
     root,
     env: closed,
@@ -179,6 +187,7 @@ test("zero traces cannot claim trace-closed and residual risk names unobserved r
 
 test("allow-flaky evidence is marked not production-ready", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-ev-flaky-"));
+  plantReplacementTree(root, { pkg: "chance", moduleRel: "src/slim/chance.ts" });
   const cryptoEnv = env();
   cryptoEnv.cryptoRandom = true;
   cryptoEnv.package = { name: "chance", version: "1.0.0", family: "chance", subpath: "." };
@@ -202,6 +211,7 @@ test("allow-flaky evidence is marked not production-ready", () => {
 
 test("LLM evidence records provenance and redacts secrets", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-ev-llm-"));
+  plantReplacementTree(root, { pkg: "ms", moduleRel: "src/slim/ms.ts" });
   const { mdPath, jsonPath } = writeEvidence({
     root,
     env: env("ms"),
@@ -244,6 +254,7 @@ test("LLM evidence records provenance and redacts secrets", () => {
 
 test("catalog evidence has kind catalog and empty counterexamples", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-ev-cat-"));
+  plantReplacementTree(root);
   const { jsonPath } = writeEvidence({
     root,
     env: env(),
@@ -264,8 +275,7 @@ test("catalog evidence has kind catalog and empty counterexamples", () => {
 
 test("writeEvidence records evidence hash and module digest in markdown", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-ev-dig-"));
-  mkdirSync(join(root, "src", "slim"), { recursive: true });
-  writeFileSync(join(root, "src", "slim", "lodash.ts"), "export function get() { return 1; }\n");
+  plantReplacementTree(root);
   const { mdPath, jsonPath } = writeEvidence({
     root,
     env: env(),
@@ -282,12 +292,17 @@ test("writeEvidence records evidence hash and module digest in markdown", () => 
   const modBytes = readFileSync(join(root, "src", "slim", "lodash.ts"));
   const evidenceHash = createHash("sha256").update(jsonBytes).digest("hex");
   const moduleDigest = createHash("sha256").update(modBytes).digest("hex");
-  assert.match(md, new RegExp(`Evidence hash: \`${evidenceHash}\``));
-  assert.match(md, new RegExp(`Module digest: \`${moduleDigest}\``));
+  const json = JSON.parse(readFileSync(jsonPath, "utf8")) as EvidenceJson;
+  assert.equal(json.artifacts.moduleDigest, moduleDigest);
+  assert.match(md, new RegExp(`Standing digest: \`${json.artifacts.standingDigest}\``));
+  assert.match(md, new RegExp(`Hardening digest: \`${json.artifacts.hardeningDigest}\``));
+  assert.match(md, new RegExp(`Fixture revision: \`${json.artifacts.fixtureRevision}\``));
+  assert.equal(json.artifacts.oracleVersion, "1.0.0");
 });
 
 test("writeEvidence hashes moduleSource when the slice is not on disk yet", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-ev-src-"));
+  plantReplacementTree(root);
   const source = "export function get() { return 2; }\n";
   const { mdPath } = writeEvidence({
     root,
@@ -354,6 +369,7 @@ test("traced evidence and disk envelope omit raw traces, maps, and stacks", () =
   const disk = envelopeForDisk(traced);
   assert.deepEqual(disk.traces, []);
   const root = mkdtempSync(join(tmpdir(), "slim-ev-hygiene-"));
+  plantReplacementTree(root);
   const { mdPath, jsonPath } = writeEvidence({
     root,
     env: traced,

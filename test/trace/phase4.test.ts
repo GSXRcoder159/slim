@@ -13,6 +13,7 @@ import { wrapExports } from "../../src/trace/proxy.ts";
 import { slimVitest, slimWrapperSource } from "../../src/trace/vitest.ts";
 import { closeEnvelope } from "../../src/envelope/close.ts";
 import { writeEvidence } from "../../src/evidence/report.ts";
+import { plantReplacementTree } from "../helpers/documents.ts";
 import { ENVELOPE_VERSION, emptyHyrum } from "../../src/envelope/types.ts";
 import type { Envelope, TraceEvent } from "../../src/envelope/types.ts";
 
@@ -722,6 +723,7 @@ test("closeEnvelope staticOnly names --no-trace and cannot be trace-closed", () 
   assert.notEqual(closed.closure.confidence, "trace-closed");
   assert.match(closed.closure.reason, /--no-trace/);
   const root = mkdtempSync(join(tmpdir(), "slim-p4-ev-"));
+  plantReplacementTree(root, { pkg: "pkg", moduleRel: "src/slim/pkg.ts" });
   const { mdPath, jsonPath } = writeEvidence({
     root,
     env: closed,

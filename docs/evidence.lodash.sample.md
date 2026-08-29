@@ -14,8 +14,12 @@ Differential fuzzing over the inferred envelope is strong evidence, not proof.
 - Unknowns: 0
 - Catalog: lodash.get, lodash.debounce
 - Envelope hash: `217c102e5c34a74ba017061f1a5574a2ada6cd6a6497e6797e6eb97eafa706c4`
-- Evidence hash: `b79e20bfa9eeda8db25b2d4b7bcf3b7f13124d6b46c34450c560f0db56841ba1`
+- Evidence hash: `862c1ff9409241772de9b806b0487f9f27cc442350a566df54636a5c8080e0ae`
 - Module digest: `0f98884df95f6c2d6151847b635b54318e2b031f112ded8047f9e1019a07c366`
+- Standing digest: `ffe575db9c9e1fb5645db8b3dd2c52959f7ceaf0ad6c963eba6616d2dbe75e2d`
+- Hardening digest: `c2b78a75e949486cb0cdaaa2d65f01d4bb80e2ecd85d2f3c049c28762e4ee090`
+- Oracle version: `4.17.21`
+- Fixture revision: `fa3f39bf4374d01aa0b197a575ab79a6e5ba7ebc985beef46d59212ae9833d8d`
 
 ## 3. Byte delta
 

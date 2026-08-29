@@ -32,7 +32,7 @@ export type CheckSpawn = (
   command: string,
   args?: readonly string[],
   options?: SpawnSyncOptions,
-) => Pick<SpawnSyncReturns<string | Buffer>, "status"> & {
+) => Pick<SpawnSyncReturns<string | Buffer>, "status" | "signal" | "error"> & {
   stdout?: string | Buffer | null;
   stderr?: string | Buffer | null;
 };
@@ -69,6 +69,26 @@ function childText(chunk: string | Buffer | null | undefined): string {
   return typeof chunk === "string" ? chunk : chunk.toString("utf8");
 }
 
+export const DEFAULT_CHECK_CHILD_TIMEOUT_MS = 600_000;
+
+export function checkChildTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.SLIM_CHECK_CHILD_TIMEOUT_MS?.trim();
+  if (!raw) return DEFAULT_CHECK_CHILD_TIMEOUT_MS;
+  if (!/^[1-9][0-9]*$/.test(raw)) {
+    throw new SlimExit(EXIT_FAIL, "SLIM_CHECK_CHILD_TIMEOUT_MS must be a positive integer");
+  }
+  const n = Number(raw);
+  if (!Number.isSafeInteger(n) || n <= 0) {
+    throw new SlimExit(EXIT_FAIL, "SLIM_CHECK_CHILD_TIMEOUT_MS must be a positive integer");
+  }
+  return n;
+}
+
+function childTimedOut(r: { error?: NodeJS.ErrnoException | Error | null }): boolean {
+  const err = r.error as NodeJS.ErrnoException | undefined;
+  return err?.code === "ETIMEDOUT";
+}
+
 function spawnChecked(
   spawn: CheckSpawn,
   command: string,
@@ -84,6 +104,7 @@ function spawnChecked(
     stdio: json ? ["ignore", "pipe", "pipe"] : "inherit",
     env: withLocalBinPath(root),
     ...scriptSpawnOpts(file),
+    timeout: checkChildTimeoutMs(),
   });
   if (json) {
     const out = childText(r.stdout);
@@ -91,9 +112,14 @@ function spawnChecked(
     if (out) process.stderr.write(out);
     if (err) process.stderr.write(err);
   }
-  if (r.status !== 0) {
-    throw new SlimExit(EXIT_FAIL, failMessage);
+  if (r.status === 0) return;
+  if (childTimedOut(r)) {
+    throw new SlimExit(EXIT_FAIL, `${failMessage} timed out`);
   }
+  if (r.status == null && r.signal) {
+    throw new SlimExit(EXIT_FAIL, `${failMessage} terminated abnormally (${r.signal})`);
+  }
+  throw new SlimExit(EXIT_FAIL, failMessage);
 }
 
 export function runStandingTests(
@@ -347,6 +373,7 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
       config.replacements[pkg]?.module,
     );
     if (state.fatal && !json) throw state.fatal;
+    const stateBroken = state.drift.length > 0;
     const residualRisk = state.residualRisk;
     if (!existsSync(envPath)) {
       emitDiag(args, `missing envelope ${envPath}`);
@@ -433,6 +460,9 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
       standing = "missing";
       emitDiag(args, `${pkg}: missing standing tests`);
       failed = true;
+    } else if (stateBroken) {
+      standing = "fail";
+      failed = true;
     } else {
       try {
         runStandingTests(project.root, pkg, config.outDir, spawn, json);
@@ -441,6 +471,7 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
         standing = "fail";
         failed = true;
         if (!json) throw err;
+        if (err instanceof SlimExit) emitDiag(args, err.message);
       }
     }
     const ok = drift.length === 0 && extraUnknowns.length === 0 && standing === "pass";
@@ -474,6 +505,7 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
   } catch (err) {
     failed = true;
     if (!json) throw err;
+    if (err instanceof SlimExit) emitDiag(args, err.message);
   }
   const exit = failed ? EXIT_FAIL : EXIT_OK;
   const report: CheckReport = {

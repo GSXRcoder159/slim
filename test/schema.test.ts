@@ -200,6 +200,16 @@ test("evidence, manifest, inventory, receipt, and artifact-identity schemas are 
   assert.equal(evidence.properties.schemaVersion.const, 1);
   assert.ok(evidence.required.includes("schemaVersion"));
   assert.ok(evidence.required.includes("generation"));
+  assert.ok(evidence.required.includes("artifacts"));
+  const artifacts = (
+    evidence as {
+      $defs?: { artifacts?: { required?: string[] } };
+    }
+  ).$defs?.artifacts?.required;
+  assert.deepEqual(
+    (artifacts ?? []).slice().sort(),
+    ["fixtureRevision", "hardeningDigest", "moduleDigest", "oracleVersion", "standingDigest"],
+  );
   const man = JSON.parse(readFileSync(join(ROOT, "docs/manifest.schema.json"), "utf8")) as {
     required: string[];
   };

@@ -59,9 +59,11 @@ Usage:
       --json             One schema-valid document on stdout (docs/check.schema.json)
 
 No network. Fails on semantic envelope drift, missing or malformed
-evidence, missing standing/hardening tests, malformed envelopes, or a
-failing standing/hardening suite. Prefers scripts.slim:evidence.
-Empty replacements exit 0.
+evidence, unbound or forged artifact digests, missing standing/hardening
+tests, malformed envelopes, a failing standing/hardening suite, child
+timeout, or abnormal child termination. Prefers scripts.slim:evidence.
+Empty replacements exit 0. Child timeout: 600000 ms, or
+SLIM_CHECK_CHILD_TIMEOUT_MS.
 Example:  slim check
 ------------------------------------------------------------------------
 slim bloat — fail if a fat production dependency has no Slim replacement

@@ -247,6 +247,22 @@ export async function applyUpstreamFix(
     );
 
     txn.writeFile(moduleAbs, source);
+    const runner = detectRunner(opts.root);
+    const testRunner = runner.kind === "vitest" ? "vitest" : "node:test";
+    txn.prepareWrite(standingAbs);
+    txn.snapshot(join(opts.root, "package.json"));
+    emitStandingTests({
+      root: opts.root,
+      outDir: opts.config.outDir,
+      pkg: opts.pkg,
+      env: envWrite,
+      traces: env.traces,
+      runner: testRunner,
+      moduleSpecifier: toRelativeSpecifier(standingAbs, moduleAbs),
+    });
+    txn.prepareWrite(hardenedAbs);
+    emitHardenedGetSetTest({ root: opts.root, moduleRel: opts.rec.module, runner: testRunner });
+
     txn.prepareWrite(join(pkgSlimDir, "evidence.md"));
     txn.prepareWrite(join(pkgSlimDir, "evidence.json"));
     const written = writeEvidence({
@@ -306,22 +322,6 @@ export async function applyUpstreamFix(
       version: oracle.kind === "new" ? pinTo : undefined,
     }, txn);
     if (oracle.kind === "new") bumpSlimJsonPin(opts.root, opts.pkg, pinTo, txn);
-
-    const runner = detectRunner(opts.root);
-    const testRunner = runner.kind === "vitest" ? "vitest" : "node:test";
-    txn.prepareWrite(standingAbs);
-    txn.snapshot(join(opts.root, "package.json"));
-    emitStandingTests({
-      root: opts.root,
-      outDir: opts.config.outDir,
-      pkg: opts.pkg,
-      env: envWrite,
-      traces: env.traces,
-      runner: testRunner,
-      moduleSpecifier: toRelativeSpecifier(standingAbs, moduleAbs),
-    });
-    txn.prepareWrite(hardenedAbs);
-    emitHardenedGetSetTest({ root: opts.root, moduleRel: opts.rec.module, runner: testRunner });
 
     standing(opts.root, opts.pkg, opts.config.outDir, undefined, Boolean(opts.args.json));
     hardened(opts.root, opts.rec.module, undefined, Boolean(opts.args.json));

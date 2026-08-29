@@ -132,9 +132,9 @@ CI. No network. No generation.
 For each recorded slice (or one pkg):
 
 1. Re-analyze call sites. Fail on added symbols, new call shapes (arity, literals, options), new result members, new import forms, new env tags, or new unknowns — even when the symbol name is unchanged.
-2. Fail on missing/malformed envelopes, missing/malformed evidence (including hash-only stubs), missing `.slim/manifest.json`, envelope hash mismatch vs evidence/manifest, version mismatch, or missing slice exports.
-3. Run `scripts.slim:evidence` if set, else `src/slim/<pkg>.test.ts` via `node --test`. Missing standing tests fail. Missing `<slice>.hardened.test.ts` fails. Child test output is inherited in human mode and copied to stderr under `--json` so stdout stays one JSON document.
-4. Fail if the slice, standing tests, or hardening tests import the original package.
+2. Fail on missing/malformed envelopes, missing/malformed evidence (including hash-only stubs and complete-looking forgeries), missing `.slim/manifest.json`, envelope hash mismatch vs evidence/manifest, artifact digest mismatch (module, standing suite, hardening suite, fixture revision), oracle version mismatch, or missing slice exports.
+3. Run `scripts.slim:evidence` if set, else `src/slim/<pkg>.test.ts` via `node --test`. Missing standing tests fail. Missing `<slice>.hardened.test.ts` fails. Child test output is inherited in human mode and copied to stderr under `--json` so stdout stays one JSON document. Child timeout (default 600000 ms, override `SLIM_CHECK_CHILD_TIMEOUT_MS`) or abnormal termination is non-success and still emits that one JSON document.
+4. Fail if the slice, standing tests, or hardening tests import the original package. Check does not load the removed original package.
 5. Optional `testCommand`.
 
 Empty replacements / no manifest → exit 0 (so adding the Action to a repo that has not slimmed yet is free). `--update-envelope` is not a flag; drift always fails.
@@ -416,7 +416,7 @@ GitHub Advisory GraphQL and OSV `querybatch` are later-scope; OSV already mirror
 
 ### What each slice stores
 
-Identity lives in `.slim/<pkg>/envelope.json`, `evidence.json`, and the module under `src/slim/`. There is no separate `*.meta.json` in v1.
+Identity lives in `.slim/<pkg>/envelope.json`, `evidence.json` (envelope hash plus module, standing, hardening, oracle, and fixture digests), and the module under `src/slim/`. There is no separate `*.meta.json` in v1.
 
 ### Decision: was my slice exposed?
 

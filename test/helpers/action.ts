@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { symlinkSync } from "node:fs";
 import { hermeticPmEnv } from "../../src/rewrite/lockfile.ts";
-import { minimalEnvelope, minimalEvidence, minimalManifest } from "./documents.ts";
+import { minimalEnvelope, minimalEvidence, minimalManifest, rebindEvidenceArtifacts } from "./documents.ts";
 import { packSlim } from "./llm-replace.ts";
 import { actionManifest, STAMP_NAME } from "../../action/digest.mjs";
 
@@ -206,6 +206,7 @@ export function writeCheckOkConsumer(root: string): void {
   writeCheckFailConsumer(root);
   const env = minimalEnvelope("lodash", ["get"]);
   writeFileSync(join(root, ".slim", "lodash", "evidence.json"), JSON.stringify(minimalEvidence(env)));
+  rebindEvidenceArtifacts(root, "lodash", "src/slim");
 }
 
 export function writeUpstreamFailConsumer(root: string): void {

@@ -12,7 +12,8 @@ import { hashEnvelope } from "../src/envelope/types.ts";
 import { validateNamed } from "../src/schema/documents.ts";
 import { emitHardenedGetSetTest } from "../src/evidence/emit-tests.ts";
 import { replacementStateIssues } from "../src/upstream/state.ts";
-import { minimalEnvelope, minimalEvidence, minimalManifest } from "./helpers/documents.ts";
+import { minimalEnvelope, minimalEvidence, minimalManifest, rebindEvidenceArtifacts } from "./helpers/documents.ts";
+import type { EvidenceJson } from "../src/evidence/report.ts";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -74,6 +75,7 @@ function fixture(opts: {
   replacements?: Record<string, { version: string; envelope: string; module: string }>;
   files?: Record<string, string>;
   extraPkg?: Record<string, unknown>;
+  freezeEvidence?: boolean;
 }): string {
   const root = mkdtempSync(join(tmpdir(), "slim-check-"));
   writeFileSync(
@@ -110,6 +112,9 @@ function fixture(opts: {
     mkdirSync(dirname(abs), { recursive: true });
     writeFileSync(abs, body);
   }
+  if (!opts.freezeEvidence && Object.keys(replacements).length) {
+    rebindEvidenceArtifacts(root, "lodash", "src/slim");
+  }
   linkTypescript(root);
   return root;
 }
@@ -123,7 +128,7 @@ test("empty replacements exit 0", async () => {
 test("standing tests run scripts.slim:evidence and fail on nonzero", async () => {
   const root = fixture({
     scripts: { "slim:evidence": "node fail-evidence.js" },
-    files: { "fail-evidence.js": "process.exit(1);\n" },
+    files: completeFiles({ "fail-evidence.js": "process.exit(1);\n" }),
   });
   await assert.rejects(
     () => runCheck(parseCli(["check"]), { cwd: root }),
@@ -194,10 +199,10 @@ test("runCheck runs config.testCommand after standing tests; nonzero is EXIT_FAI
   const root = fixture({
     scripts: { "slim:evidence": "node ok.js" },
     testCommand: "node fail-cmd.js",
-    files: {
+    files: completeFiles({
       "ok.js": "process.exit(0);\n",
       "fail-cmd.js": "process.exit(1);\n",
-    },
+    }),
   });
   await assert.rejects(
     () => runCheck(parseCli(["check"]), { cwd: root }),
@@ -222,13 +227,13 @@ test("missing standing tests fail check", async () => {
 test("failing hardened test fails check", async () => {
   const root = fixture({
     scripts: { "slim:evidence": "node ok.js" },
-    files: {
+    files: completeFiles({
       "ok.js": "process.exit(0);\n",
       "src/slim/lodash.ts": "export function get() { return 1; }\n",
       "src/slim/lodash.hardened.test.ts": `import { test } from "node:test";
 test("fail", () => { throw new Error("hardened fail"); });
 `,
-    },
+    }),
   });
   const calls: Array<{ command: string; args: string[] }> = [];
   const spawn: CheckSpawn = (command, args = []) => {
@@ -522,4 +527,125 @@ test("emitHardenedGetSetTest vitest flavor imports vitest", () => {
   const body = readFileSync(file, "utf8");
   assert.match(body, /from "vitest"/);
   assert.doesNotMatch(body, /node:test/);
+});
+
+test("hash-only fixture file fails schema", () => {
+  const body = JSON.parse(readFileSync(join(REPO_ROOT, "test/fixtures/evidence/hash-only.json"), "utf8"));
+  assert.equal(validateNamed("evidence", body)?.kind, "missing-field");
+});
+
+test("forged-complete fixture is schema-valid but unbound to module bytes", () => {
+  const body = JSON.parse(
+    readFileSync(join(REPO_ROOT, "test/fixtures/evidence/forged-complete.json"), "utf8"),
+  ) as EvidenceJson;
+  assert.equal(validateNamed("evidence", body), null);
+  assert.equal(body.artifacts.moduleDigest, "f".repeat(64));
+});
+
+test("changing the module without regenerating evidence fails check", async () => {
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: completeFiles({ "ok.js": "process.exit(0);\n" }),
+  });
+  writeFileSync(join(root, "src", "slim", "lodash.ts"), "export function get() { return 2; }\n");
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  const { code, stdout } = await capture(() => runCheck(parseCli(["check", "--json"]), { cwd: root, spawn }));
+  assert.equal(code, EXIT_FAIL);
+  const doc = JSON.parse(stdout) as { ok: boolean; packages: { drift: { kind: string; detail: string }[] }[] };
+  assert.equal(doc.ok, false);
+  assert.ok(doc.packages[0]?.drift.some((d) => d.kind === "digest" && /moduleDigest/.test(d.detail)));
+});
+
+test("complete-looking forged evidence unbound to module bytes fails check", async () => {
+  const env = minimalEnvelope("lodash", ["get"]);
+  const forged = JSON.parse(
+    readFileSync(join(REPO_ROOT, "test/fixtures/evidence/forged-complete.json"), "utf8"),
+  ) as EvidenceJson;
+  forged.envelopeHash = hashEnvelope(env);
+  const root = fixture({
+    freezeEvidence: true,
+    scripts: { "slim:evidence": "node ok.js" },
+    files: completeFiles({
+      "ok.js": "process.exit(0);\n",
+      ".slim/lodash/evidence.json": JSON.stringify(forged),
+    }),
+  });
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  const human = await capture(() => runCheck(parseCli(["check"]), { cwd: root, spawn }));
+  const machine = await capture(() => runCheck(parseCli(["check", "--json"]), { cwd: root, spawn }));
+  assert.equal(human.code, EXIT_FAIL);
+  assert.equal(machine.code, human.code);
+  const doc = JSON.parse(machine.stdout) as { ok: boolean; exit: number; packages: { drift: { kind: string }[] }[] };
+  assert.equal(doc.ok, false);
+  assert.equal(doc.exit, EXIT_FAIL);
+  assert.ok(doc.packages[0]?.drift.some((d) => d.kind === "digest"));
+});
+
+test("standing hardening and fixtureRevision digest mismatches fail check", async () => {
+  const root = fixture({
+    files: completeFiles({}),
+  });
+  writeFileSync(
+    join(root, "src", "slim", "lodash.test.ts"),
+    `import { test } from "node:test";\ntest("standing-changed", () => {});\n`,
+  );
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  const { stdout } = await capture(() => runCheck(parseCli(["check", "--json"]), { cwd: root, spawn }));
+  const doc = JSON.parse(stdout) as { packages: { drift: { kind: string; detail: string }[] }[] };
+  assert.ok(doc.packages[0]?.drift.some((d) => d.kind === "digest" && /standingDigest/.test(d.detail)));
+  assert.ok(doc.packages[0]?.drift.some((d) => d.kind === "digest" && /fixtureRevision/.test(d.detail)));
+
+  const rootH = fixture({
+    files: completeFiles({}),
+  });
+  writeFileSync(
+    join(rootH, "src", "slim", "lodash.hardened.test.ts"),
+    `import { test } from "node:test";\ntest("hardened-changed", () => {});\n`,
+  );
+  const { stdout: outH } = await capture(() => runCheck(parseCli(["check", "--json"]), { cwd: rootH, spawn }));
+  const docH = JSON.parse(outH) as { packages: { drift: { kind: string; detail: string }[] }[] };
+  assert.ok(docH.packages[0]?.drift.some((d) => d.kind === "digest" && /hardeningDigest/.test(d.detail)));
+});
+
+test("oracleVersion drift fails check", async () => {
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: completeFiles({ "ok.js": "process.exit(0);\n" }),
+  });
+  const evPath = join(root, ".slim", "lodash", "evidence.json");
+  const ev = JSON.parse(readFileSync(evPath, "utf8")) as EvidenceJson;
+  ev.artifacts.oracleVersion = "9.9.9";
+  writeFileSync(evPath, JSON.stringify(ev));
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  const { stdout } = await capture(() => runCheck(parseCli(["check", "--json"]), { cwd: root, spawn }));
+  const doc = JSON.parse(stdout) as { packages: { drift: { kind: string; detail: string }[] }[] };
+  assert.ok(doc.packages[0]?.drift.some((d) => d.kind === "version" && /oracleVersion/.test(d.detail)));
+});
+
+test("child timeout and abnormal termination fail check without hanging", async () => {
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: completeFiles({ "ok.js": "process.exit(0);\n" }),
+  });
+  const timed: CheckSpawn = () => ({
+    status: null,
+    error: Object.assign(new Error("spawnSync ETIMEDOUT"), { code: "ETIMEDOUT" }),
+  });
+  const { code: tCode, stdout: tOut, stderr: tErr } = await capture(() =>
+    runCheck(parseCli(["check", "--json"]), { cwd: root, spawn: timed }),
+  );
+  assert.equal(tCode, EXIT_FAIL);
+  const tDoc = JSON.parse(tOut) as { ok: boolean; packages: { standing: string }[] };
+  assert.equal(tDoc.ok, false);
+  assert.equal(tDoc.packages[0]?.standing, "fail");
+  assert.match(tErr, /timed out/);
+
+  const killed: CheckSpawn = () => ({ status: null, signal: "SIGKILL" });
+  const { code: kCode, stdout: kOut, stderr: kErr } = await capture(() =>
+    runCheck(parseCli(["check", "--json"]), { cwd: root, spawn: killed }),
+  );
+  assert.equal(kCode, EXIT_FAIL);
+  const kDoc = JSON.parse(kOut) as { ok: boolean };
+  assert.equal(kDoc.ok, false);
+  assert.match(kErr, /terminated abnormally/);
 });

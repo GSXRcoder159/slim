@@ -1,6 +1,14 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { hasStandingTests, hardeningTestPaths, standingTestPaths } from "../evidence/paths.ts";
+import {
+  fixtureRevision,
+  hardeningSuiteBytes,
+  sha256Bytes,
+  sha256File,
+  standingSuiteBytes,
+  type ArtifactDigests,
+} from "../evidence/digests.ts";
 import type { EnvelopeDrift } from "../envelope/drift.ts";
 import { hashEnvelope, type Envelope } from "../envelope/types.ts";
 import { EXIT_FAIL, SlimExit } from "../exit.ts";
@@ -29,6 +37,7 @@ interface EvidenceDoc {
     catalogIds?: unknown;
     provider?: string;
   };
+  artifacts?: Partial<ArtifactDigests>;
 }
 
 function sameSymbolSet(a: string[], b: string[]): boolean {
@@ -69,6 +78,92 @@ function generationDrift(ev: EvidenceDoc, pkg: string): EnvelopeDrift[] {
     return [{ kind: "evidence", detail: `llm evidence for ${pkg} requires provider` }];
   }
   return [];
+}
+
+function installedOracleVersion(root: string, pkg: string): string | false | null {
+  const abs = join(root, "node_modules", ...pkg.split("/"), "package.json");
+  if (!existsSync(abs)) return null;
+  try {
+    const json = JSON.parse(readFileSync(abs, "utf8")) as { version?: unknown };
+    if (typeof json.version !== "string" || !json.version) return false;
+    return json.version;
+  } catch {
+    return false;
+  }
+}
+
+function artifactDrift(
+  root: string,
+  pkg: string,
+  outDir: string,
+  moduleRel: string | undefined,
+  ev: EvidenceDoc,
+  envelope: Envelope | null,
+  rec: ReplacementRecord | null | undefined,
+  pin: { version: string; module: string } | null,
+): EnvelopeDrift[] {
+  const a = ev.artifacts;
+  if (
+    !a?.moduleDigest ||
+    !a.standingDigest ||
+    !a.hardeningDigest ||
+    !a.oracleVersion ||
+    !a.fixtureRevision
+  ) {
+    return [{ kind: "evidence", detail: `evidence.json for ${pkg} is missing artifacts` }];
+  }
+  const drift: EnvelopeDrift[] = [];
+  if (moduleRel && existsSync(join(root, moduleRel))) {
+    const live = sha256File(join(root, moduleRel));
+    if (live !== a.moduleDigest) {
+      drift.push({ kind: "digest", detail: `evidence.json moduleDigest does not match module for ${pkg}` });
+    }
+  }
+  const standing = standingSuiteBytes(root, pkg, outDir);
+  if (standing && sha256Bytes(standing) !== a.standingDigest) {
+    drift.push({ kind: "digest", detail: `evidence.json standingDigest does not match standing suite for ${pkg}` });
+  }
+  if (moduleRel) {
+    const hardening = hardeningSuiteBytes(root, moduleRel);
+    if (hardening && sha256Bytes(hardening) !== a.hardeningDigest) {
+      drift.push({ kind: "digest", detail: `evidence.json hardeningDigest does not match hardening suite for ${pkg}` });
+    }
+    if (standing && hardening && fixtureRevision(standing, hardening) !== a.fixtureRevision) {
+      drift.push({
+        kind: "digest",
+        detail: `evidence.json fixtureRevision does not match standing and hardening for ${pkg}`,
+      });
+    }
+  }
+  const want = a.oracleVersion;
+  if (envelope && want !== envelope.package.version) {
+    drift.push({
+      kind: "version",
+      detail: `evidence.json oracleVersion ${want} != envelope ${envelope.package.version}`,
+    });
+  }
+  if (ev.package?.version && want !== ev.package.version) {
+    drift.push({
+      kind: "version",
+      detail: `evidence.json oracleVersion ${want} != package ${ev.package.version}`,
+    });
+  }
+  if (rec?.version && want !== rec.version) {
+    drift.push({ kind: "version", detail: `evidence.json oracleVersion ${want} != manifest ${rec.version}` });
+  }
+  if (pin && want !== pin.version) {
+    drift.push({ kind: "version", detail: `evidence.json oracleVersion ${want} != slim.json ${pin.version}` });
+  }
+  const installed = installedOracleVersion(root, pkg);
+  if (installed === false) {
+    drift.push({ kind: "version", detail: `installed ${pkg} package.json is unreadable` });
+  } else if (installed && installed !== want) {
+    drift.push({
+      kind: "version",
+      detail: `installed ${pkg}@${installed} != evidence oracleVersion ${want}`,
+    });
+  }
+  return drift;
 }
 
 export function replacementStateIssues(
@@ -135,22 +230,23 @@ export function replacementStateIssues(
   }
 
   const evidencePath = join(root, ".slim", pkg, "evidence.json");
+  let evidence: EvidenceDoc | null = null;
   if (!existsSync(evidencePath)) {
     push(drift, "evidence", `missing evidence ${evidencePath}`);
   } else {
     try {
-      const ev = readDocument("evidence", evidencePath, "evidence.json") as EvidenceDoc;
-      if (hash && ev.envelopeHash !== hash) {
+      evidence = readDocument("evidence", evidencePath, "evidence.json") as EvidenceDoc;
+      if (hash && evidence.envelopeHash !== hash) {
         push(drift, "hash", `evidence.json envelopeHash does not match envelope for ${pkg}`);
       }
-      if (envelope && ev.package?.name && ev.package.name !== envelope.package.name) {
+      if (envelope && evidence.package?.name && evidence.package.name !== envelope.package.name) {
         push(drift, "evidence", `evidence.json package name mismatch for ${pkg}`);
       }
-      if (envelope && ev.package?.version && ev.package.version !== envelope.package.version) {
-        push(drift, "version", `evidence.json version ${ev.package.version} != envelope ${envelope.package.version}`);
+      if (envelope && evidence.package?.version && evidence.package.version !== envelope.package.version) {
+        push(drift, "version", `evidence.json version ${evidence.package.version} != envelope ${envelope.package.version}`);
       }
-      residualRisk = Array.isArray(ev.residualRisk) ? ev.residualRisk.map(String) : [];
-      drift.push(...generationDrift(ev, pkg));
+      residualRisk = Array.isArray(evidence.residualRisk) ? evidence.residualRisk.map(String) : [];
+      drift.push(...generationDrift(evidence, pkg));
     } catch (err) {
       const msg = err instanceof SlimExit ? err.message : `malformed evidence ${evidencePath}`;
       if (err instanceof SlimExit) fatal = fatal ?? err;
@@ -175,6 +271,10 @@ export function replacementStateIssues(
   if (!hasStandingTests(root, pkg, outDir)) {
     const standing = standingTestPaths(root, pkg, outDir);
     push(drift, "standing", `missing standing tests for ${pkg} (${standing.tsRel})`);
+  }
+
+  if (evidence) {
+    drift.push(...artifactDrift(root, pkg, outDir, moduleRel, evidence, envelope, rec, pin));
   }
 
   return { envelope, residualRisk, drift, fatal };

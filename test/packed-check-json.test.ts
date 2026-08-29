@@ -1,24 +1,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import { hermeticPmEnv, execPm } from "../src/rewrite/lockfile.ts";
 import { validateNamed } from "../src/schema/documents.ts";
-import { minimalEnvelope, minimalEvidence, minimalManifest } from "./helpers/documents.ts";
+import { hashEnvelope } from "../src/envelope/types.ts";
+import { minimalEnvelope, minimalEvidence, minimalManifest, rebindEvidenceArtifacts } from "./helpers/documents.ts";
 import { npmPackTo } from "./helpers/llm-replace.ts";
+import type { EvidenceJson } from "../src/evidence/report.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
 
-function run(args: string[], cwd: string): { status: number; stdout: string; stderr: string } {
+function run(
+  args: string[],
+  cwd: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+): { status: number; stdout: string; stderr: string } {
   const r = spawnSync(process.execPath, args, {
     cwd,
     encoding: "utf8",
-    env: hermeticPmEnv({ CI: "1" }),
+    env: hermeticPmEnv({ CI: "1", ...extraEnv }),
     timeout: 90_000,
   });
   return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
@@ -97,10 +103,13 @@ function writeCheckProject(
   writeFileSync(join(proj, "standing.js"), "console.log('standing-noise'); process.exit(0);\n");
   writeFileSync(join(proj, "fail-standing.js"), "console.log('standing-fail-noise'); process.exit(1);\n");
   writeFileSync(join(proj, "fail-cmd.js"), "console.log('cmd-fail-noise'); process.exit(1);\n");
+  writeFileSync(join(proj, "hang.js"), "setInterval(() => {}, 1e9);\n");
+  writeFileSync(join(proj, "die.js"), "process.kill(process.pid, 'SIGKILL');\n");
   const tsDir = dirname(require.resolve("typescript/package.json"));
-  const lodashDir = dirname(require.resolve("lodash/package.json"));
   symlinkSync(tsDir, join(proj, "node_modules", "typescript"));
-  symlinkSync(lodashDir, join(proj, "node_modules", "lodash"));
+  if (over.evidence !== false && over.evidenceBody === undefined) {
+    rebindEvidenceArtifacts(proj, "lodash", "src/slim");
+  }
 }
 
 test("packed check --json is one document for success and every failure class", { timeout: 180_000 }, () => {
@@ -168,6 +177,48 @@ test("packed check --json is one document for success and every failure class", 
     const unknownDoc = JSON.parse(unknown.stdout) as { error?: string; ok: boolean };
     assert.ok(validateNamed("check", unknownDoc) === null || validateNamed("error", unknownDoc) === null);
     assert.equal(unknownDoc.ok, false);
+
+    assert.equal(existsSync(join(success, "node_modules", "lodash")), false);
+
+    const swapped = mkdtempSync(join(tmpdir(), "slim-check-swap-"));
+    writeCheckProject(swapped);
+    writeFileSync(join(swapped, "src", "slim", "lodash.ts"), "export function get() { return 99; }\n");
+    const swapJson = run([slimJs, "check", "--json"], swapped);
+    assert.equal(swapJson.status, 1, swapJson.stderr + swapJson.stdout);
+    const swapDoc = JSON.parse(swapJson.stdout) as { ok: boolean; packages: { drift: { kind: string }[] }[] };
+    assert.equal(validateNamed("check", swapDoc), null);
+    assert.ok(swapDoc.packages[0]?.drift.some((d) => d.kind === "digest"));
+
+    const forged = mkdtempSync(join(tmpdir(), "slim-check-forge-"));
+    const env = minimalEnvelope("lodash", ["get"]);
+    const forgedBody = JSON.parse(
+      readFileSync(join(ROOT, "test/fixtures/evidence/forged-complete.json"), "utf8"),
+    ) as EvidenceJson;
+    forgedBody.envelopeHash = hashEnvelope(env);
+    writeCheckProject(forged, { evidenceBody: JSON.stringify(forgedBody) });
+    const forgeJson = run([slimJs, "check", "--json"], forged);
+    assert.equal(forgeJson.status, 1, forgeJson.stderr + forgeJson.stdout);
+    const forgeDoc = JSON.parse(forgeJson.stdout) as { packages: { drift: { kind: string }[] }[] };
+    assert.equal(validateNamed("check", forgeDoc), null);
+    assert.ok(forgeDoc.packages[0]?.drift.some((d) => d.kind === "digest"));
+
+    const hung = mkdtempSync(join(tmpdir(), "slim-check-hang-"));
+    writeCheckProject(hung, { standing: "node hang.js" });
+    const hangJson = run([slimJs, "check", "--json"], hung, { SLIM_CHECK_CHILD_TIMEOUT_MS: "400" });
+    assert.equal(hangJson.status, 1, hangJson.stderr + hangJson.stdout);
+    const hangDoc = JSON.parse(hangJson.stdout) as { ok: boolean };
+    assert.equal(validateNamed("check", hangDoc), null);
+    assert.equal(hangDoc.ok, false);
+    assert.match(hangJson.stderr, /timed out/);
+
+    const died = mkdtempSync(join(tmpdir(), "slim-check-die-"));
+    writeCheckProject(died, { standing: "node die.js" });
+    const dieJson = run([slimJs, "check", "--json"], died);
+    assert.equal(dieJson.status, 1, dieJson.stderr + dieJson.stdout);
+    const dieDoc = JSON.parse(dieJson.stdout) as { ok: boolean };
+    assert.equal(validateNamed("check", dieDoc), null);
+    assert.equal(dieDoc.ok, false);
+    assert.match(`${dieJson.stderr}${dieJson.stdout}`, /terminated abnormally/);
   } finally {
     rmSync(tmp, { recursive: true, force: true });
     rmSync(packDir, { recursive: true, force: true });

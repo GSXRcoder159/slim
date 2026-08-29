@@ -64,6 +64,16 @@ test("committed golden evidence matches refresh inputs, slice bytes, and catalog
   assert.equal(evidence.envelopeHash, hash);
   assert.equal(man.replacements.lodash.envelopeHash, hash);
   assert.equal(man.replacements.lodash.version, GOLDEN_REFRESH_INPUTS.lodashVersion);
+  const standing = gitLf(readFileSync(join(FIXTURE, "src", "slim", "lodash.test.ts")));
+  const hardening = gitLf(readFileSync(join(FIXTURE, "src", "slim", "lodash.hardened.test.ts")));
+  assert.equal(evidence.artifacts.moduleDigest, createHash("sha256").update(slice).digest("hex"));
+  assert.equal(evidence.artifacts.standingDigest, createHash("sha256").update(standing).digest("hex"));
+  assert.equal(evidence.artifacts.hardeningDigest, createHash("sha256").update(hardening).digest("hex"));
+  assert.equal(evidence.artifacts.oracleVersion, GOLDEN_REFRESH_INPUTS.lodashVersion);
+  assert.equal(
+    evidence.artifacts.fixtureRevision,
+    createHash("sha256").update(Buffer.concat([standing, Buffer.from([0]), hardening])).digest("hex"),
+  );
 });
 
 test("golden evidence.md has real digests and the sample is a true copy", () => {

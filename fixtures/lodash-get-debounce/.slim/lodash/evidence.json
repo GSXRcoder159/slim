@@ -62,5 +62,12 @@
     "attempts": 1,
     "specSource": "catalog",
     "counterexamples": []
+  },
+  "artifacts": {
+    "moduleDigest": "0f98884df95f6c2d6151847b635b54318e2b031f112ded8047f9e1019a07c366",
+    "standingDigest": "ffe575db9c9e1fb5645db8b3dd2c52959f7ceaf0ad6c963eba6616d2dbe75e2d",
+    "hardeningDigest": "c2b78a75e949486cb0cdaaa2d65f01d4bb80e2ecd85d2f3c049c28762e4ee090",
+    "oracleVersion": "4.17.21",
+    "fixtureRevision": "fa3f39bf4374d01aa0b197a575ab79a6e5ba7ebc985beef46d59212ae9833d8d"
   }
 }
