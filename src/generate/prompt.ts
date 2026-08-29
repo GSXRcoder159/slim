@@ -34,7 +34,7 @@ export function buildPrompt(
     "- Implement from the envelope and public .d.ts/README only. Do not copy original package source.",
     "- n-gram similarity is a CI heuristic, not a legal opinion.",
     "- No eval, Function, WebAssembly, import(), require, node: builtins, fetch, Proxy, string-setTimeout.",
-    "- No Object.setPrototypeOf, __proto__ assignment, or Object.defineProperty on Object.prototype / *.prototype.",
+    "- No Object.setPrototypeOf (including aliases, computed access, and .call/.apply), __proto__ assignment, Object.assign onto a prototype, or Object.defineProperty / defineProperties on Object.prototype / *.prototype.",
     "- Look up Date.now, setTimeout, clearTimeout at call time. Never cache timers at module init.",
     "- Named exports for each used symbol.",
     wantsDefault ? "- Also `export default { ... }` covering those named exports (default/namespace/CJS import)." : "",

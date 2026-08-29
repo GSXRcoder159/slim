@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { toPosixPath } from "../rewrite/paths.ts";
+import { pathEscapesRoot, toPosixPath } from "../rewrite/paths.ts";
 import { EXIT_FAIL, SlimExit } from "../exit.ts";
 import {
   OriginalSourceGuard,
@@ -26,7 +26,7 @@ const README_CAP = 8000;
 
 export function loadPublicApi(projectRoot: string, pkg: string, subpath = ""): PublicApiSpec {
   const nodeModules = resolve(projectRoot, "node_modules");
-  const dir = assertInsideNodeModules(nodeModules, packageDir(projectRoot, pkg));
+  const dir = assertInsideNodeModules(projectRoot, nodeModules, packageDir(projectRoot, pkg));
   const meta = readPackageJson(dir);
 
   if (subpath) {
@@ -54,8 +54,8 @@ export function loadPublicApi(projectRoot: string, pkg: string, subpath = ""): P
   if (bundled) return specFromDts(projectRoot, bundled, "bundled-dts");
 
   const typesDir = packageDir(projectRoot, typesPackageName(pkg));
-  if (!pathWouldEscape(nodeModules, typesDir) && existsSync(typesDir)) {
-    const typesRoot = assertPublicSpecInside(nodeModules, typesDir);
+  if (existsSync(typesDir)) {
+    const typesRoot = assertInsideNodeModules(projectRoot, nodeModules, typesDir);
     const dt = firstDts(typesRoot, undefined, join(typesRoot, "index.d.ts"), join(typesRoot, `${bareName(pkg)}.d.ts`));
     if (dt) return specFromDts(projectRoot, dt, "types-package");
   }
@@ -88,13 +88,20 @@ function specFromDts(projectRoot: string, abs: string, source: SpecSource): Publ
   };
 }
 
-function assertInsideNodeModules(nodeModules: string, dir: string): string {
+function assertInsideNodeModules(projectRoot: string, nodeModules: string, dir: string): string {
   const abs = resolve(dir);
-  const rel = relative(nodeModules, abs);
-  if (rel.startsWith("..") || rel === ".." || isAbsolute(rel) || rel === "") {
+  const relNm = relative(resolve(nodeModules), abs);
+  if (relNm.startsWith("..") || relNm === ".." || isAbsolute(relNm) || relNm === "") {
     throw new SlimExit(EXIT_FAIL, `public spec escapes package root: ${dir}`);
   }
-  return abs;
+  if (pathEscapesRoot(projectRoot, abs)) {
+    throw new SlimExit(EXIT_FAIL, `public spec escapes package root: ${dir}`);
+  }
+  try {
+    return realpathSync(abs);
+  } catch {
+    return abs;
+  }
 }
 
 function packageDir(projectRoot: string, pkg: string): string {
@@ -122,6 +129,7 @@ function readPackageJson(dir: string): Record<string, unknown> | null {
   const p = join(dir, "package.json");
   if (!existsSync(p)) return null;
   OriginalSourceGuard.assertNotOriginalImpl(p);
+  assertPublicSpecInside(dir, p);
   try {
     return JSON.parse(readFileSync(p, "utf8")) as Record<string, unknown>;
   } catch {
@@ -197,15 +205,6 @@ function firstExisting(packageRoot: string, ...paths: string[]): string | undefi
     return p;
   }
   return undefined;
-}
-
-function pathWouldEscape(root: string, candidate: string): boolean {
-  try {
-    assertPublicSpecInside(root, candidate);
-    return false;
-  } catch {
-    return true;
-  }
 }
 
 export { readFileSync };

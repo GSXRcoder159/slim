@@ -116,6 +116,8 @@ test("system prompt forbids prototype mutation", () => {
   const { system } = buildPrompt(env(), { text: "export function get(): unknown;", source: "bundled-dts" }, []);
   assert.match(system, /Object\.setPrototypeOf/);
   assert.match(system, /__proto__/);
+  assert.match(system, /aliases|computed/);
+  assert.match(system, /Object\.assign/);
 });
 
 test("prompt caps counterexample length and count", () => {

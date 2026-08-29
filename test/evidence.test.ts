@@ -236,6 +236,8 @@ test("LLM evidence records provenance and redacts secrets", () => {
   assert.match(md, /Prompt hash: `abc123`/);
   assert.match(md, /Attempts: 2/);
   assert.doesNotMatch(md, /sk-ant-|sk-secret|ANTHROPIC_API_KEY/);
+  assert.equal("prompt" in (json.generation ?? {}), false);
+  assert.doesNotMatch(JSON.stringify(json), /"prompt":/);
   assert.doesNotMatch(jsonPath, /lodash\.js/);
   assert.doesNotMatch(JSON.stringify(json), /function get\(object, path/);
 });

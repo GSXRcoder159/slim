@@ -86,12 +86,12 @@ export function validateGenerated(
     checkCachedTimers(ts, sf, errors);
   }
 
-  const moduleScope: Scope = { names: new Set(["arguments"]) };
+  const moduleScope: Scope = { names: new Set(["arguments"]), aliases: new Map() };
   collectScopeBindings(ts, sf, moduleScope.names, { letConst: true, vars: true, functions: true });
 
   const visit = (node: ts.Node, stack: Scope[]) => {
     if (entersFunctionScope(ts, node)) {
-      const fnScope: Scope = { names: new Set() };
+      const fnScope: Scope = { names: new Set(), aliases: new Map() };
       if (!ts.isArrowFunction(node)) fnScope.names.add("arguments");
       if (node.name && ts.isIdentifier(node.name)) fnScope.names.add(node.name.text);
       for (const p of node.parameters) addBinding(ts, p.name, fnScope.names);
@@ -105,20 +105,20 @@ export function validateGenerated(
       return;
     }
     if (ts.isBlock(node)) {
-      const blockScope: Scope = { names: new Set() };
+      const blockScope: Scope = { names: new Set(), aliases: new Map() };
       collectScopeBindings(ts, node, blockScope.names, { letConst: true, vars: false, functions: false });
       const inner = [...stack, blockScope];
       for (const stmt of node.statements) visit(stmt, inner);
       return;
     }
     if (ts.isCatchClause(node)) {
-      const catchScope: Scope = { names: new Set() };
+      const catchScope: Scope = { names: new Set(), aliases: new Map() };
       if (node.variableDeclaration) addBinding(ts, node.variableDeclaration.name, catchScope.names);
       visit(node.block, [...stack, catchScope]);
       return;
     }
     if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
-      const forScope: Scope = { names: new Set() };
+      const forScope: Scope = { names: new Set(), aliases: new Map() };
       const init =
         ts.isForStatement(node) ? node.initializer : ts.isForInStatement(node) || ts.isForOfStatement(node) ? node.initializer : undefined;
       if (init && ts.isVariableDeclarationList(init)) {
@@ -128,11 +128,17 @@ export function validateGenerated(
       ts.forEachChild(node, (c) => visit(c, inner));
       return;
     }
+    if (ts.isVariableDeclaration(node)) {
+      recordAliases(ts, node, stack, allowBuffer, errors);
+    }
     if (ts.isIdentifier(node)) {
       checkIdentifier(ts, node, stack, allowBuffer, errors);
     }
     if (ts.isPropertyAccessExpression(node)) {
-      checkPropertyAccess(ts, node, allowBuffer, errors);
+      checkPropertyAccess(ts, node, stack, allowBuffer, errors);
+    }
+    if (ts.isElementAccessExpression(node)) {
+      checkElementAccess(ts, node, stack, allowBuffer, errors);
     }
     if (ts.isObjectLiteralExpression(node)) {
       checkDangerousKeys(ts, node, hardened, errors);
@@ -147,10 +153,10 @@ export function validateGenerated(
       }
     }
     if (ts.isCallExpression(node)) {
-      checkPrototypeMutationCall(ts, node, errors);
+      checkPrototypeMutationCall(ts, node, stack, errors);
     }
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-      checkPrototypeMutationAssign(ts, node, errors);
+      checkPrototypeMutationAssign(ts, node, stack, errors);
     }
     if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require") {
       errors.push("forbidden require");
@@ -212,7 +218,24 @@ export function assertSmaller(replacementBytes: number, originalBytes: number, f
 
 interface Scope {
   names: Set<string>;
+  aliases: Map<string, Resolved>;
 }
+
+type Resolved =
+  | { kind: "setPrototypeOf" }
+  | { kind: "defineProperty" }
+  | { kind: "defineProperties" }
+  | { kind: "assign" }
+  | { kind: "reflectApply" }
+  | { kind: "prototype" }
+  | { kind: "object" }
+  | { kind: "reflect" }
+  | { kind: "host"; name: string }
+  | { kind: "hostMember"; name: string }
+  | { kind: "string"; value: string }
+  | { kind: "unknown" };
+
+const CALL_APPLY = new Set(["call", "apply"]);
 
 function entersFunctionScope(
   ts: typeof import("typescript"),
@@ -292,6 +315,31 @@ function isLocal(stack: Scope[], name: string): boolean {
   return false;
 }
 
+function lookupAlias(stack: Scope[], name: string): Resolved | undefined {
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const scope = stack[i]!;
+    if (scope.aliases.has(name)) return scope.aliases.get(name);
+    if (scope.names.has(name)) return undefined;
+  }
+  return undefined;
+}
+
+function alwaysForbiddenResolved(r: Resolved, allowBuffer: boolean): boolean {
+  if (r.kind === "setPrototypeOf") return true;
+  if (r.kind === "hostMember") {
+    if (ALLOWED_GLOBALS.has(r.name)) return false;
+    if (r.name === "Buffer") return !allowBuffer;
+    return true;
+  }
+  return false;
+}
+
+function forbiddenResolvedMessage(r: Resolved): string {
+  if (r.kind === "setPrototypeOf") return "prototype-mutation: Object.setPrototypeOf";
+  if (r.kind === "hostMember") return `forbidden globalThis.${r.name}`;
+  return "forbidden";
+}
+
 function checkIdentifier(
   ts: typeof import("typescript"),
   node: ts.Identifier,
@@ -303,6 +351,11 @@ function checkIdentifier(
   const name = node.text;
   if (FORBIDDEN_IDS.has(name)) {
     errors.push(`forbidden identifier ${name}`);
+    return;
+  }
+  const alias = lookupAlias(stack, name);
+  if (alias && alwaysForbiddenResolved(alias, allowBuffer)) {
+    errors.push(forbiddenResolvedMessage(alias));
     return;
   }
   if (isLocal(stack, name) || ALLOWED_GLOBALS.has(name)) return;
@@ -406,46 +459,73 @@ function inside(root: ts.Node, target: ts.Node): boolean {
 function checkPropertyAccess(
   ts: typeof import("typescript"),
   node: ts.PropertyAccessExpression,
+  stack: Scope[],
   allowBuffer: boolean,
   errors: string[],
 ): void {
-  if (ts.isIdentifier(node.expression) && node.expression.text === "Reflect") {
-    if (!REFLECT_METHODS.has(node.name.text)) {
-      errors.push(`forbidden Reflect.${node.name.text}`);
-    }
+  checkMember(ts, node.expression, node.name.text, stack, allowBuffer, errors);
+}
+
+function checkElementAccess(
+  ts: typeof import("typescript"),
+  node: ts.ElementAccessExpression,
+  stack: Scope[],
+  allowBuffer: boolean,
+  errors: string[],
+): void {
+  const key = foldString(ts, node.argumentExpression, stack);
+  if (key == null) return;
+  checkMember(ts, node.expression, key, stack, allowBuffer, errors);
+}
+
+function checkMember(
+  ts: typeof import("typescript"),
+  objExpr: ts.Expression,
+  prop: string,
+  stack: Scope[],
+  allowBuffer: boolean,
+  errors: string[],
+): void {
+  const obj = resolveExpr(ts, objExpr, stack);
+  const resolved = resolveMember(obj, prop);
+  if (resolved.kind === "setPrototypeOf") {
+    errors.push("prototype-mutation: Object.setPrototypeOf");
+    return;
   }
-  if (ts.isIdentifier(node.expression) && HOST_GLOBALS.has(node.expression.text)) {
-    const prop = node.name.text;
-    if (ALLOWED_GLOBALS.has(prop)) return;
-    if (prop === "Buffer" && allowBuffer) return;
-    errors.push(`forbidden ${node.expression.text}.${prop}`);
+  if (obj.kind === "reflect" && !REFLECT_METHODS.has(prop) && prop !== "apply") {
+    errors.push(`forbidden Reflect.${prop}`);
+    return;
+  }
+  if (resolved.kind === "hostMember" && alwaysForbiddenResolved(resolved, allowBuffer)) {
+    errors.push(forbiddenResolvedMessage(resolved));
   }
 }
 
 function checkPrototypeMutationCall(
   ts: typeof import("typescript"),
   node: ts.CallExpression,
+  stack: Scope[],
   errors: string[],
 ): void {
-  const expr = node.expression;
-  if (
-    ts.isPropertyAccessExpression(expr) &&
-    ts.isIdentifier(expr.expression) &&
-    expr.expression.text === "Object" &&
-    expr.name.text === "setPrototypeOf"
-  ) {
+  const shape = callShape(ts, node, stack);
+  if (shape.fn.kind === "setPrototypeOf") {
     errors.push("prototype-mutation: Object.setPrototypeOf");
     return;
   }
-  if (
-    ts.isPropertyAccessExpression(expr) &&
-    ts.isIdentifier(expr.expression) &&
-    expr.expression.text === "Object" &&
-    expr.name.text === "defineProperty"
-  ) {
-    const target = node.arguments[0];
-    if (target && isPrototypeObject(ts, target)) {
-      errors.push("prototype-mutation: Object.defineProperty on a prototype");
+  if (shape.fn.kind === "hostMember" && FORBIDDEN_CALLEES.has(shape.fn.name)) {
+    errors.push(`forbidden callee ${shape.fn.name}`);
+    return;
+  }
+  if (shape.fn.kind === "defineProperty" || shape.fn.kind === "defineProperties" || shape.fn.kind === "assign") {
+    if (shape.target) {
+      const target = resolveExpr(ts, shape.target, stack);
+      if (target.kind === "prototype") {
+        errors.push(`prototype-mutation: Object.${shape.fn.kind} on a prototype`);
+      }
+      return;
+    }
+    if (shape.unresolvedTarget) {
+      errors.push(`prototype-mutation: Object.${shape.fn.kind} on a prototype`);
     }
   }
 }
@@ -453,6 +533,7 @@ function checkPrototypeMutationCall(
 function checkPrototypeMutationAssign(
   ts: typeof import("typescript"),
   node: ts.BinaryExpression,
+  stack: Scope[],
   errors: string[],
 ): void {
   const left = node.left;
@@ -460,17 +541,192 @@ function checkPrototypeMutationAssign(
     errors.push("prototype-mutation: __proto__ assignment");
     return;
   }
-  if (
-    ts.isElementAccessExpression(left) &&
-    (ts.isStringLiteral(left.argumentExpression) || ts.isNoSubstitutionTemplateLiteral(left.argumentExpression)) &&
-    left.argumentExpression.text === "__proto__"
-  ) {
-    errors.push("prototype-mutation: __proto__ assignment");
+  if (ts.isElementAccessExpression(left)) {
+    const key = foldString(ts, left.argumentExpression, stack);
+    if (key === "__proto__") {
+      errors.push("prototype-mutation: __proto__ assignment");
+    }
   }
 }
 
-function isPrototypeObject(ts: typeof import("typescript"), expr: ts.Expression): boolean {
-  return ts.isPropertyAccessExpression(expr) && expr.name.text === "prototype";
+function unwrapExpr(ts: typeof import("typescript"), expr: ts.Expression): ts.Expression {
+  let e: ts.Expression = expr;
+  for (;;) {
+    if (ts.isParenthesizedExpression(e)) {
+      e = e.expression;
+      continue;
+    }
+    if (ts.isAsExpression(e) || ts.isTypeAssertionExpression(e) || ts.isSatisfiesExpression(e) || ts.isNonNullExpression(e)) {
+      e = e.expression;
+      continue;
+    }
+    if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+      e = e.right;
+      continue;
+    }
+    return e;
+  }
+}
+
+function foldString(
+  ts: typeof import("typescript"),
+  expr: ts.Expression,
+  stack: Scope[],
+): string | undefined {
+  const e = unwrapExpr(ts, expr);
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) return e.text;
+  if (ts.isIdentifier(e)) {
+    const alias = lookupAlias(stack, e.text);
+    return alias?.kind === "string" ? alias.value : undefined;
+  }
+  if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = foldString(ts, e.left, stack);
+    const right = foldString(ts, e.right, stack);
+    if (left != null && right != null) return left + right;
+  }
+  return undefined;
+}
+
+function resolveExpr(
+  ts: typeof import("typescript"),
+  expr: ts.Expression,
+  stack: Scope[],
+): Resolved {
+  const e = unwrapExpr(ts, expr);
+  if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
+    return { kind: "string", value: e.text };
+  }
+  if (ts.isIdentifier(e)) {
+    if (e.text === "Object") return { kind: "object" };
+    if (e.text === "Reflect") return { kind: "reflect" };
+    if (HOST_GLOBALS.has(e.text)) return { kind: "host", name: e.text };
+    return lookupAlias(stack, e.text) ?? { kind: "unknown" };
+  }
+  if (ts.isPropertyAccessExpression(e) && e.name.text === "prototype") {
+    return { kind: "prototype" };
+  }
+  if (ts.isPropertyAccessExpression(e)) {
+    return resolveMember(resolveExpr(ts, e.expression, stack), e.name.text);
+  }
+  if (ts.isElementAccessExpression(e)) {
+    const key = foldString(ts, e.argumentExpression, stack);
+    if (key === "prototype") return { kind: "prototype" };
+    if (key == null) return { kind: "unknown" };
+    return resolveMember(resolveExpr(ts, e.expression, stack), key);
+  }
+  return { kind: "unknown" };
+}
+
+function resolveMember(obj: Resolved, prop: string): Resolved {
+  if (obj.kind === "object") {
+    if (prop === "setPrototypeOf") return { kind: "setPrototypeOf" };
+    if (prop === "defineProperty") return { kind: "defineProperty" };
+    if (prop === "defineProperties") return { kind: "defineProperties" };
+    if (prop === "assign") return { kind: "assign" };
+    if (prop === "prototype") return { kind: "prototype" };
+    return { kind: "unknown" };
+  }
+  if (obj.kind === "reflect") {
+    if (prop === "setPrototypeOf") return { kind: "setPrototypeOf" };
+    if (prop === "defineProperty") return { kind: "defineProperty" };
+    if (prop === "apply") return { kind: "reflectApply" };
+    return { kind: "unknown" };
+  }
+  if (obj.kind === "host") {
+    if (prop === "Object") return { kind: "object" };
+    if (prop === "Reflect") return { kind: "reflect" };
+    return { kind: "hostMember", name: prop };
+  }
+  return { kind: "unknown" };
+}
+
+function firstArrayElement(
+  ts: typeof import("typescript"),
+  expr: ts.Expression | undefined,
+): ts.Expression | undefined {
+  if (!expr || !ts.isArrayLiteralExpression(expr)) return undefined;
+  const el = expr.elements[0];
+  if (!el || ts.isSpreadElement(el)) return undefined;
+  return el;
+}
+
+function callShape(
+  ts: typeof import("typescript"),
+  node: ts.CallExpression,
+  stack: Scope[],
+): { fn: Resolved; target?: ts.Expression; unresolvedTarget?: boolean } {
+  const expr = unwrapExpr(ts, node.expression);
+  const resolvedCallee = resolveExpr(ts, expr, stack);
+  if (resolvedCallee.kind === "reflectApply") {
+    const fn = node.arguments[0] ? resolveExpr(ts, node.arguments[0], stack) : { kind: "unknown" as const };
+    const target = firstArrayElement(ts, node.arguments[2]);
+    return target ? { fn, target } : { fn, unresolvedTarget: true };
+  }
+  if (ts.isPropertyAccessExpression(expr) && CALL_APPLY.has(expr.name.text)) {
+    const fn = resolveExpr(ts, expr.expression, stack);
+    if (expr.name.text === "call") {
+      return { fn, target: node.arguments[1] };
+    }
+    const target = firstArrayElement(ts, node.arguments[1]);
+    return target ? { fn, target } : { fn, unresolvedTarget: true };
+  }
+  return { fn: resolvedCallee, target: node.arguments[0] };
+}
+
+function recordAliases(
+  ts: typeof import("typescript"),
+  node: ts.VariableDeclaration,
+  stack: Scope[],
+  allowBuffer: boolean,
+  errors: string[],
+): void {
+  const scope = stack[stack.length - 1];
+  if (!scope) return;
+  bindAliasPattern(ts, node.name, node.initializer, stack, scope, allowBuffer, errors);
+}
+
+function bindAliasPattern(
+  ts: typeof import("typescript"),
+  name: ts.BindingName,
+  init: ts.Expression | undefined,
+  stack: Scope[],
+  scope: Scope,
+  allowBuffer: boolean,
+  errors: string[],
+): void {
+  if (ts.isIdentifier(name) && init) {
+    const resolved = resolveExpr(ts, init, stack);
+    scope.aliases.set(name.text, resolved);
+    if (alwaysForbiddenResolved(resolved, allowBuffer)) {
+      errors.push(forbiddenResolvedMessage(resolved));
+    }
+    return;
+  }
+  if (!ts.isObjectBindingPattern(name) || !init) return;
+  const src = resolveExpr(ts, init, stack);
+  for (const el of name.elements) {
+    if (!ts.isBindingElement(el)) continue;
+    const prop = bindingPropertyName(ts, el);
+    if (!prop) continue;
+    const resolved = resolveMember(src, prop);
+    if (ts.isIdentifier(el.name)) {
+      scope.aliases.set(el.name.text, resolved);
+      if (alwaysForbiddenResolved(resolved, allowBuffer)) {
+        errors.push(forbiddenResolvedMessage(resolved));
+      }
+    }
+  }
+}
+
+function bindingPropertyName(ts: typeof import("typescript"), el: ts.BindingElement): string | undefined {
+  if (el.propertyName) {
+    if (ts.isIdentifier(el.propertyName) || ts.isStringLiteral(el.propertyName)) return el.propertyName.text;
+    if (ts.isComputedPropertyName(el.propertyName)) {
+      return foldString(ts, el.propertyName.expression, []);
+    }
+    return undefined;
+  }
+  return ts.isIdentifier(el.name) ? el.name.text : undefined;
 }
 
 function checkDangerousKeys(

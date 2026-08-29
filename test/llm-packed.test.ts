@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   addModuleSource,
+  aliasedProtoMutationSource,
+  assignPrototypeSource,
   installFixture,
   packSlim,
   protoMutationSource,
@@ -12,6 +14,7 @@ import {
   replaceLlmArgs,
   runSlim,
   startLlmMock,
+  symlinkInstalledPackageOutside,
   writeTinyAddFixture,
 } from "./helpers/llm-replace.ts";
 
@@ -71,6 +74,15 @@ test("packed replace --llm via mocked Anthropic completes the pipeline", { timeo
     assert.ok(evidence.generation?.promptHash);
     const evidenceRaw = readFileSync(join(dest, ".slim/tiny-add/evidence.json"), "utf8");
     assert.doesNotMatch(evidenceRaw, /sk-test-anthropic/);
+    assert.doesNotMatch(evidenceRaw, /FROM_IMPL|SENTINEL_PUBLIC_SPEC_ESCAPE/);
+    const evidenceDoc = JSON.parse(evidenceRaw) as {
+      generation?: { prompt?: unknown; promptHash?: string; specSource?: string; counterexamples?: string[] };
+    };
+    assert.ok(evidenceDoc.generation);
+    assert.equal("prompt" in evidenceDoc.generation!, false);
+    assert.ok(evidenceDoc.generation?.promptHash);
+    assert.equal(evidenceDoc.generation?.specSource, "bundled-dts");
+    assert.ok(Array.isArray(evidenceDoc.generation?.counterexamples));
   } finally {
     await mock.close();
     rmSync(dest, { recursive: true, force: true });
@@ -144,6 +156,34 @@ test("packed replace --llm refuses escaping types before any provider call", { t
   }
 });
 
+test("packed replace --llm refuses package-dir symlink before any provider call", { timeout: 180_000 }, async () => {
+  const dest = mkdtempSync(join(tmpdir(), "slim-llm-pkgdir-"));
+  const mock = await startLlmMock("anthropic", addModuleSource());
+  try {
+    writeTinyAddFixture(dest);
+    const slimJs = installFixture(dest, tarball);
+    symlinkInstalledPackageOutside(dest, "tiny-add");
+    const before = readFileSync(join(dest, "package.json"), "utf8");
+    const beforeSrc = readFileSync(join(dest, "src/index.ts"), "utf8");
+    const out = await runSlim(slimJs, replaceLlmArgs(), dest, {
+      ANTHROPIC_API_KEY: "sk-test-anthropic",
+      SLIM_LLM_BASE_URL: `http://127.0.0.1:${mock.port}/`,
+    });
+    assert.notEqual(out.status, 0, `${out.stdout}\n${out.stderr}`);
+    assert.match(`${out.stdout}\n${out.stderr}`, /public spec escapes/i);
+    assert.equal(mock.requests.length, 0, "provider must not be called on package-dir escape");
+    for (const body of mock.requests) {
+      assert.doesNotMatch(body, /SENTINEL_PUBLIC_SPEC_ESCAPE/);
+    }
+    assert.equal(existsSync(join(dest, "src/slim")), false);
+    assert.equal(readFileSync(join(dest, "package.json"), "utf8"), before);
+    assert.equal(readFileSync(join(dest, "src/index.ts"), "utf8"), beforeSrc);
+  } finally {
+    await mock.close();
+    rmSync(dest, { recursive: true, force: true });
+  }
+});
+
 test("packed replace --llm rejects prototype-mutation before project writes", { timeout: 180_000 }, async () => {
   const dest = mkdtempSync(join(tmpdir(), "slim-llm-proto-"));
   const mock = await startLlmMock("anthropic", protoMutationSource());
@@ -163,5 +203,32 @@ test("packed replace --llm rejects prototype-mutation before project writes", { 
   } finally {
     await mock.close();
     rmSync(dest, { recursive: true, force: true });
+  }
+});
+
+test("packed replace --llm rejects aliased and Object.assign prototype mutation before writes", { timeout: 180_000 }, async () => {
+  for (const [label, source] of [
+    ["aliased setPrototypeOf", aliasedProtoMutationSource()],
+    ["Object.assign on prototype", assignPrototypeSource()],
+  ] as const) {
+    const dest = mkdtempSync(join(tmpdir(), "slim-llm-proto2-"));
+    const mock = await startLlmMock("anthropic", source);
+    try {
+      writeTinyAddFixture(dest);
+      const slimJs = installFixture(dest, tarball);
+      const before = readFileSync(join(dest, "package.json"), "utf8");
+      const out = await runSlim(slimJs, replaceLlmArgs(), dest, {
+        ANTHROPIC_API_KEY: "sk-test-anthropic",
+        SLIM_LLM_BASE_URL: `http://127.0.0.1:${mock.port}/`,
+      });
+      assert.notEqual(out.status, 0, `${label}: ${out.stdout}\n${out.stderr}`);
+      assert.match(`${out.stdout}\n${out.stderr}`, /prototype-mutation|AST allowlist/);
+      assert.ok(mock.requests.length >= 1, label);
+      assert.equal(existsSync(join(dest, "src/slim")), false, label);
+      assert.equal(readFileSync(join(dest, "package.json"), "utf8"), before, label);
+    } finally {
+      await mock.close();
+      rmSync(dest, { recursive: true, force: true });
+    }
   }
 });

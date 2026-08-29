@@ -244,3 +244,64 @@ test("package name traversal cannot leave node_modules", () => {
     SlimExit,
   );
 });
+
+test("package directory symlinked outside node_modules is refused before reading specs", () => {
+  const root = tmpProject();
+  const outside = mkdtempSync(join(tmpdir(), "slim-papi-pkg-"));
+  write(outside, "package.json", JSON.stringify({ name: "evil", types: "index.d.ts" }));
+  write(outside, "index.d.ts", `export const ${SENTINEL} = 1;\n`);
+  mkdirSync(join(root, "node_modules"), { recursive: true });
+  symlinkSync(outside, join(root, "node_modules/evil"));
+  assertEscapingSpec(root, "evil");
+});
+
+test("package.json whose realpath leaves the package root is refused", () => {
+  const root = tmpProject();
+  const outside = write(
+    mkdtempSync(join(tmpdir(), "slim-papi-meta-")),
+    "package.json",
+    JSON.stringify({ name: "evil", types: "index.d.ts" }),
+  );
+  write(root, "node_modules/evil/index.d.ts", `export const ${SENTINEL} = 1;\n`);
+  symlinkSync(outside, join(root, "node_modules/evil/package.json"));
+  assertEscapingSpec(root, "evil");
+});
+
+test("pnpm-style package dir symlink that stays inside node_modules is accepted", () => {
+  const root = tmpProject();
+  write(
+    root,
+    "node_modules/.pnpm/kit@1.0.0/node_modules/kit/package.json",
+    JSON.stringify({ name: "kit", types: "index.d.ts" }),
+  );
+  write(
+    root,
+    "node_modules/.pnpm/kit@1.0.0/node_modules/kit/index.d.ts",
+    "export function kit(): void;\n",
+  );
+  mkdirSync(join(root, "node_modules"), { recursive: true });
+  symlinkSync(
+    join(root, "node_modules/.pnpm/kit@1.0.0/node_modules/kit"),
+    join(root, "node_modules/kit"),
+  );
+  const spec = loadPublicApi(root, "kit");
+  assert.equal(spec.source, "bundled-dts");
+  assert.match(spec.text, /export function kit/);
+  assert.doesNotMatch(spec.text, new RegExp(SENTINEL));
+});
+
+test("file: vendor package dir symlink inside the project is accepted", () => {
+  const root = tmpProject();
+  write(
+    root,
+    "vendor/tiny-add/package.json",
+    JSON.stringify({ name: "tiny-add", types: "index.d.ts" }),
+  );
+  write(root, "vendor/tiny-add/index.d.ts", "export function add(a: number, b: number): number;\n");
+  mkdirSync(join(root, "node_modules"), { recursive: true });
+  symlinkSync(join(root, "vendor/tiny-add"), join(root, "node_modules/tiny-add"));
+  const spec = loadPublicApi(root, "tiny-add");
+  assert.equal(spec.source, "bundled-dts");
+  assert.match(spec.text, /export function add/);
+  assert.doesNotMatch(spec.text, new RegExp(SENTINEL));
+});

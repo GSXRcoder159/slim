@@ -77,7 +77,7 @@ test("fail-closed allowlist rejects console, process, fetch, Proxy, WebAssembly,
 });
 
 test("allowlist accepts real catalog get/debounce/set/has (Object, Array, Date.now at call time)", () => {
-  for (const symbols of [["get"], ["debounce"], ["set"], ["has"], ["get", "debounce", "set", "has"]]) {
+  for (const symbols of [["get"], ["debounce"], ["set"], ["has"], ["assign"], ["get", "debounce", "set", "has"]]) {
     const e = env(symbols);
     const src = assembleCatalogModule(e);
     assert.ok(src, `assemble ${symbols.join("+")}`);
@@ -141,6 +141,47 @@ test("allowlist rejects prototype mutation", () => {
       r.errors.some((e) => e.includes("prototype-mutation")),
       `expected prototype-mutation in errors for ${src}, got: ${r.errors.join("; ")}`,
     );
+  }
+});
+
+test("allowlist rejects aliased, computed, destructured, and indirect prototype mutation", () => {
+  const cases = [
+    `const sp = Object.setPrototypeOf;\nexport function f(o: object) { sp(o, {}); return o; }\n`,
+    `const { setPrototypeOf } = Object;\nexport function f(o: object) { setPrototypeOf(o, {}); return o; }\n`,
+    `export function f(o: object) { Object["setPrototypeOf"](o, {}); return o; }\n`,
+    `export function f(o: object) { (0, Object.setPrototypeOf)(o, {}); return o; }\n`,
+    `export function f(o: object) { globalThis.Object.setPrototypeOf(o, {}); return o; }\n`,
+    `export function f(o: object) { Object.setPrototypeOf.call(Object, o, {}); return o; }\n`,
+    `const { setPrototypeOf } = Reflect;\nexport function f(o: object) { setPrototypeOf(o, {}); return o; }\n`,
+    `export function f() { Object.assign(Object.prototype, { x: 1 }); }\n`,
+    `export function f() { Object.assign(Array.prototype, { x: 1 }); }\n`,
+    `const { assign } = Object;\nexport function f() { assign(Object.prototype, { x: 1 }); }\n`,
+    `export function f() { Object.defineProperties(Object.prototype, { x: { value: 1 } }); }\n`,
+    `const dp = Object.defineProperty;\nconst p = Object.prototype;\nexport function f() { dp(p, "x", { value: 1 }); }\n`,
+    `const k = "__proto__";\nexport function f(o: object) { o[k] = {}; return o; }\n`,
+    `export function f(o: object) { o["__" + "proto__"] = {}; return o; }\n`,
+  ];
+  for (const src of cases) {
+    const r = validateGenerated(ts, src);
+    assert.equal(r.ok, false, `expected reject: ${src}`);
+    assert.ok(
+      r.errors.some((e) => /prototype-mutation|forbidden/i.test(e)),
+      `expected prototype-mutation or forbidden in errors for ${src}, got: ${r.errors.join("; ")}`,
+    );
+  }
+});
+
+test("allowlist rejects computed and destructured unsafe host globals and dynamic loading", () => {
+  const cases = [
+    `export const x = globalThis["eval"];`,
+    `export const x = globalThis["process"];`,
+    `export const x = globalThis["Function"];`,
+    `const { eval: e } = globalThis;\nexport const x = e("1");`,
+    `const { process: p } = globalThis;\nexport const x = p;`,
+  ];
+  for (const src of cases) {
+    const r = validateGenerated(ts, src);
+    assert.equal(r.ok, false, `expected reject: ${src}`);
   }
 });
 

@@ -5,6 +5,8 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -270,6 +272,46 @@ export function protoMutationSource(): string {
   return Number(a) + Number(b);
 }
 `;
+}
+
+export function aliasedProtoMutationSource(): string {
+  return `const sp = Object.setPrototypeOf;
+export function add(a: number, b: number): number {
+  sp({}, {});
+  return Number(a) + Number(b);
+}
+`;
+}
+
+export function assignPrototypeSource(): string {
+  return `export function add(a: number, b: number): number {
+  Object.assign(Object.prototype, { x: 1 });
+  return Number(a) + Number(b);
+}
+`;
+}
+
+export function symlinkInstalledPackageOutside(dest: string, pkg: string): string {
+  const outside = mkdtempSync(join(tmpdir(), "slim-llm-outpkg-"));
+  writeFileSync(
+    join(outside, "package.json"),
+    JSON.stringify({
+      name: pkg,
+      version: "1.0.0",
+      type: "module",
+      types: "./index.d.ts",
+      exports: { ".": { types: "./index.d.ts", default: "./index.js" } },
+    }) + "\n",
+  );
+  writeFileSync(
+    join(outside, "index.d.ts"),
+    `export const SENTINEL_PUBLIC_SPEC_ESCAPE = 1;\nexport function add(a: number, b: number): number;\n`,
+  );
+  writeFileSync(join(outside, "index.js"), `export function add(a, b) { return a + b; }\n`);
+  const installed = join(dest, "node_modules", pkg);
+  rmSync(installed, { recursive: true, force: true });
+  symlinkSync(outside, installed);
+  return outside;
 }
 
 export function readJson(path: string): unknown {
