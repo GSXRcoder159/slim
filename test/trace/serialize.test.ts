@@ -154,7 +154,15 @@ test("deserialize round-trips a tagged value", () => {
   const v: SlimValue = { t: "obj", keys: ["x"], v: { x: { t: "num", v: 1 } } };
   const back = deserialize(v) as Record<string, unknown>;
   assert.equal(back.x, 1);
-  assert.equal(Object.getPrototypeOf(back), null);
+  assert.equal(Object.getPrototypeOf(back), Object.prototype);
+  const nulled = deserialize({
+    t: "obj",
+    keys: ["x"],
+    v: { x: { t: "num", v: 1 } },
+    proto: "null",
+  }) as Record<string, unknown>;
+  assert.equal(nulled.x, 1);
+  assert.equal(Object.getPrototypeOf(nulled), null);
 });
 
 test("maps and sets round-trip contents", () => {
@@ -291,11 +299,23 @@ test("null prototype is tagged and custom toString is tagged", () => {
   assert.equal(ns.t, "obj");
   if (ns.t !== "obj") throw new Error("expected obj");
   assert.equal(ns.proto, "null");
+  const backNull = deserialize(ns);
+  assert.equal(Object.getPrototypeOf(backNull), null);
   const custom = { a: 1, toString() { return "x"; } };
   const cs = serialize(custom);
   assert.equal(cs.t, "obj");
   if (cs.t !== "obj") throw new Error("expected obj");
   assert.equal(cs.toStr, true);
+  assert.equal(cs.str, "x");
+  const backCustom = deserialize(cs) as { a: number };
+  assert.equal(Object.getPrototypeOf(backCustom), Object.prototype);
+  assert.equal(String(backCustom), "x");
+  const withJson = { x: 1, toJSON() { return { k: 1 }; } };
+  const js = serialize(withJson);
+  assert.equal(js.t, "obj");
+  if (js.t !== "obj") throw new Error("expected obj");
+  assert.equal(js.json, '{"k":1}');
+  assert.equal(JSON.stringify(deserialize(js)), '{"k":1}');
 });
 
 test("budget exhaustion is trunc, not undef", () => {

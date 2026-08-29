@@ -3,6 +3,8 @@ import type { SlimValue, TraceEvent } from "../envelope/types.ts";
 
 const REDACT_RE = /password|token|secret|authorization/i;
 const MAX_STRING = 4096; /* ponytail: 4KiB cap */
+const PROTO_TAG = Symbol.for("slim.protoTag");
+const OTHER_PROTO = Object.freeze(Object.create(null));
 const DEFAULT_BUDGET = 10_000;
 const SOURCE_HINT =
   /\b(module\.exports|export\s+(?:default|async|function|const|class)|function\s+[A-Za-z_$])/;
@@ -193,17 +195,37 @@ function walk(value: unknown, st: WalkState): SlimValue {
       : walk((value as Record<string, unknown>)[k], st);
     defineOwn(fields, k, child);
   }
-  const rec = value as { toString?: unknown };
+  const rec = value as { toString?: unknown; toJSON?: unknown };
   const toStr =
     typeof rec.toString === "function" && rec.toString !== Object.prototype.toString;
   const proto = protoTag(value);
   const syms = ownSymbolKeys(value, st);
+  let str: string | undefined;
+  if (toStr) {
+    try {
+      const s = String(value);
+      str = s.length > MAX_STRING ? s.slice(0, MAX_STRING) : s;
+    } catch {
+      str = undefined;
+    }
+  }
+  let json: string | undefined;
+  if (typeof rec.toJSON === "function") {
+    try {
+      const js = JSON.stringify(value);
+      if (typeof js === "string") json = js.length > MAX_STRING ? js.slice(0, MAX_STRING) : js;
+    } catch {
+      json = undefined;
+    }
+  }
   return {
     t: "obj",
     keys,
     v: fields,
     ...(proto !== "object" ? { proto } : {}),
     ...(toStr ? { toStr: true } : {}),
+    ...(str !== undefined ? { str } : {}),
+    ...(json !== undefined ? { json } : {}),
     ...(syms.length ? { syms } : {}),
   };
 }
@@ -334,6 +356,36 @@ function decode(v: SlimValue | undefined, seen: unknown[]): unknown {
         const sym = s.g ? Symbol.for(s.k) : Symbol(s.k);
         defineOwn(o, sym, decode(s.v, seen));
       }
+      const proto = v.proto ?? "object";
+      Object.defineProperty(o, PROTO_TAG, { value: proto, enumerable: false, configurable: true });
+      if (proto === "object") Object.setPrototypeOf(o, Object.prototype);
+      else if (proto === "other") Object.setPrototypeOf(o, OTHER_PROTO);
+      if (typeof v.str === "string") {
+        const s = v.str;
+        Object.defineProperty(o, "toString", {
+          value() {
+            return s;
+          },
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      if (typeof v.json === "string") {
+        const j = v.json;
+        Object.defineProperty(o, "toJSON", {
+          value() {
+            try {
+              return JSON.parse(j);
+            } catch {
+              return undefined;
+            }
+          },
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
       return o;
     }
     case "map": {
@@ -413,6 +465,8 @@ function slimEq(a: SlimValue | undefined, b: SlimValue | undefined): boolean {
         a.keys.every((k, i) => k === b.keys[i] && slimEq(a.v[k], b.v[k])) &&
         a.proto === b.proto &&
         a.toStr === b.toStr &&
+        a.str === b.str &&
+        a.json === b.json &&
         slimEqSyms(a.syms, b.syms)
       );
     case "map":

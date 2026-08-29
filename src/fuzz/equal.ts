@@ -408,7 +408,7 @@ function eqMap(
   if (a.size !== b.size) return false;
   const ae = [...a.entries()];
   const be = [...b.entries()];
-  if (ctx.keyOrder) {
+  if (ctx.keyOrder || ctx.sameReference || ctx.dateIdentity) {
     for (let i = 0; i < ae.length; i++) {
       const av = ae[i]!;
       const bv = be[i]!;
@@ -435,7 +435,7 @@ function eqSet(
   seen: WeakMap<object, object>,
 ): boolean {
   if (a.size !== b.size) return false;
-  if (ctx.keyOrder) {
+  if (ctx.keyOrder || ctx.sameReference || ctx.dateIdentity) {
     const aa = [...a];
     const bb = [...b];
     for (let i = 0; i < aa.length; i++) {
@@ -468,7 +468,8 @@ function isMomentLike(
     v &&
       typeof v === "object" &&
       typeof (v as { valueOf?: unknown }).valueOf === "function" &&
-      typeof (v as { format?: unknown }).format === "function",
+      typeof (v as { format?: unknown }).format === "function" &&
+      typeof (v as { valueOf: () => unknown }).valueOf() === "number",
   );
 }
 

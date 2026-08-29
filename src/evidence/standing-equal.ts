@@ -3,6 +3,21 @@ export { deserializeEvent } from "../trace/serialize.ts";
 
 /** Self-contained standing-test helpers. Must stay aligned with equal() / deserializeEvent. */
 export const STANDING_RUNTIME = `
+const PROTO_TAG = Symbol.for("slim.protoTag");
+const OTHER_PROTO = Object.freeze(Object.create(null));
+
+function protoKind(v) {
+  if (v && (typeof v === "object" || typeof v === "function") && PROTO_TAG in v) return v[PROTO_TAG];
+  const p = Object.getPrototypeOf(v);
+  if (p === null) return "null";
+  if (p === Object.prototype) return "object";
+  return "other";
+}
+
+function hasProtoTag(v) {
+  return Boolean(v && (typeof v === "object" || typeof v === "function") && PROTO_TAG in v);
+}
+
 function decode(v, seen) {
   if (!v) return undefined;
   switch (v.t) {
@@ -68,6 +83,28 @@ function decode(v, seen) {
         const sym = s.g ? Symbol.for(s.k) : Symbol(s.k);
         Object.defineProperty(o, sym, {
           value: decode(s.v, seen),
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      const proto = v.proto ?? "object";
+      Object.defineProperty(o, PROTO_TAG, { value: proto, enumerable: false, configurable: true });
+      if (proto === "object") Object.setPrototypeOf(o, Object.prototype);
+      else if (proto === "other") Object.setPrototypeOf(o, OTHER_PROTO);
+      if (typeof v.str === "string") {
+        const s = v.str;
+        Object.defineProperty(o, "toString", {
+          value: function toString() { return s; },
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      }
+      if (typeof v.json === "string") {
+        const j = v.json;
+        Object.defineProperty(o, "toJSON", {
+          value: function toJSON() { try { return JSON.parse(j); } catch { return undefined; } },
           enumerable: true,
           writable: true,
           configurable: true,
@@ -172,7 +209,11 @@ function eqDeep(a, b, ctx, seen) {
     const sb = customToString(b);
     if (sa !== sb) return false;
   }
-  if (ctx.prototype && Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false;
+  if (ctx.prototype) {
+    if (protoKind(a) !== protoKind(b)) return false;
+    if (!hasProtoTag(a) && !hasProtoTag(b) && Object.getPrototypeOf(a) !== Object.getPrototypeOf(b)) return false;
+  }
+  if (isMomentLike(a) && isMomentLike(b)) return eqMomentLike(a, b);
   if (a instanceof Date && b instanceof Date) {
     const at = a.getTime();
     const bt = b.getTime();
@@ -198,7 +239,7 @@ function eqDeep(a, b, ctx, seen) {
     if (a.size !== b.size) return false;
     const ae = [...a.entries()];
     const be = [...b.entries()];
-    if (ctx.keyOrder) {
+    if (ctx.keyOrder || ctx.sameReference || ctx.dateIdentity) {
       for (let i = 0; i < ae.length; i++) {
         if (!eqDeep(ae[i][0], be[i][0], ctx, seen) || !eqDeep(ae[i][1], be[i][1], ctx, seen)) return false;
       }
@@ -215,7 +256,7 @@ function eqDeep(a, b, ctx, seen) {
   if (a instanceof Map || b instanceof Map) return false;
   if (a instanceof Set && b instanceof Set) {
     if (a.size !== b.size) return false;
-    if (ctx.keyOrder) {
+    if (ctx.keyOrder || ctx.sameReference || ctx.dateIdentity) {
       const aa = [...a];
       const bb = [...b];
       for (let i = 0; i < aa.length; i++) if (!eqDeep(aa[i], bb[i], ctx, seen)) return false;
@@ -300,6 +341,21 @@ function standingEqual(a, b, hyrum) {
 
 function isUrlLike(v) {
   return Boolean(v && typeof v === "object" && typeof v.href === "string" && typeof v.hostname === "string");
+}
+
+function isMomentLike(v) {
+  return Boolean(v && typeof v === "object" && typeof v.valueOf === "function" && typeof v.format === "function" && typeof v.valueOf() === "number");
+}
+
+function eqMomentLike(a, b) {
+  const av = a.valueOf();
+  const bv = b.valueOf();
+  const aNaN = Number.isNaN(av);
+  const bNaN = Number.isNaN(bv);
+  if (aNaN !== bNaN) return false;
+  if (aNaN) return true;
+  if (!Object.is(av, bv)) return false;
+  return a.format("YYYY-MM-DD HH:mm:ss.SSS") === b.format("YYYY-MM-DD HH:mm:ss.SSS");
 }
 
 function callFn(fn, thisArg, args) {

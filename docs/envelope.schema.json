@@ -225,6 +225,8 @@
         "holes": { "type": "array", "items": { "type": "integer" } },
         "proto": { "type": "string", "enum": ["null", "object", "other"] },
         "toStr": { "type": "boolean" },
+        "str": { "type": "string" },
+        "json": { "type": "string" },
         "syms": {
           "type": "array",
           "description": "Enumerable symbol keys (g = Symbol.for).",

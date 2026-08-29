@@ -161,6 +161,8 @@ export type SlimValue =
       v: Record<string, SlimValue>;
       proto?: "null" | "object" | "other";
       toStr?: boolean;
+      str?: string;
+      json?: string;
       syms?: { k: string; g?: boolean; v: SlimValue }[];
     }
   | { t: "map"; v: [SlimValue, SlimValue][] }
