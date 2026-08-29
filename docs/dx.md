@@ -104,7 +104,7 @@ The product.
     --max-attempts <n>  LLM repair loop (default 3)
 ```
 
-Steps, in order, stop on first failure. After the first project write, failure **rolls back** the target tree: regular files (bytes and execute bits), newly created files and empty dirs, binary lockfiles, and symlinks (same `readlink` target). Escaping symlinks, a symlinked `--out` that leaves the project, output collisions, and special files (fifo/socket/device) are refused **before** any write; the project and any external target stay unchanged.
+Steps, in order, stop on first failure. After the first project write, failure **rolls back** the target tree: regular files (bytes and execute bits), newly created files and empty dirs, binary lockfiles, and symlinks (same `readlink` target). Writes never follow a symlink: `MutationTxn` may snapshot and restore a pre-existing internal or dangling symlink’s kind and `readlink` target, and that is the only internal-symlink permit. Escaping symlinks, a symlinked `--out` (internal or escaping, or a symlink ancestor under the project), rewrite-candidate symlinks, output collisions, and special files (fifo/socket/device) are refused **before** any write; the project and any external target stay unchanged. An existing `src/slim/<package>.ts` (or `.cjs` / standing / hardened companion) is a collision unless `.slim/manifest.json` has an accepted `replacements[pkg]` whose `module` is that slice path. Missing, malformed, empty, or incomplete ownership is not proof. Resolved writes stay on the logical path under the owned `--out` tree. Missing `--out` may be created as a real directory.
 
 1. Resolve pkg in package.json / lockfile. Missing → exit 1.
 2. Refuse gates (native, network, fs, framework, envelope-too-wide) → exit 3.
@@ -175,7 +175,7 @@ Usage:
       --dry-run          Show the envelope and plan, write nothing including traces
       --keep-original    Do not uninstall the package
       --no-install       Rewrite package.json but skip lockfile refresh
-      --out <dir>        Default: src/slim
+      --out <dir>        Default: src/slim. Refuse unowned output files and a symlinked --out.
 
 Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate/git commit/push/PR failed.
       3 Slim refuses this envelope. 4 missing gh and GITHUB_TOKEN when PR required, missing origin, or missing package manager.

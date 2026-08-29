@@ -20,6 +20,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { applyRevert, type RevertPlan } from "../src/rewrite/revert.ts";
 import { hermeticPmEnv, spawnPm } from "../src/rewrite/lockfile.ts";
+import { packSlim } from "./helpers/llm-replace.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -347,6 +348,86 @@ test("escaping source symlink refuses replace without mutating the target", { ti
   assert.deepEqual(snapshotTree(dest), before);
   assert.equal(readFileSync(secret, "utf8"), secretBefore);
   assert.equal(lstatSync(join(dest, "src", "leak.ts")).isSymbolicLink(), true);
+});
+
+test("existing src/slim/ms.ts without a manifest is refused and left unchanged", { timeout: 180_000 }, () => {
+  const dest = mkdtempSync(join(tmpdir(), "slim-unowned-"));
+  copyMs(dest);
+  mkdirSync(join(dest, "src", "slim"), { recursive: true });
+  const slimPath = join(dest, "src", "slim", "ms.ts");
+  writeFileSync(slimPath, "unrelated hand-written slice\n");
+  npmInstall(dest);
+  const before = snapshotTree(dest);
+  const r = runSlim(dest, ["replace", "ms", "--no-pr", "--no-trace", "--no-install"]);
+  assert.notEqual(r.status, 0, "unowned output must refuse");
+  assert.match(`${r.stderr}${r.stdout}`, /collision/i);
+  assert.equal(readFileSync(slimPath, "utf8"), "unrelated hand-written slice\n");
+  assert.deepEqual(snapshotTree(dest), before);
+  assert.equal(existsSync(join(dest, ".slim")), false);
+});
+
+test("internal symlinked src/slim is refused before any write", { timeout: 180_000 }, () => {
+  const dest = mkdtempSync(join(tmpdir(), "slim-out-int-"));
+  copyMs(dest);
+  mkdirSync(join(dest, "elsewhere"), { recursive: true });
+  writeFileSync(join(dest, "elsewhere", "keep.txt"), "keep\n");
+  mkdirSync(join(dest, "src"), { recursive: true });
+  symlinkSync(join(dest, "elsewhere"), join(dest, "src", "slim"));
+  npmInstall(dest);
+  const before = snapshotTree(dest);
+  const r = runSlim(dest, ["replace", "ms", "--no-pr", "--no-trace", "--no-install"]);
+  assert.notEqual(r.status, 0, "internal out symlink must refuse");
+  assert.match(`${r.stderr}${r.stdout}`, /symlink/i);
+  assert.deepEqual(snapshotTree(dest), before);
+  assert.equal(lstatSync(join(dest, "src", "slim")).isSymbolicLink(), true);
+  assert.equal(readFileSync(join(dest, "elsewhere", "keep.txt"), "utf8"), "keep\n");
+});
+
+test("packed CLI refuses unowned output and an internal symlinked --out", { timeout: 180_000 }, () => {
+  const { tarball } = packSlim();
+  const host = mkdtempSync(join(tmpdir(), "slim-phase8-host-"));
+  writeFileSync(join(host, "package.json"), JSON.stringify({ name: "host", private: true, type: "module" }));
+  const installed = spawnPm("npm", ["install", tarball, "--omit=dev"], {
+    cwd: host,
+    encoding: "utf8",
+    env: hermeticPmEnv(),
+    timeout: 120_000,
+  });
+  assert.equal(installed.status, 0, String(installed.stderr));
+  const slimJs = join(host, "node_modules", "slim", "dist", "main.js");
+  const runPacked = (cwd: string) =>
+    spawnSync(process.execPath, [slimJs, "replace", "ms", "--no-pr", "--no-trace", "--no-install"], {
+      cwd,
+      encoding: "utf8",
+      env: hermeticPmEnv(),
+      timeout: 180_000,
+    });
+
+  const unowned = mkdtempSync(join(tmpdir(), "slim-pack-unowned-"));
+  copyMs(unowned);
+  mkdirSync(join(unowned, "src", "slim"), { recursive: true });
+  writeFileSync(join(unowned, "src", "slim", "ms.ts"), "unrelated packed\n");
+  npmInstall(unowned);
+  const unownedBefore = snapshotTree(unowned);
+  const unownedRun = runPacked(unowned);
+  assert.notEqual(unownedRun.status, 0, unownedRun.stderr + unownedRun.stdout);
+  assert.match(`${unownedRun.stderr}${unownedRun.stdout}`, /collision/i);
+  assert.equal(readFileSync(join(unowned, "src", "slim", "ms.ts"), "utf8"), "unrelated packed\n");
+  assert.deepEqual(snapshotTree(unowned), unownedBefore);
+
+  const linked = mkdtempSync(join(tmpdir(), "slim-pack-out-"));
+  copyMs(linked);
+  mkdirSync(join(linked, "elsewhere"), { recursive: true });
+  writeFileSync(join(linked, "elsewhere", "keep.txt"), "keep packed\n");
+  mkdirSync(join(linked, "src"), { recursive: true });
+  symlinkSync(join(linked, "elsewhere"), join(linked, "src", "slim"));
+  npmInstall(linked);
+  const linkedBefore = snapshotTree(linked);
+  const linkedRun = runPacked(linked);
+  assert.notEqual(linkedRun.status, 0, linkedRun.stderr + linkedRun.stdout);
+  assert.match(`${linkedRun.stderr}${linkedRun.stdout}`, /symlink/i);
+  assert.deepEqual(snapshotTree(linked), linkedBefore);
+  assert.equal(readFileSync(join(linked, "elsewhere", "keep.txt"), "utf8"), "keep packed\n");
 });
 
 test("injected failure after each mutation step restores the project", { timeout: 600_000 }, () => {

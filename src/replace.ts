@@ -37,8 +37,8 @@ import { runTraces, withLocalBinPath, writeTracesMeta } from "./trace/run.ts";
 import { MutationTxn, lockfilePath } from "./rewrite/transaction.ts";
 import { rewriteSpecifiers as envelopeSpecifiers, removeDependencyNames } from "./rewrite/siblings.ts";
 import {
+  assertGeneratedOutputSafe,
   assertInsideRoot,
-  assertNoOutputCollision,
   fileBase,
   isSafeToRewrite,
 } from "./rewrite/paths.ts";
@@ -79,6 +79,22 @@ export async function runReplace(args: CliArgs): Promise<number> {
     ignore: config.ignore,
   });
   refuseCatalogBoundary(env, args);
+
+  const outDir = args.out ?? config.outDir;
+  const outAbs = assertInsideRoot(project.root, outDir);
+  const base = fileBase(env.package.name);
+  const slimPath = join(outAbs, `${base}.ts`);
+  assertGeneratedOutputSafe(
+    project.root,
+    slimPath,
+    [
+      slimPath,
+      join(outAbs, `${base}.cjs`),
+      join(outAbs, `${base}.test.ts`),
+      join(outAbs, `${base}.hardened.test.ts`),
+    ],
+    env.package.name,
+  );
 
   if (!args.noTrace) {
     const traceDir = mkdtempSync(join(tmpdir(), "slim-trace-"));
@@ -159,10 +175,6 @@ export async function runReplace(args: CliArgs): Promise<number> {
 
   const seed = args.seed ?? randomInt(1, 2 ** 31);
   const budget = args.budgetMs ?? config.budgetMs;
-  const outDir = args.out ?? config.outDir;
-  const outAbs = assertInsideRoot(project.root, outDir);
-  const slimPath = join(outAbs, `${fileBase(env.package.name)}.ts`);
-  assertNoOutputCollision(project.root, slimPath, env.package.name);
 
   if (args.dryRun) {
     printDryRun(env, source, catalogIds);
@@ -255,7 +267,7 @@ export async function runReplace(args: CliArgs): Promise<number> {
     if (!isSafeToRewrite(project.root, f)) {
       throw new SlimExit(
         EXIT_USAGE,
-        `unsafe write: ${relative(project.root, f).replace(/\\/g, "/")} escapes the project or is a special file`,
+        `unsafe write: ${relative(project.root, f).replace(/\\/g, "/")} escapes the project, is a symlink, or is a special file`,
       );
     }
   }

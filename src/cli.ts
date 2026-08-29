@@ -25,7 +25,7 @@ Replace options:
   --no-pr             write files; no branch, commit, push, or PR
   --allow-unknown     generate even with dynamic access (never claimed closed)
   --force             skip size / save heuristics
-  --out <dir>         default src/slim
+  --out <dir>         default src/slim; refuse unowned output and symlinked --out
   --dry-run           analyze and print; write nothing including traces
   --template-only     catalog only, no LLM
   --llm               force LLM even if catalog matches

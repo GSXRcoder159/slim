@@ -20,7 +20,7 @@ slim replace lodash
 
 You get:
 
-- `src/slim/lodash.ts` — readable in one sitting (~250 lines for `get` + `debounce`, not 300 methods). Golden Worker-shaped fixture: `fixtures/lodash-get-debounce/` (`wrangler.toml`, `src/worker.ts`).
+- `src/slim/lodash.ts` — readable in one sitting (~250 lines for `get` + `debounce`, not 300 methods). Golden Worker-shaped fixture: `fixtures/lodash-get-debounce/` (`wrangler.toml`, `src/worker.ts`). `replace` refuses unowned files already at `--out` and a symlinked `--out` (internal or escaping) before any write.
 - `.slim/lodash/evidence.md` — what was used, byte delta, fuzz counts, residual risk (never empty)
 - standing tests that replay frozen I/O pairs **without** keeping lodash installed
 - `lodash` removed from `package.json`

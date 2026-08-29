@@ -116,19 +116,52 @@ test("prepareWrite creates parent directories", () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-test("rollback restores an internal symlink as the same link target", () => {
+test("write through an internal symlink is refused and leaves both sides unchanged", () => {
   const root = tmp();
   const real = join(root, "real.txt");
   const link = join(root, "link.txt");
   writeFileSync(real, "orig");
   symlinkSync("real.txt", link);
   const txn = new MutationTxn(root);
-  txn.writeFile(link, "mutated");
-  assert.equal(readFileSync(real, "utf8"), "mutated");
+  assert.throws(
+    () => txn.writeFile(link, "mutated"),
+    (e: unknown) => e instanceof SlimExit && e.code === EXIT_USAGE && /is a symlink/i.test(e.message),
+  );
+  assert.equal(lstatSync(link).isSymbolicLink(), true);
+  assert.equal(readlinkSync(link), "real.txt");
+  assert.equal(readFileSync(real, "utf8"), "orig");
+});
+
+test("rollback restores an internal symlink snapshotted without write-through", () => {
+  const root = tmp();
+  const real = join(root, "real.txt");
+  const link = join(root, "link.txt");
+  writeFileSync(real, "orig");
+  symlinkSync("real.txt", link);
+  const txn = new MutationTxn(root);
+  txn.snapshot(link);
+  rmSync(link);
+  writeFileSync(link, "now a file");
   txn.rollback();
   assert.equal(lstatSync(link).isSymbolicLink(), true);
   assert.equal(readlinkSync(link), "real.txt");
   assert.equal(readFileSync(real, "utf8"), "orig");
+});
+
+test("write into a path whose parent is an internal symlink is refused", () => {
+  const root = tmp();
+  const destDir = join(root, "elsewhere");
+  mkdirSync(destDir);
+  writeFileSync(join(destDir, "keep.txt"), "keep\n");
+  symlinkSync("elsewhere", join(root, "out"));
+  const txn = new MutationTxn(root);
+  assert.throws(
+    () => txn.writeFile(join(root, "out", "ms.ts"), "hacked\n"),
+    (e: unknown) => e instanceof SlimExit && e.code === EXIT_USAGE && /is a symlink/i.test(e.message),
+  );
+  assert.equal(lstatSync(join(root, "out")).isSymbolicLink(), true);
+  assert.equal(readFileSync(join(destDir, "keep.txt"), "utf8"), "keep\n");
+  assert.equal(existsSync(join(destDir, "ms.ts")), false);
 });
 
 test("rollback restores a dangling symlink instead of leaving a regular file", () => {

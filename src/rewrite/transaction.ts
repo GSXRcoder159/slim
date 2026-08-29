@@ -5,14 +5,13 @@ import {
   mkdirSync,
   readFileSync,
   readlinkSync,
-  realpathSync,
   rmdirSync,
   symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { assertSafeWrite, pathEscapesRoot } from "./paths.ts";
+import { assertSafeWrite } from "./paths.ts";
 
 type Snap =
   | { kind: "absent" }
@@ -75,7 +74,6 @@ export class MutationTxn {
   snapshot(absPath: string): void {
     const path = resolve(absPath);
     if (this.originals.has(path)) return;
-    assertSafeWrite(this.root, path);
     let st;
     try {
       st = lstatSync(path);
@@ -88,12 +86,6 @@ export class MutationTxn {
     }
     if (st.isSymbolicLink()) {
       this.originals.set(path, { kind: "symlink", target: readlinkSync(path) });
-      try {
-        const real = realpathSync(path);
-        if (real !== path && !pathEscapesRoot(this.root, real)) this.snapshot(real);
-      } catch {
-        /* dangling or loop */
-      }
       return;
     }
     if (st.isFile()) {
@@ -106,6 +98,7 @@ export class MutationTxn {
   /** Snapshot path (first wins) and mkdir parents that do not yet exist. */
   prepareWrite(absPath: string): void {
     const path = resolve(absPath);
+    assertSafeWrite(this.root, path);
     this.snapshot(path);
     const dirs: string[] = [];
     let dir = dirname(path);

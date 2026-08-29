@@ -40,6 +40,16 @@ function symlinkDest(abs: string): string {
   }
 }
 
+function pathExists(abs: string): boolean {
+  try {
+    lstatSync(abs);
+    return true;
+  } catch (err) {
+    if (isEnoent(err)) return false;
+    throw err;
+  }
+}
+
 /** True when `candidate` is outside `root` (symlink-aware). */
 export function pathEscapesRoot(root: string, candidate: string): boolean {
   const absRoot = rootReal(root);
@@ -61,6 +71,47 @@ export function pathEscapesRoot(root: string, candidate: string): boolean {
   return rel.startsWith("..") || rel === ".." || isAbsolute(rel);
 }
 
+function posixRel(root: string, abs: string): string {
+  return relative(resolve(root), resolve(abs)).replace(/\\/g, "/") || ".";
+}
+
+type HopKind = "out" | "write";
+
+/** Refuse any symlink hop from `target` up to (not including) `root`. */
+function assertNoSymlinkHop(root: string, target: string, kind: HopKind): void {
+  const absRoot = resolve(root);
+  const abs = resolve(target);
+  let cur = abs;
+  while (cur !== absRoot && dirname(cur) !== cur) {
+    let st;
+    try {
+      st = lstatSync(cur);
+    } catch (err) {
+      if (!isEnoent(err)) throw err;
+      cur = dirname(cur);
+      continue;
+    }
+    if (st.isSymbolicLink()) {
+      const dest = symlinkDest(cur);
+      if (pathEscapesRoot(absRoot, dest)) {
+        throw new SlimExit(
+          EXIT_USAGE,
+          kind === "out"
+            ? `--out must stay inside the project root (got ${target})`
+            : `unsafe write: ${posixRel(absRoot, cur)} escapes the project`,
+        );
+      }
+      throw new SlimExit(
+        EXIT_USAGE,
+        kind === "out"
+          ? `--out must not be a symlink (got ${target})`
+          : `unsafe write: ${posixRel(absRoot, cur)} is a symlink`,
+      );
+    }
+    cur = dirname(cur);
+  }
+}
+
 /** Resolve target and require it to stay inside root (symlink-aware). */
 export function assertInsideRoot(root: string, target: string): string {
   const absRoot = resolve(root);
@@ -69,57 +120,40 @@ export function assertInsideRoot(root: string, target: string): string {
   if (rel.startsWith("..") || rel === ".." || isAbsolute(rel)) {
     throw new SlimExit(EXIT_USAGE, `--out must stay inside the project root (got ${target})`);
   }
-  if (absTarget === absRoot || absTarget.startsWith(absRoot + sep)) {
-    return absTarget;
-  }
   const relFromRoot = relative(absRoot, absTarget);
-  if (relFromRoot.startsWith("..") || isAbsolute(relFromRoot)) {
-    throw new SlimExit(EXIT_USAGE, `--out must stay inside the project root (got ${target})`);
+  if (!(absTarget === absRoot || absTarget.startsWith(absRoot + sep))) {
+    if (relFromRoot.startsWith("..") || isAbsolute(relFromRoot)) {
+      throw new SlimExit(EXIT_USAGE, `--out must stay inside the project root (got ${target})`);
+    }
   }
+  assertNoSymlinkHop(absRoot, absTarget, "out");
   return absTarget;
 }
 
-function posixRel(root: string, abs: string): string {
-  return relative(resolve(root), resolve(abs)).replace(/\\/g, "/") || ".";
-}
-
-/** Refuse escaping symlinks, special files, and directory-as-file writes. */
+/** Refuse escaping/internal symlinks, special files, and directory-as-file writes. */
 export function assertSafeWrite(root: string, target: string): void {
   const absRoot = resolve(root);
   const abs = resolve(target);
   if (pathEscapesRoot(absRoot, abs)) {
     throw new SlimExit(EXIT_USAGE, `unsafe write: ${posixRel(absRoot, abs)} escapes the project`);
   }
-  let cur = abs;
-  for (;;) {
-    let st;
-    try {
-      st = lstatSync(cur);
-    } catch (err) {
-      if (!isEnoent(err)) throw err;
-      if (cur === absRoot || dirname(cur) === cur) break;
-      cur = dirname(cur);
-      continue;
-    }
-    if (st.isSymbolicLink()) {
-      const dest = symlinkDest(cur);
-      if (pathEscapesRoot(absRoot, dest)) {
-        throw new SlimExit(EXIT_USAGE, `unsafe write: ${posixRel(absRoot, cur)} escapes the project`);
-      }
-    } else if (cur === abs) {
-      if (st.isFIFO() || st.isSocket() || st.isCharacterDevice() || st.isBlockDevice()) {
-        throw new SlimExit(EXIT_FAIL, `unsafe write: ${posixRel(absRoot, abs)} is a special file`);
-      }
-      if (st.isDirectory()) {
-        throw new SlimExit(EXIT_FAIL, `unsafe write: ${posixRel(absRoot, abs)} is a directory`);
-      }
-    }
-    if (cur === absRoot || dirname(cur) === cur) break;
-    cur = dirname(cur);
+  assertNoSymlinkHop(absRoot, abs, "write");
+  let st;
+  try {
+    st = lstatSync(abs);
+  } catch (err) {
+    if (isEnoent(err)) return;
+    throw err;
+  }
+  if (st.isFIFO() || st.isSocket() || st.isCharacterDevice() || st.isBlockDevice()) {
+    throw new SlimExit(EXIT_FAIL, `unsafe write: ${posixRel(absRoot, abs)} is a special file`);
+  }
+  if (st.isDirectory()) {
+    throw new SlimExit(EXIT_FAIL, `unsafe write: ${posixRel(absRoot, abs)} is a directory`);
   }
 }
 
-/** False when the path is missing, escaping, special, or a directory. */
+/** False when the path is missing, escaping, a symlink, special, or a directory. */
 export function isSafeToRewrite(root: string, file: string): boolean {
   try {
     lstatSync(resolve(file));
@@ -130,27 +164,106 @@ export function isSafeToRewrite(root: string, file: string): boolean {
   }
 }
 
-export function assertNoOutputCollision(
+type ManifestRecord = {
+  version?: unknown;
+  envelopeHash?: unknown;
+  symbols?: unknown;
+  module?: unknown;
+};
+
+type ManifestFile = {
+  schemaVersion?: unknown;
+  replacements?: Record<string, ManifestRecord>;
+};
+
+function loadManifest(root: string): ManifestFile | "missing" | "malformed" {
+  const manifestPath = join(root, ".slim", "manifest.json");
+  if (!existsSync(manifestPath)) return "missing";
+  try {
+    const man = JSON.parse(readFileSync(manifestPath, "utf8")) as unknown;
+    if (man === null || typeof man !== "object" || Array.isArray(man)) return "malformed";
+    return man as ManifestFile;
+  } catch {
+    return "malformed";
+  }
+}
+
+function isAcceptedRecord(rec: ManifestRecord | undefined): rec is {
+  version: string;
+  envelopeHash: string;
+  symbols: string[];
+  module: string;
+} {
+  if (!rec) return false;
+  return (
+    typeof rec.version === "string" &&
+    typeof rec.envelopeHash === "string" &&
+    rec.envelopeHash.length === 64 &&
+    Array.isArray(rec.symbols) &&
+    rec.symbols.every((s) => typeof s === "string") &&
+    typeof rec.module === "string"
+  );
+}
+
+function posixModule(module: string): string {
+  return module.replace(/\\/g, "/");
+}
+
+function ownsSlice(root: string, pkgName: string, sliceRel: string): boolean {
+  const man = loadManifest(root);
+  if (man === "missing" || man === "malformed") return false;
+  if (man.schemaVersion !== 1) return false;
+  const own = man.replacements?.[pkgName];
+  return isAcceptedRecord(own) && posixModule(own.module) === sliceRel;
+}
+
+export function assertNoOutputCollision(root: string, slimPath: string, pkgName: string): void {
+  if (!pathExists(slimPath)) return;
+  const rel = posixRel(root, slimPath);
+  const man = loadManifest(root);
+  if (man === "missing" || man === "malformed" || man.schemaVersion !== 1) {
+    throw new SlimExit(EXIT_FAIL, `output collision: ${rel} exists and is not a Slim-owned module for ${pkgName}`);
+  }
+  const replacements = man.replacements;
+  if (!replacements || typeof replacements !== "object" || Array.isArray(replacements)) {
+    throw new SlimExit(EXIT_FAIL, `output collision: ${rel} exists and is not a Slim-owned module for ${pkgName}`);
+  }
+  for (const [name, rec] of Object.entries(replacements)) {
+    if (name === pkgName) continue;
+    const mod = typeof rec?.module === "string" ? posixModule(rec.module) : "";
+    if (mod === rel) {
+      throw new SlimExit(EXIT_FAIL, `output collision: ${rel} already belongs to ${name}, not ${pkgName}`);
+    }
+  }
+  const own = replacements[pkgName];
+  if (isAcceptedRecord(own) && posixModule(own.module) === rel) return;
+  throw new SlimExit(EXIT_FAIL, `output collision: ${rel} exists and is not a Slim-owned module for ${pkgName}`);
+}
+
+/** Refuse symlink hops and unowned generated-output paths before mutation. */
+export function assertGeneratedOutputSafe(
   root: string,
-  slimPath: string,
+  slicePath: string,
+  generatedPaths: string[],
   pkgName: string,
 ): void {
-  const manifestPath = join(root, ".slim", "manifest.json");
-  if (!existsSync(manifestPath) || !existsSync(slimPath)) return;
-  let man: { replacements?: Record<string, { module?: string }> };
-  try {
-    man = JSON.parse(readFileSync(manifestPath, "utf8")) as typeof man;
-  } catch {
-    return;
+  const seen = new Set<string>();
+  for (const p of [slicePath, ...generatedPaths]) {
+    const abs = resolve(p);
+    if (seen.has(abs)) continue;
+    seen.add(abs);
+    assertSafeWrite(root, abs);
   }
-  const rel = relative(root, slimPath).replace(/\\/g, "/");
-  for (const [name, rec] of Object.entries(man.replacements ?? {})) {
-    if (name === pkgName) continue;
-    const mod = (rec.module ?? "").replace(/\\/g, "/");
-    if (mod === rel) {
+  assertNoOutputCollision(root, slicePath, pkgName);
+  const sliceRel = posixRel(root, slicePath);
+  for (const p of generatedPaths) {
+    const abs = resolve(p);
+    if (abs === resolve(slicePath)) continue;
+    if (!pathExists(abs)) continue;
+    if (!ownsSlice(root, pkgName, sliceRel)) {
       throw new SlimExit(
         EXIT_FAIL,
-        `output collision: ${rel} already belongs to ${name}, not ${pkgName}`,
+        `output collision: ${posixRel(root, abs)} exists and is not a Slim-owned module for ${pkgName}`,
       );
     }
   }

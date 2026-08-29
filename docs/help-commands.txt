@@ -35,7 +35,7 @@ Usage:
       --no-pr            Write files; no branch, commit, push, or PR
       --no-trace         Skip tests; static-only evidence (cannot claim trace-closed)
       --dry-run          Show the envelope and plan, write nothing (including traces)
-      --out <dir>        Default: src/slim
+      --out <dir>        Default: src/slim. Refuse unowned output files and a symlinked --out.
       --keep-original    Do not uninstall the package
       --no-install       Rewrite package.json but skip lockfile refresh
       --llm              Force LLM even if catalog matches
