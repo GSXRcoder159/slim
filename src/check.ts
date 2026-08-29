@@ -1,6 +1,6 @@
 import { spawnSync, type SpawnSyncOptions, type SpawnSyncReturns } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
-import { isAbsolute, join, relative } from "node:path";
+import { join, relative } from "node:path";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_FAIL, EXIT_OK, SlimExit } from "./exit.ts";
 import { loadProject, loadTargetTypescript } from "./project.ts";
@@ -57,11 +57,6 @@ export interface CheckReport {
   exit: number;
   status: ReturnType<typeof statusFromExit>;
   packages: CheckPackageResult[];
-}
-
-function resolveEnvelopePath(root: string, pkg: string, configured?: string): string {
-  const raw = configured?.trim() || join(".slim", pkg, "envelope.json");
-  return isAbsolute(raw) ? raw : join(root, raw);
 }
 
 function childText(chunk: string | Buffer | null | undefined): string {
@@ -363,18 +358,16 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
     if (!json) throw man.error;
   }
   for (const pkg of names) {
-    const envPath = resolveEnvelopePath(project.root, pkg, config.replacements[pkg]?.envelope);
     const rec = man.recs[pkg];
-    const state = replacementStateIssues(
-      project.root,
-      pkg,
-      rec,
-      config.outDir,
-      config.replacements[pkg]?.module,
-    );
+    const state = replacementStateIssues(project.root, pkg, rec, {
+      outDir: config.outDir,
+      envelope: config.replacements[pkg]?.envelope,
+      moduleFallback: config.replacements[pkg]?.module,
+    });
     if (state.fatal && !json) throw state.fatal;
     const stateBroken = state.drift.length > 0;
     const residualRisk = state.residualRisk;
+    const envPath = state.paths?.envelopeAbs ?? join(project.root, ".slim", pkg, "envelope.json");
     if (!existsSync(envPath)) {
       emitDiag(args, `missing envelope ${envPath}`);
       packages.push({

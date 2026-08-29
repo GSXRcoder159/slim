@@ -504,7 +504,10 @@ test("replacementStateIssues reports missing evidence and hardening", () => {
   const root = fixture({});
   const env = minimalEnvelope("lodash", ["get"]);
   const rec = minimalManifest(env).replacements.lodash;
-  const state = replacementStateIssues(root, "lodash", rec, "src/slim", "src/slim/lodash.ts");
+  const state = replacementStateIssues(root, "lodash", rec, {
+    outDir: "src/slim",
+    moduleFallback: "src/slim/lodash.ts",
+  });
   assert.ok(state.drift.some((d) => d.kind === "evidence"));
   assert.ok(state.drift.some((d) => d.kind === "hardening"));
 });

@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, dirname } from "node:path";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_ENV, EXIT_FAIL, EXIT_OK, SlimExit } from "./exit.ts";
 import { JSON_SCHEMA_VERSION, statusFromExit, writeJson } from "./json.ts";
@@ -17,7 +17,12 @@ import {
   type UpstreamFinding,
   type ApplyUpstreamFixResult,
 } from "./upstream/fix.ts";
-import { assertReplacementState, type ReplacementRecord } from "./upstream/state.ts";
+import {
+  assertReplacementState,
+  replacementStateIssues,
+  resolveReplacementPaths,
+  type ReplacementRecord,
+} from "./upstream/state.ts";
 import {
   cmpVersion,
   isConsultedFailure,
@@ -27,6 +32,7 @@ import {
   type SourceStatus,
 } from "./upstream/status.ts";
 import { MutationTxn } from "./rewrite/transaction.ts";
+import { assertSafeStatePath, toPosixPath } from "./rewrite/paths.ts";
 import { runMergeGate } from "./replace.ts";
 
 export type { UpstreamDeps, UpstreamFinding, UpstreamOracle } from "./upstream/fix.ts";
@@ -40,6 +46,9 @@ export type UpstreamConclusion =
   | "source-unavailable"
   | "oracle-unavailable"
   | "incomplete-state"
+  | "missing-state"
+  | "malformed-state"
+  | "regeneration-failure"
   | "no-replacements";
 
 export type UpstreamAction = "none" | "blocked" | "review" | "regenerated";
@@ -93,10 +102,17 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
     github: notRequired(),
   };
 
+  try {
+    assertSafeStatePath(project.root, manPath);
+  } catch (err) {
+    const msg = err instanceof SlimExit ? err.message : `unsafe state path: .slim/manifest.json`;
+    return finish(args, reportOf("malformed-state", EXIT_FAIL, sources, [], [], msg), null, msg);
+  }
+
   if (!existsSync(manPath)) {
     return finish(
       args,
-      reportOf("incomplete-state", EXIT_FAIL, sources, [], [], "no .slim/manifest.json — nothing to watch"),
+      reportOf("missing-state", EXIT_FAIL, sources, [], [], "no .slim/manifest.json — nothing to watch"),
       null,
       "no .slim/manifest.json — nothing to watch",
     );
@@ -107,7 +123,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
     man = readDocument("manifest", manPath, ".slim/manifest.json") as Manifest;
   } catch (err) {
     const msg = err instanceof SlimExit ? err.message : `malformed .slim/manifest.json`;
-    return finish(args, reportOf("incomplete-state", EXIT_FAIL, sources, [], [], msg), null, msg);
+    return finish(args, reportOf("malformed-state", EXIT_FAIL, sources, [], [], msg), null, msg);
   }
 
   const names = Object.keys(man.replacements ?? {});
@@ -115,13 +131,17 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
     return finish(args, reportOf("no-replacements", EXIT_OK, sources, [], []), "no replacements.\n");
   }
 
-  try {
-    for (const name of names) {
-      assertReplacementState(project.root, name, man.replacements[name]!, config.outDir);
+  for (const name of names) {
+    const state = replacementStateIssues(project.root, name, man.replacements[name]!, {
+      outDir: config.outDir,
+      envelope: config.replacements[name]?.envelope,
+    });
+    if (state.kind !== "ok") {
+      const msg =
+        state.fatal?.message ?? state.drift[0]?.detail ?? `incomplete replacement state for ${name}`;
+      const conclusion = state.kind === "missing" ? "missing-state" : "malformed-state";
+      return finish(args, reportOf(conclusion, EXIT_FAIL, sources, [], [], msg), null, msg);
     }
-  } catch (err) {
-    const msg = err instanceof SlimExit ? err.message : `incomplete replacement state`;
-    return finish(args, reportOf("incomplete-state", EXIT_FAIL, sources, [], [], msg), null, msg);
   }
 
   if (args.pr) {
@@ -253,10 +273,16 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
         }
         for (const job of exposedJobs) {
           const rec = man.replacements[job.name]!;
-          assertReplacementState(project.root, job.name, rec, config.outDir);
+          assertReplacementState(project.root, job.name, rec, {
+            outDir: config.outDir,
+            envelope: config.replacements[job.name]?.envelope,
+          });
         }
         runMergeGate(project.root, config.testCommand, Boolean(args.json));
-        txn.writeFile(join(project.root, ".slim", "UPSTREAM.md"), prBody(project.root, findings, fixResults));
+        txn.writeFile(
+          join(project.root, ".slim", "UPSTREAM.md"),
+          prBody(project.root, findings, fixResults, config, man),
+        );
         txn.commit();
       } catch (err) {
         txn.rollback();
@@ -277,10 +303,14 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
     conclusion = "oracle-unavailable";
     exit = EXIT_FAIL;
     msg = "verification unavailable: no installable oracle";
+  } else if (hasExposed && regenError) {
+    conclusion = "regeneration-failure";
+    exit = EXIT_FAIL;
+    msg = regenError;
   } else if (hasExposed) {
     conclusion = "exposed";
     exit = EXIT_FAIL;
-    msg = regenError ?? "slice exposed or advisory unmapped";
+    msg = "slice exposed or advisory unmapped";
   } else if (routineLines.length) {
     conclusion = "routine-release";
     exit = EXIT_OK;
@@ -296,8 +326,10 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
 
   const review = conclusion === "unmapped" || (conclusion === "exposed" && wroteFix);
   if (conclusion === "unmapped" && !wroteFix) {
+    const upstreamMd = join(project.root, ".slim", "UPSTREAM.md");
+    assertSafeStatePath(project.root, upstreamMd);
     mkdirSync(join(project.root, ".slim"), { recursive: true });
-    writeFileSync(join(project.root, ".slim", "UPSTREAM.md"), prBody(project.root, findings, fixResults));
+    writeFileSync(upstreamMd, prBody(project.root, findings, fixResults, config, man));
   }
 
   if (review && args.pr) {
@@ -309,7 +341,7 @@ export async function runUpstream(args: CliArgs, deps: UpstreamDeps = {}): Promi
       title: `slim: upstream slice fix for ${firstId}`,
       body,
       branch: "slim/upstream",
-      files: upstreamPrFiles(project.root, man, fixResults),
+      files: upstreamPrFiles(project.root, man, fixResults, config),
       labels: [...UPSTREAM_PR_LABELS],
       kind: "upstream",
     });
@@ -349,6 +381,9 @@ function emitHuman(
   if (conclusion === "oracle-unavailable") {
     write(`verification unavailable: ${sources.oracle.detail}\n`);
   }
+  if (conclusion === "regeneration-failure") {
+    write(`regeneration failed\n`);
+  }
   for (const r of results) {
     if (r.regenerated && r.fuzz) {
       write(
@@ -380,6 +415,9 @@ function actionOf(conclusion: UpstreamConclusion, regeneration: RegenerationRow[
   if (conclusion === "exposed") return regeneration.some((r) => r.regenerated) ? "regenerated" : "blocked";
   if (
     conclusion === "incomplete-state" ||
+    conclusion === "missing-state" ||
+    conclusion === "malformed-state" ||
+    conclusion === "regeneration-failure" ||
     conclusion === "source-unavailable" ||
     conclusion === "oracle-unavailable"
   ) {
@@ -441,15 +479,26 @@ function upstreamPrFiles(
   root: string,
   man: Manifest,
   results: ApplyUpstreamFixResult[],
+  config: ReturnType<typeof loadConfig>,
 ): string[] {
   const files = new Set<string>([".slim/UPSTREAM.md", ".slim/manifest.json"]);
   if (existsSync(join(root, "slim.json"))) files.add("slim.json");
   for (const [name, rec] of Object.entries(man.replacements)) {
-    files.add(join(".slim", name, "evidence.md"));
-    files.add(join(".slim", name, "evidence.json"));
-    files.add(join(".slim", name, "envelope.json"));
-    files.add(rec.module);
-    files.add(rec.module.replace(/\.(ts|js|mjs|cjs)$/, ".hardened.test.ts"));
+    try {
+      const paths = resolveReplacementPaths(root, name, rec, {
+        outDir: config.outDir,
+        envelope: config.replacements[name]?.envelope,
+      });
+      files.add(toPosixPath(relative(root, paths.envelopeAbs)));
+      files.add(toPosixPath(relative(root, paths.evidenceAbs)));
+      files.add(toPosixPath(relative(root, join(dirname(paths.evidenceAbs), "evidence.md"))));
+      if (paths.moduleRel) {
+        files.add(toPosixPath(paths.moduleRel));
+        files.add(toPosixPath(paths.moduleRel.replace(/\.(ts|js|mjs|cjs)$/, ".hardened.test.ts")));
+      }
+    } catch {
+      /* unsafe paths are not PR candidates */
+    }
   }
   for (const r of results) {
     if (r.hardenedTest) files.add(relative(root, r.hardenedTest).replace(/\\/g, "/"));
@@ -459,7 +508,13 @@ function upstreamPrFiles(
     .filter((f) => existsSync(join(root, f)));
 }
 
-function prBody(root: string, findings: UpstreamFinding[], results: ApplyUpstreamFixResult[]): string {
+function prBody(
+  root: string,
+  findings: UpstreamFinding[],
+  results: ApplyUpstreamFixResult[],
+  config: ReturnType<typeof loadConfig>,
+  man: Manifest,
+): string {
   const pkgs = [
     ...new Set(
       findings
@@ -469,8 +524,16 @@ function prBody(root: string, findings: UpstreamFinding[], results: ApplyUpstrea
   ];
   let evidence = "";
   for (const pkg of pkgs) {
-    const p = join(root, ".slim", pkg, "evidence.md");
-    if (existsSync(p)) evidence += readFileSync(p, "utf8") + "\n";
+    try {
+      const paths = resolveReplacementPaths(root, pkg, man.replacements[pkg], {
+        outDir: config.outDir,
+        envelope: config.replacements[pkg]?.envelope,
+      });
+      const p = join(dirname(paths.evidenceAbs), "evidence.md");
+      if (existsSync(p)) evidence += readFileSync(p, "utf8") + "\n";
+    } catch {
+      /* skip */
+    }
   }
   if (!evidence.includes("EVIDENCE, NOT PROOF")) {
     evidence =

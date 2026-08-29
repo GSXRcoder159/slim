@@ -8,6 +8,7 @@ import {
   assertGeneratedOutputSafe,
   assertInsideRoot,
   assertNoOutputCollision,
+  assertSafeStatePath,
   assertSafeWrite,
   fileBase,
   isSafeToRewrite,
@@ -229,6 +230,76 @@ test("assertGeneratedOutputSafe refuses an unowned standing test next to a missi
     (e: unknown) => e instanceof SlimExit && e.code === EXIT_FAIL && /collision/i.test(e.message),
   );
   assert.equal(readFileSync(standing, "utf8"), "unrelated standing\n");
+});
+
+test("assertSafeStatePath accepts a regular file inside the project", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-state-ok-"));
+  const file = join(root, "envelope.json");
+  writeFileSync(file, "{}\n");
+  assertSafeStatePath(root, file);
+});
+
+test("assertSafeStatePath accepts a missing path that stays inside the project", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-state-miss-"));
+  assertSafeStatePath(root, join(root, ".slim", "lodash", "envelope.json"));
+});
+
+test("assertSafeStatePath refuses ../ escape with EXIT_FAIL", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-state-esc-"));
+  assert.throws(
+    () => assertSafeStatePath(root, join(root, "..", "secret.json")),
+    (e: unknown) =>
+      e instanceof SlimExit &&
+      e.code === EXIT_FAIL &&
+      /unsafe state path/i.test(e.message) &&
+      /escapes the project/i.test(e.message) &&
+      !/--out/i.test(e.message) &&
+      !/unsafe write/i.test(e.message),
+  );
+});
+
+test("assertSafeStatePath refuses an absolute path outside the project", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-state-abs-"));
+  const outside = mkdtempSync(join(tmpdir(), "slim-state-abs-out-"));
+  const secret = join(outside, "secret.json");
+  writeFileSync(secret, "secret\n");
+  assert.throws(
+    () => assertSafeStatePath(root, secret),
+    (e: unknown) =>
+      e instanceof SlimExit && e.code === EXIT_FAIL && /unsafe state path/i.test(e.message),
+  );
+  assert.equal(readFileSync(secret, "utf8"), "secret\n");
+});
+
+test("assertSafeStatePath refuses an escaping symlink before any read", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-state-sym-"));
+  const outside = mkdtempSync(join(tmpdir(), "slim-state-sym-out-"));
+  writeFileSync(join(outside, "secret.json"), "secret\n");
+  symlinkSync(join(outside, "secret.json"), join(root, "envelope.json"));
+  assert.throws(
+    () => assertSafeStatePath(root, join(root, "envelope.json")),
+    (e: unknown) =>
+      e instanceof SlimExit &&
+      e.code === EXIT_FAIL &&
+      /unsafe state path/i.test(e.message) &&
+      /escapes the project/i.test(e.message),
+  );
+  assert.equal(readFileSync(join(outside, "secret.json"), "utf8"), "secret\n");
+});
+
+test("assertSafeStatePath refuses an internal file symlink", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-state-int-"));
+  writeFileSync(join(root, "real.json"), "orig\n");
+  symlinkSync("real.json", join(root, "link.json"));
+  assert.throws(
+    () => assertSafeStatePath(root, join(root, "link.json")),
+    (e: unknown) =>
+      e instanceof SlimExit &&
+      e.code === EXIT_FAIL &&
+      /unsafe state path/i.test(e.message) &&
+      /is a symlink/i.test(e.message),
+  );
+  assert.equal(readFileSync(join(root, "real.json"), "utf8"), "orig\n");
 });
 
 test("assertGeneratedOutputSafe allows owned companions on a second replace", () => {

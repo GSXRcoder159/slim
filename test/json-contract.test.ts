@@ -217,18 +217,20 @@ test("docs/help-commands check has --json and not --update-envelope", () => {
   assert.ok(section.split("\n").length <= 40, `check help is ${section.split("\n").length} lines`);
 });
 
-test("docs/help-commands upstream documents incomplete state and no replacements", () => {
+test("docs/help-commands upstream documents missing-state, malformed-state, and no replacements", () => {
   const text = readFileSync(join(ROOT, "docs/help-commands.txt"), "utf8");
   const start = text.indexOf("slim upstream —");
   const end = text.indexOf("--------", start + 10);
   const section = text.slice(start, end === -1 ? undefined : end);
   assert.match(section, /no replacements/);
-  assert.match(section, /malformed replacement state/);
+  assert.match(section, /malformed-state|malformed/);
+  assert.match(section, /missing-state/);
+  assert.match(section, /regeneration-failure/);
   assert.match(section, /slim watch\s+\(alias of upstream\)/);
   assert.ok(section.split("\n").length <= 40, `upstream help is ${section.split("\n").length} lines`);
 });
 
-test("upstream --json with no manifest is incomplete-state, not not-exposed", async () => {
+test("upstream --json with no manifest is missing-state, not not-exposed", async () => {
   const root = mkdtempSync(join(tmpdir(), "slim-json-up-"));
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "empty", type: "module" }));
   const { runUpstream } = await import("../src/upstream.ts");
@@ -261,7 +263,7 @@ test("upstream --json with no manifest is incomplete-state, not not-exposed", as
   assert.equal(doc.ok, false);
   assert.equal(doc.exit, EXIT_FAIL);
   assert.equal(doc.status, "fail");
-  assert.equal(doc.conclusion, "incomplete-state");
+  assert.equal(doc.conclusion, "missing-state");
   assert.equal(doc.action, "blocked");
   assert.ok(Array.isArray(doc.findings));
   assert.ok(Array.isArray(doc.regeneration));
@@ -315,7 +317,7 @@ test("upstream --json malformed manifest is an upstream document", async () => {
   assert.equal(code, EXIT_FAIL);
   assert.equal(/slice not exposed/i.test(stdout + stderr), false);
   const doc = oneJson(stdout);
-  assert.equal(doc.conclusion, "incomplete-state");
+  assert.equal(doc.conclusion, "malformed-state");
   assert.equal(doc.action, "blocked");
   assert.equal(typeof doc.error, "string");
 });

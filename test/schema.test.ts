@@ -181,7 +181,16 @@ test("command result schemas exist with required fields", () => {
     upstream.required.sort(),
     ["action", "conclusion", "exit", "findings", "ok", "regeneration", "schemaVersion", "sources", "status"].sort(),
   );
-  for (const c of ["incomplete-state", "no-replacements", "exposed", "not-exposed", "unmapped"]) {
+  for (const c of [
+    "incomplete-state",
+    "missing-state",
+    "malformed-state",
+    "regeneration-failure",
+    "no-replacements",
+    "exposed",
+    "not-exposed",
+    "unmapped",
+  ]) {
     assert.ok(upstream.properties.conclusion.enum.includes(c), c);
   }
   for (const a of ["none", "blocked", "review", "regenerated"]) {

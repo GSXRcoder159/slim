@@ -68,8 +68,9 @@ export function writeEvidence(opts: {
   revert: RevertPlan;
   generation?: Partial<GenerationEvidence>;
   moduleSource?: string | Buffer;
+  dir?: string;
 }): { mdPath: string; jsonPath: string; residualRisk: string[] } {
-  const dir = join(opts.root, ".slim", opts.env.package.name);
+  const dir = opts.dir ?? join(opts.root, ".slim", opts.env.package.name);
   mkdirSync(dir, { recursive: true });
   const hash = hashEnvelope(opts.env);
   const callSites = opts.env.symbols.reduce((n, s) => n + s.callSites.length, 0);

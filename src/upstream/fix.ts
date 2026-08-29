@@ -30,7 +30,7 @@ import type { NpmLatest } from "./npm.ts";
 import type { CreatePrOpts, PrResult } from "../github/pr.ts";
 import type { Exposure } from "./slice.ts";
 import type { SourceResult } from "./status.ts";
-import type { ReplacementRecord } from "./state.ts";
+import { resolveReplacementPaths, type ReplacementRecord } from "./state.ts";
 
 export type ManifestReplacement = ReplacementRecord;
 
@@ -117,7 +117,7 @@ export async function canFuzzOracle(
   opts: ApplyUpstreamFixOpts,
   deps: UpstreamDeps = {},
 ): Promise<boolean> {
-  const env = loadEnvelope(opts.root, opts.pkg);
+  const env = loadEnvelope(opts);
   const symbols = usedSymbols(env, opts.rec);
   const latest = opts.findings[0]?.latest ?? opts.rec.version;
   const oracle = await resolveOracle(opts, deps, latest, symbols);
@@ -136,7 +136,8 @@ export async function applyUpstreamFix(
   deps: UpstreamDeps = {},
   sharedTxn?: MutationTxn,
 ): Promise<ApplyUpstreamFixResult> {
-  const env = loadEnvelope(opts.root, opts.pkg);
+  const paths = resolveReplacementPaths(opts.root, opts.pkg, opts.rec, stateOpts(opts));
+  const env = loadEnvelope(opts);
   const symbols = usedSymbols(env, opts.rec);
   const catalog = (deps.matchCatalog ?? matchCatalog)(opts.pkg, symbols);
   const llmCfg = (deps.llmConfigFromEnv ?? llmConfigFromEnv)();
@@ -236,8 +237,8 @@ export async function applyUpstreamFix(
 
     const pinTo = oracle.kind === "new" ? latest : opts.rec.version;
     const envWrite: Envelope = oracle.kind === "new" ? { ...env, package: { ...env.package, version: pinTo } } : env;
-    const moduleAbs = join(opts.root, opts.rec.module);
-    const pkgSlimDir = join(opts.root, ".slim", opts.pkg);
+    const moduleAbs = paths.moduleAbs ?? join(opts.root, opts.rec.module);
+    const evidenceDir = dirname(paths.evidenceAbs);
     const standingPaths = standingTestPaths(opts.root, opts.pkg, opts.config.outDir);
     const standingAbs = standingPaths.tsAbs;
     const standingRel = standingPaths.tsRel;
@@ -263,8 +264,8 @@ export async function applyUpstreamFix(
     txn.prepareWrite(hardenedAbs);
     emitHardenedGetSetTest({ root: opts.root, moduleRel: opts.rec.module, runner: testRunner });
 
-    txn.prepareWrite(join(pkgSlimDir, "evidence.md"));
-    txn.prepareWrite(join(pkgSlimDir, "evidence.json"));
+    txn.prepareWrite(join(evidenceDir, "evidence.md"));
+    txn.prepareWrite(paths.evidenceAbs);
     const written = writeEvidence({
       root: opts.root,
       env: envWrite,
@@ -310,11 +311,12 @@ export async function applyUpstreamFix(
         lockfile: null,
         installCommand: "npm install",
       },
+      dir: evidenceDir,
     });
 
     const disk = envelopeForDisk(envWrite);
     assertDocument("envelope", disk);
-    txn.writeFile(join(pkgSlimDir, "envelope.json"), JSON.stringify(disk, null, 2) + "\n");
+    txn.writeFile(paths.envelopeAbs, JSON.stringify(disk, null, 2) + "\n");
 
     const nextHash = hashEnvelope(envWrite);
     updateManifest(opts.root, opts.pkg, opts.rec, {
@@ -435,9 +437,16 @@ function usedSymbols(env: Envelope, rec: ManifestReplacement): string[] {
   return fromEnv.length ? fromEnv : rec.symbols.filter((n) => n !== "*" && n !== "(scan)");
 }
 
-function loadEnvelope(root: string, pkg: string): Envelope {
-  const p = join(root, ".slim", pkg, "envelope.json");
-  return readDocument("envelope", p, `envelope ${p}`) as Envelope;
+function stateOpts(opts: ApplyUpstreamFixOpts) {
+  return {
+    outDir: opts.config.outDir,
+    envelope: opts.config.replacements[opts.pkg]?.envelope,
+  };
+}
+
+function loadEnvelope(opts: ApplyUpstreamFixOpts): Envelope {
+  const paths = resolveReplacementPaths(opts.root, opts.pkg, opts.rec, stateOpts(opts));
+  return readDocument("envelope", paths.envelopeAbs, `envelope ${paths.envelopeAbs}`) as Envelope;
 }
 
 function loadTs(root: string): typeof import("typescript") {

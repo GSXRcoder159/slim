@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, isAbsolute, join } from "node:path";
 import { hasStandingTests, hardeningTestPaths, standingTestPaths } from "../evidence/paths.ts";
 import {
   fixtureRevision,
@@ -12,6 +13,10 @@ import {
 import type { EnvelopeDrift } from "../envelope/drift.ts";
 import { hashEnvelope, type Envelope } from "../envelope/types.ts";
 import { EXIT_FAIL, SlimExit } from "../exit.ts";
+import { checkContracts } from "../generate/exports.ts";
+import { validateGenerated } from "../generate/validate.ts";
+import { loadTargetTypescript } from "../project.ts";
+import { assertSafeStatePath, toPosixPath } from "../rewrite/paths.ts";
 import { readDocument } from "../schema/documents.ts";
 
 export interface ReplacementRecord {
@@ -21,11 +26,31 @@ export interface ReplacementRecord {
   module: string;
 }
 
+export type ReplacementStateKind = "ok" | "missing" | "malformed";
+
+export interface ReplacementStateOpts {
+  outDir: string;
+  envelope?: string;
+  moduleFallback?: string;
+  ts?: typeof import("typescript");
+}
+
+export interface ReplacementPaths {
+  envelopeAbs: string;
+  envelopeRel: string;
+  evidenceAbs: string;
+  evidenceRel: string;
+  moduleRel?: string;
+  moduleAbs?: string;
+}
+
 export interface ReplacementState {
   envelope: Envelope | null;
   residualRisk: string[];
   drift: EnvelopeDrift[];
   fatal: SlimExit | null;
+  kind: ReplacementStateKind;
+  paths: ReplacementPaths | null;
 }
 
 interface EvidenceDoc {
@@ -90,6 +115,96 @@ function installedOracleVersion(root: string, pkg: string): string | false | nul
   } catch {
     return false;
   }
+}
+
+function refuseAbsolute(raw: string): void {
+  if (isAbsolute(raw)) {
+    throw new SlimExit(EXIT_FAIL, `unsafe state path: absolute path refused (${raw})`);
+  }
+}
+
+function confinedJoin(root: string, rel: string): string {
+  refuseAbsolute(rel);
+  const abs = join(root, rel);
+  assertSafeStatePath(root, abs);
+  return abs;
+}
+
+export function resolveReplacementPaths(
+  root: string,
+  pkg: string,
+  rec: ReplacementRecord | null | undefined,
+  opts: ReplacementStateOpts,
+): ReplacementPaths {
+  refuseAbsolute(opts.outDir);
+  const configured = opts.envelope?.trim();
+  if (configured) refuseAbsolute(configured);
+  const envelopeRel = toPosixPath(configured || join(".slim", pkg, "envelope.json"));
+  const envelopeAbs = confinedJoin(root, envelopeRel);
+  const evidenceAbs = join(dirname(envelopeAbs), "evidence.json");
+  assertSafeStatePath(root, evidenceAbs);
+  const evidenceRel = toPosixPath(join(dirname(envelopeRel), "evidence.json"));
+
+  const standing = standingTestPaths(root, pkg, opts.outDir);
+  assertSafeStatePath(root, standing.tsAbs);
+  assertSafeStatePath(root, standing.jsAbs);
+
+  const moduleRel = rec?.module || opts.moduleFallback;
+  let moduleAbs: string | undefined;
+  if (moduleRel) {
+    refuseAbsolute(moduleRel);
+    moduleAbs = confinedJoin(root, moduleRel);
+    const hardened = hardeningTestPaths(root, moduleRel);
+    assertSafeStatePath(root, hardened.tsAbs);
+    assertSafeStatePath(root, hardened.jsAbs);
+  }
+
+  return {
+    envelopeAbs,
+    envelopeRel,
+    evidenceAbs,
+    evidenceRel,
+    ...(moduleRel ? { moduleRel, moduleAbs } : {}),
+  };
+}
+
+function loadTs(root: string, ts?: typeof import("typescript")): typeof import("typescript") {
+  if (ts) return ts;
+  try {
+    return loadTargetTypescript(root);
+  } catch {
+    return createRequire(import.meta.url)("typescript") as typeof import("typescript");
+  }
+}
+
+function moduleSafetyDrift(
+  root: string,
+  pkg: string,
+  moduleAbs: string,
+  envelope: Envelope,
+  ts: typeof import("typescript"),
+): EnvelopeDrift[] {
+  let source: string;
+  try {
+    source = readFileSync(moduleAbs, "utf8");
+  } catch {
+    return [{ kind: "exports", detail: `unreadable slice module for ${pkg}` }];
+  }
+  const drift: EnvelopeDrift[] = [];
+  const ast = validateGenerated(ts, source, { envelope, fileName: moduleAbs });
+  if (!ast.ok) {
+    drift.push({
+      kind: "ast",
+      detail: `generated code failed AST allowlist: ${ast.errors.join("; ")}`,
+    });
+  }
+  const contracts = checkContracts(ts, source, envelope);
+  if (!contracts.ok) {
+    for (const err of contracts.errors) {
+      drift.push({ kind: "exports", detail: err });
+    }
+  }
+  return drift;
 }
 
 function artifactDrift(
@@ -166,128 +281,176 @@ function artifactDrift(
   return drift;
 }
 
+const MISSING_KINDS = new Set(["standing", "hardening"]);
+
+function classifyKind(drift: EnvelopeDrift[], missing: boolean, malformed: boolean): ReplacementStateKind {
+  if (malformed) return "malformed";
+  if (missing) return "missing";
+  if (!drift.length) return "ok";
+  if (drift.every((d) => MISSING_KINDS.has(d.kind) || /^missing /.test(d.detail))) return "missing";
+  return "malformed";
+}
+
 export function replacementStateIssues(
   root: string,
   pkg: string,
   rec: ReplacementRecord | null | undefined,
-  outDir: string,
-  moduleFallback?: string,
+  opts: ReplacementStateOpts,
 ): ReplacementState {
   const drift: EnvelopeDrift[] = [];
   let residualRisk: string[] = [];
   let envelope: Envelope | null = null;
   let fatal: SlimExit | null = null;
   let hash: string | null = null;
+  let missing = false;
+  let malformed = false;
+  let paths: ReplacementPaths | null = null;
 
-  if (!rec) {
-    push(drift, "manifest", `missing manifest replacement for ${pkg}`);
-  } else if (!rec.version || !rec.envelopeHash || !Array.isArray(rec.symbols) || !rec.module) {
-    push(drift, "manifest", `malformed manifest replacement for ${pkg}`);
+  const miss = (kind: string, detail: string): void => {
+    missing = true;
+    push(drift, kind, detail);
+  };
+  const bad = (kind: string, detail: string, err?: SlimExit): void => {
+    malformed = true;
+    if (err) fatal = fatal ?? err;
+    push(drift, kind, detail);
+  };
+
+  try {
+    paths = resolveReplacementPaths(root, pkg, rec, opts);
+  } catch (err) {
+    const msg = err instanceof SlimExit ? err.message : `unsafe state path for ${pkg}`;
+    const fatalErr = err instanceof SlimExit ? err : new SlimExit(EXIT_FAIL, msg);
+    return {
+      envelope: null,
+      residualRisk: [],
+      drift: [{ kind: "path", detail: msg }],
+      fatal: fatalErr,
+      kind: "malformed",
+      paths: null,
+    };
   }
 
-  const envPath = join(root, ".slim", pkg, "envelope.json");
+  if (!rec) {
+    miss("manifest", `missing manifest replacement for ${pkg}`);
+  } else if (!rec.version || !rec.envelopeHash || !Array.isArray(rec.symbols) || !rec.module) {
+    bad("manifest", `malformed manifest replacement for ${pkg}`);
+  }
+
+  const envPath = paths.envelopeAbs;
   if (!existsSync(envPath)) {
-    push(drift, "envelope", `missing envelope ${envPath}`);
+    miss("envelope", `missing envelope ${envPath}`);
   } else {
     try {
       envelope = readDocument("envelope", envPath, `envelope ${envPath}`) as Envelope;
       if (envelope.package?.name !== pkg) {
-        push(drift, "envelope", `envelope package name mismatch in ${envPath}`);
+        bad("envelope", `envelope package name mismatch in ${envPath}`);
       }
       try {
         hash = hashEnvelope(envelope);
       } catch {
         const err = new SlimExit(EXIT_FAIL, `malformed envelope ${envPath}`);
-        fatal = err;
-        push(drift, "envelope", err.message);
+        bad("envelope", err.message, err);
       }
     } catch (err) {
       const msg = err instanceof SlimExit ? err.message : `malformed envelope ${envPath}`;
-      if (err instanceof SlimExit) fatal = err;
-      else fatal = new SlimExit(EXIT_FAIL, msg);
-      push(drift, "envelope", msg);
+      bad("envelope", msg, err instanceof SlimExit ? err : new SlimExit(EXIT_FAIL, msg));
     }
   }
 
   if (rec && hash && rec.envelopeHash !== hash) {
-    push(drift, "hash", `manifest envelopeHash does not match envelope for ${pkg}`);
+    bad("hash", `manifest envelopeHash does not match envelope for ${pkg}`);
   }
   if (rec && envelope && rec.version !== envelope.package.version) {
-    push(drift, "version", `manifest version ${rec.version} != envelope ${envelope.package.version}`);
+    bad("version", `manifest version ${rec.version} != envelope ${envelope.package.version}`);
   }
   if (rec && envelope) {
     const envSymbols = envelope.symbols.map((s) => s.exportName);
     if (!sameSymbolSet(rec.symbols, envSymbols)) {
-      push(drift, "symbol", `manifest symbols do not match envelope for ${pkg}`);
+      bad("symbol", `manifest symbols do not match envelope for ${pkg}`);
     }
   }
   const pin = slimPin(root, pkg);
   if (pin && envelope && pin.version !== envelope.package.version) {
-    push(drift, "version", `slim.json version ${pin.version} != envelope ${envelope.package.version}`);
+    bad("version", `slim.json version ${pin.version} != envelope ${envelope.package.version}`);
   }
   if (pin && rec && pin.module !== rec.module) {
-    push(drift, "exports", `slim.json module ${pin.module} != manifest ${rec.module}`);
+    bad("exports", `slim.json module ${pin.module} != manifest ${rec.module}`);
   }
 
-  const evidencePath = join(root, ".slim", pkg, "evidence.json");
+  const evidencePath = paths.evidenceAbs;
   let evidence: EvidenceDoc | null = null;
   if (!existsSync(evidencePath)) {
-    push(drift, "evidence", `missing evidence ${evidencePath}`);
+    miss("evidence", `missing evidence ${evidencePath}`);
   } else {
     try {
       evidence = readDocument("evidence", evidencePath, "evidence.json") as EvidenceDoc;
       if (hash && evidence.envelopeHash !== hash) {
-        push(drift, "hash", `evidence.json envelopeHash does not match envelope for ${pkg}`);
+        bad("hash", `evidence.json envelopeHash does not match envelope for ${pkg}`);
       }
       if (envelope && evidence.package?.name && evidence.package.name !== envelope.package.name) {
-        push(drift, "evidence", `evidence.json package name mismatch for ${pkg}`);
+        bad("evidence", `evidence.json package name mismatch for ${pkg}`);
       }
       if (envelope && evidence.package?.version && evidence.package.version !== envelope.package.version) {
-        push(drift, "version", `evidence.json version ${evidence.package.version} != envelope ${envelope.package.version}`);
+        bad("version", `evidence.json version ${evidence.package.version} != envelope ${envelope.package.version}`);
       }
       residualRisk = Array.isArray(evidence.residualRisk) ? evidence.residualRisk.map(String) : [];
-      drift.push(...generationDrift(evidence, pkg));
+      for (const d of generationDrift(evidence, pkg)) bad(d.kind, d.detail);
     } catch (err) {
       const msg = err instanceof SlimExit ? err.message : `malformed evidence ${evidencePath}`;
-      if (err instanceof SlimExit) fatal = fatal ?? err;
-      push(drift, "evidence", msg);
+      bad("evidence", msg, err instanceof SlimExit ? err : new SlimExit(EXIT_FAIL, msg));
     }
   }
 
-  const moduleRel = rec?.module || moduleFallback;
+  const moduleRel = paths.moduleRel;
   if (!moduleRel) {
-    push(drift, "exports", `missing slice module`);
+    miss("exports", `missing slice module`);
   } else {
-    const moduleAbs = join(root, moduleRel);
+    const moduleAbs = paths.moduleAbs!;
     if (!existsSync(moduleAbs)) {
-      push(drift, "exports", `missing slice module ${moduleRel}`);
+      miss("exports", `missing slice module ${moduleRel}`);
     }
     const hardened = hardeningTestPaths(root, moduleRel);
     if (!existsSync(hardened.tsAbs) && !existsSync(hardened.jsAbs)) {
-      push(drift, "hardening", `missing hardening tests for ${moduleRel}`);
+      miss("hardening", `missing hardening tests for ${moduleRel}`);
     }
   }
 
-  if (!hasStandingTests(root, pkg, outDir)) {
-    const standing = standingTestPaths(root, pkg, outDir);
-    push(drift, "standing", `missing standing tests for ${pkg} (${standing.tsRel})`);
+  if (!hasStandingTests(root, pkg, opts.outDir)) {
+    const standing = standingTestPaths(root, pkg, opts.outDir);
+    miss("standing", `missing standing tests for ${pkg} (${standing.tsRel})`);
   }
 
   if (evidence) {
-    drift.push(...artifactDrift(root, pkg, outDir, moduleRel, evidence, envelope, rec, pin));
+    for (const d of artifactDrift(root, pkg, opts.outDir, moduleRel, evidence, envelope, rec, pin)) {
+      bad(d.kind, d.detail);
+    }
   }
 
-  return { envelope, residualRisk, drift, fatal };
+  if (envelope && paths.moduleAbs && existsSync(paths.moduleAbs)) {
+    for (const d of moduleSafetyDrift(root, pkg, paths.moduleAbs, envelope, loadTs(root, opts.ts))) {
+      bad(d.kind, d.detail);
+    }
+  }
+
+  return {
+    envelope,
+    residualRisk,
+    drift,
+    fatal,
+    kind: classifyKind(drift, missing, malformed),
+    paths,
+  };
 }
 
 export function assertReplacementState(
   root: string,
   pkg: string,
   rec: ReplacementRecord,
-  outDir: string,
+  opts: ReplacementStateOpts,
 ): Envelope {
-  const state = replacementStateIssues(root, pkg, rec, outDir);
-  if (state.drift.length || !state.envelope) {
+  const state = replacementStateIssues(root, pkg, rec, opts);
+  if (state.kind !== "ok" || state.drift.length || !state.envelope) {
     throw state.fatal ?? new SlimExit(EXIT_FAIL, state.drift[0]?.detail ?? `incomplete replacement state for ${pkg}`);
   }
   return state.envelope;

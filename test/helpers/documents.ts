@@ -44,9 +44,15 @@ export function plantReplacementTree(
   writeFileSync(join(root, `${base}.hardened.test.ts`), opts.hardening ?? DEFAULT_HARDENING_SOURCE);
 }
 
-export function rebindEvidenceArtifacts(root: string, pkg: string, outDir = "src/slim"): void {
-  const evidencePath = join(root, ".slim", pkg, "evidence.json");
-  const envPath = join(root, ".slim", pkg, "envelope.json");
+export function rebindEvidenceArtifacts(
+  root: string,
+  pkg: string,
+  outDir = "src/slim",
+  evidenceDir?: string,
+): void {
+  const dir = evidenceDir ?? join(root, ".slim", pkg);
+  const evidencePath = join(dir, "evidence.json");
+  const envPath = join(dir, "envelope.json");
   if (!existsSync(evidencePath) || !existsSync(envPath)) return;
   let ev: EvidenceJson;
   try {

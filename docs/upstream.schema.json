@@ -21,6 +21,9 @@
         "source-unavailable",
         "oracle-unavailable",
         "incomplete-state",
+        "missing-state",
+        "malformed-state",
+        "regeneration-failure",
         "no-replacements"
       ]
     },

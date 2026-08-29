@@ -75,7 +75,23 @@ function posixRel(root: string, abs: string): string {
   return relative(resolve(root), resolve(abs)).replace(/\\/g, "/") || ".";
 }
 
-type HopKind = "out" | "write";
+type HopKind = "out" | "write" | "state";
+
+function hopExit(kind: HopKind): number {
+  return kind === "state" ? EXIT_FAIL : EXIT_USAGE;
+}
+
+function hopEscapeMessage(kind: HopKind, absRoot: string, cur: string, target: string): string {
+  if (kind === "out") return `--out must stay inside the project root (got ${target})`;
+  if (kind === "state") return `unsafe state path: ${posixRel(absRoot, cur)} escapes the project`;
+  return `unsafe write: ${posixRel(absRoot, cur)} escapes the project`;
+}
+
+function hopSymlinkMessage(kind: HopKind, absRoot: string, cur: string, target: string): string {
+  if (kind === "out") return `--out must not be a symlink (got ${target})`;
+  if (kind === "state") return `unsafe state path: ${posixRel(absRoot, cur)} is a symlink`;
+  return `unsafe write: ${posixRel(absRoot, cur)} is a symlink`;
+}
 
 /** Refuse any symlink hop from `target` up to (not including) `root`. */
 function assertNoSymlinkHop(root: string, target: string, kind: HopKind): void {
@@ -94,19 +110,9 @@ function assertNoSymlinkHop(root: string, target: string, kind: HopKind): void {
     if (st.isSymbolicLink()) {
       const dest = symlinkDest(cur);
       if (pathEscapesRoot(absRoot, dest)) {
-        throw new SlimExit(
-          EXIT_USAGE,
-          kind === "out"
-            ? `--out must stay inside the project root (got ${target})`
-            : `unsafe write: ${posixRel(absRoot, cur)} escapes the project`,
-        );
+        throw new SlimExit(hopExit(kind), hopEscapeMessage(kind, absRoot, cur, target));
       }
-      throw new SlimExit(
-        EXIT_USAGE,
-        kind === "out"
-          ? `--out must not be a symlink (got ${target})`
-          : `unsafe write: ${posixRel(absRoot, cur)} is a symlink`,
-      );
+      throw new SlimExit(hopExit(kind), hopSymlinkMessage(kind, absRoot, cur, target));
     }
     cur = dirname(cur);
   }
@@ -128,6 +134,29 @@ export function assertInsideRoot(root: string, target: string): string {
   }
   assertNoSymlinkHop(absRoot, absTarget, "out");
   return absTarget;
+}
+
+/** Refuse escaping/symlinked/special state paths before a read or source conclusion. */
+export function assertSafeStatePath(root: string, target: string): void {
+  const absRoot = resolve(root);
+  const abs = resolve(target);
+  if (pathEscapesRoot(absRoot, abs)) {
+    throw new SlimExit(EXIT_FAIL, `unsafe state path: ${posixRel(absRoot, abs)} escapes the project`);
+  }
+  assertNoSymlinkHop(absRoot, abs, "state");
+  let st;
+  try {
+    st = lstatSync(abs);
+  } catch (err) {
+    if (isEnoent(err)) return;
+    throw err;
+  }
+  if (st.isFIFO() || st.isSocket() || st.isCharacterDevice() || st.isBlockDevice()) {
+    throw new SlimExit(EXIT_FAIL, `unsafe state path: ${posixRel(absRoot, abs)} is a special file`);
+  }
+  if (st.isDirectory()) {
+    throw new SlimExit(EXIT_FAIL, `unsafe state path: ${posixRel(absRoot, abs)} is a directory`);
+  }
 }
 
 /** Refuse escaping/internal symlinks, special files, and directory-as-file writes. */

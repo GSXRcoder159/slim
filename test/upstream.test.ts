@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseCli } from "../src/cli.ts";
 import { EXIT_ENV, EXIT_FAIL, EXIT_OK, SlimExit } from "../src/exit.ts";
 import { ENVELOPE_VERSION, emptyHyrum, hashEnvelope, type Envelope } from "../src/envelope/types.ts";
@@ -104,7 +104,13 @@ function minimalEnvelope(pkg: string, symbols: string[], version: string): Envel
   };
 }
 
-function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: string; slimJson?: boolean }) {
+function writeFixture(opts?: {
+  pkg?: string;
+  symbols?: string[];
+  version?: string;
+  slimJson?: boolean;
+  envelopeRel?: string;
+}) {
   const pkg = opts?.pkg ?? "lodash";
   const symbols = opts?.symbols ?? ["get", "set"];
   const version = opts?.version ?? "4.17.21";
@@ -114,13 +120,16 @@ function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: strin
     join(root, "package.json"),
     JSON.stringify({ name: "up-mini", type: "module", version: "1.0.0" }),
   );
-  mkdirSync(join(root, ".slim", pkg), { recursive: true });
+  mkdirSync(join(root, ".slim"), { recursive: true });
   mkdirSync(join(root, "src", "slim"), { recursive: true });
   const moduleRel = `src/slim/${pkg.replace(/\//g, "-")}.ts`;
+  const envelopeRel = opts?.envelopeRel ?? `.slim/${pkg}/envelope.json`;
+  mkdirSync(join(root, dirname(envelopeRel)), { recursive: true });
   writeFileSync(join(root, ".slim", "manifest.json"), JSON.stringify(minimalManifest(env, moduleRel), null, 2));
   writeFileSync(join(root, moduleRel), "export function get() {}\nexport function set(o: unknown) { return o; }\n");
-  writeFileSync(join(root, ".slim", pkg, "envelope.json"), JSON.stringify(env, null, 2));
-  writeFileSync(join(root, ".slim", pkg, "evidence.json"), JSON.stringify(minimalEvidence(env)));
+  writeFileSync(join(root, envelopeRel), JSON.stringify(env, null, 2));
+  const evidenceDir = join(root, dirname(envelopeRel));
+  writeFileSync(join(evidenceDir, "evidence.json"), JSON.stringify(minimalEvidence(env)));
   writeFileSync(
     join(root, "src", "slim", `${pkg.replace(/\//g, "-")}.test.ts`),
     `import { test } from "node:test";\ntest("standing", () => {});\n`,
@@ -129,19 +138,19 @@ function writeFixture(opts?: { pkg?: string; symbols?: string[]; version?: strin
     join(root, "src", "slim", `${pkg.replace(/\//g, "-")}.hardened.test.ts`),
     `import { test } from "node:test";\ntest("hardened", () => {});\n`,
   );
-  if (opts?.slimJson) {
+  if (opts?.slimJson || opts?.envelopeRel) {
     writeFileSync(
       join(root, "slim.json"),
       JSON.stringify({
         outDir: "src/slim",
         replacements: {
-          [pkg]: { version, envelope: `.slim/${pkg}/envelope.json`, module: moduleRel },
+          [pkg]: { version, envelope: envelopeRel, module: moduleRel },
         },
       }),
     );
   }
-  rebindEvidenceArtifacts(root, pkg, "src/slim");
-  return { root, moduleRel, pkg, symbols };
+  rebindEvidenceArtifacts(root, pkg, "src/slim", evidenceDir);
+  return { root, moduleRel, pkg, symbols, envelopeRel };
 }
 
 function baseDeps(over: Partial<UpstreamDeps> & { cwd: string }): UpstreamDeps {
@@ -752,7 +761,7 @@ test("schema-incompatible envelope blocks automatic action", async () => {
   );
 });
 
-test("missing manifest is incomplete-state and never not-exposed", async () => {
+test("missing manifest is missing-state and never not-exposed", async () => {
   const root = mkdtempSync(join(tmpdir(), "slim-up-noman-"));
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "noman", type: "module" }));
   const { code, stdout, stderr } = await capture(() =>
@@ -909,13 +918,24 @@ test("second-package regen failure rolls back the first package", async () => {
       return "export function get(o: unknown, _p?: unknown, d?: unknown) { return d; }\nexport function set(o: unknown) { return o; }\n";
     },
   });
-  await assert.rejects(
-    () => runUpstream(parseCli(["upstream"]), deps),
-    (err: unknown) => err instanceof SlimExit && err.code === EXIT_FAIL && /underscore/i.test(err.message),
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(parseCli(["upstream", "--json"]), deps),
   );
+  assert.equal(code, EXIT_FAIL);
   assert.equal(readFileSync(join(root, moduleRel), "utf8"), before);
   assert.equal(readFileSync(join(root, "src/slim/underscore.ts"), "utf8"), before2);
   assert.equal(readFileSync(join(root, ".slim/manifest.json"), "utf8"), beforeMan);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  const doc = JSON.parse(stdout) as {
+    conclusion: string;
+    action: string;
+    error?: string;
+    regeneration: unknown[];
+  };
+  assert.equal(doc.conclusion, "regeneration-failure");
+  assert.equal(doc.action, "blocked");
+  assert.deepEqual(doc.regeneration, []);
+  assert.match(doc.error ?? stderr, /underscore/i);
 });
 
 test("regen writes originalMin and matching hashes", async () => {
@@ -990,7 +1010,7 @@ test("merge-gate failure under --json keeps TAP off stdout", async () => {
     findings: { exposure: string }[];
     regeneration: unknown[];
   };
-  assert.equal(doc.conclusion, "exposed");
+  assert.equal(doc.conclusion, "regeneration-failure");
   assert.equal(doc.action, "blocked");
   assert.match(doc.error ?? "", /merge gate/i);
   assert.equal(doc.findings[0]?.exposure, "exposed");
@@ -1013,7 +1033,7 @@ test("export failure under --json is an upstream document, not error schema", as
   assert.equal(code, EXIT_FAIL);
   assert.equal(readFileSync(join(root, moduleRel), "utf8"), before);
   const doc = JSON.parse(stdout) as { conclusion: string; action: string; error?: string; findings: unknown[] };
-  assert.equal(doc.conclusion, "exposed");
+  assert.equal(doc.conclusion, "regeneration-failure");
   assert.equal(doc.action, "blocked");
   assert.match(doc.error ?? "", /export/i);
   assert.ok(Array.isArray(doc.findings) && doc.findings.length > 0);
@@ -1060,4 +1080,200 @@ test("successful empty advisory --json includes action none", async () => {
   assert.equal(doc.sources.osv.status, "success");
   assert.equal(doc.sources.npm.status, "success");
   assert.deepEqual(doc.regeneration, []);
+});
+
+test("configured envelope is honored and default path is unused", async () => {
+  const { root, envelopeRel } = writeFixture({ envelopeRel: "state/lodash/envelope.json" });
+  assert.equal(existsSync(join(root, ".slim/lodash/envelope.json")), false);
+  let npm = 0;
+  let osv = 0;
+  const { code, stdout } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => {
+          npm += 1;
+          return sourceOk({ version: "4.17.21" });
+        },
+        queryOsv: async () => {
+          osv += 1;
+          return sourceOk([]);
+        },
+      }),
+    ),
+  );
+  assert.equal(code, EXIT_OK);
+  assert.ok(npm > 0, "complete configured state may consult npm");
+  assert.ok(osv > 0, "complete configured state may consult OSV");
+  const doc = JSON.parse(stdout) as { conclusion: string };
+  assert.equal(doc.conclusion, "not-exposed");
+  assert.equal(existsSync(join(root, envelopeRel)), true);
+});
+
+test("hard-coded default envelope cannot satisfy a missing configured path", async () => {
+  const { root } = writeFixture();
+  writeFileSync(
+    join(root, "slim.json"),
+    JSON.stringify({
+      outDir: "src/slim",
+      replacements: {
+        lodash: {
+          version: "4.17.21",
+          envelope: "state/lodash/envelope.json",
+          module: "src/slim/lodash.ts",
+        },
+      },
+    }),
+  );
+  let npm = 0;
+  let osv = 0;
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => {
+          npm += 1;
+          return sourceOk({ version: "4.17.21" });
+        },
+        queryOsv: async () => {
+          osv += 1;
+          return sourceOk([]);
+        },
+      }),
+    ),
+  );
+  assert.equal(code, EXIT_FAIL);
+  assert.equal(npm, 0);
+  assert.equal(osv, 0);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  const doc = JSON.parse(stdout) as { conclusion: string; action: string };
+  assert.equal(doc.conclusion, "missing-state");
+  assert.equal(doc.action, "blocked");
+});
+
+test("../ module path is malformed-state and never contacts sources", async () => {
+  const { root } = writeFixture();
+  const man = JSON.parse(readFileSync(join(root, ".slim/manifest.json"), "utf8")) as {
+    replacements: Record<string, { module: string }>;
+  };
+  man.replacements.lodash.module = "../secret.ts";
+  writeFileSync(join(root, ".slim/manifest.json"), JSON.stringify(man, null, 2));
+  let npm = 0;
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => {
+          npm += 1;
+          return sourceOk({ version: "4.17.21" });
+        },
+      }),
+    ),
+  );
+  assert.equal(code, EXIT_FAIL);
+  assert.equal(npm, 0);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  const doc = JSON.parse(stdout) as { conclusion: string; error?: string };
+  assert.equal(doc.conclusion, "malformed-state");
+  assert.match(doc.error ?? "", /unsafe state path/i);
+});
+
+test("absolute envelope path is refused before network", async () => {
+  const { root } = writeFixture();
+  writeFileSync(
+    join(root, "slim.json"),
+    JSON.stringify({
+      outDir: "src/slim",
+      replacements: {
+        lodash: {
+          version: "4.17.21",
+          envelope: "/tmp/evil/envelope.json",
+          module: "src/slim/lodash.ts",
+        },
+      },
+    }),
+  );
+  let npm = 0;
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => {
+          npm += 1;
+          return sourceOk({ version: "4.17.21" });
+        },
+      }),
+    ),
+  );
+  assert.equal(code, EXIT_FAIL);
+  assert.equal(npm, 0);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  const doc = JSON.parse(stdout) as { conclusion: string; error?: string };
+  assert.equal(doc.conclusion, "malformed-state");
+  assert.match(doc.error ?? "", /unsafe state path|absolute/i);
+});
+
+test("symlinked envelope is refused before network and dest is unchanged", async () => {
+  const { root } = writeFixture();
+  const outside = mkdtempSync(join(tmpdir(), "slim-up-out-"));
+  writeFileSync(join(outside, "envelope.json"), "secret\n");
+  rmSync(join(root, ".slim/lodash/envelope.json"));
+  symlinkSync(join(outside, "envelope.json"), join(root, ".slim/lodash/envelope.json"));
+  let npm = 0;
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => {
+          npm += 1;
+          return sourceOk({ version: "4.17.21" });
+        },
+      }),
+    ),
+  );
+  assert.equal(code, EXIT_FAIL);
+  assert.equal(npm, 0);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  const doc = JSON.parse(stdout) as { conclusion: string };
+  assert.equal(doc.conclusion, "malformed-state");
+  assert.equal(readFileSync(join(outside, "envelope.json"), "utf8"), "secret\n");
+});
+
+test("digest-rebound unsafe AST is malformed-state and never contacts sources", async () => {
+  const { root } = writeFixture();
+  writeFileSync(
+    join(root, "src/slim/lodash.ts"),
+    'export function get() { return eval("1"); }\nexport function set(o: unknown) { return o; }\n',
+  );
+  rebindEvidenceArtifacts(root, "lodash", "src/slim");
+  let npm = 0;
+  let osv = 0;
+  const { code, stdout, stderr } = await capture(() =>
+    runUpstream(
+      parseCli(["upstream", "--json"]),
+      baseDeps({
+        cwd: root,
+        npmLatest: async () => {
+          npm += 1;
+          return sourceOk({ version: "4.17.21" });
+        },
+        queryOsv: async () => {
+          osv += 1;
+          return sourceOk([CWE_1321]);
+        },
+      }),
+    ),
+  );
+  assert.equal(code, EXIT_FAIL);
+  assert.equal(npm, 0);
+  assert.equal(osv, 0);
+  assert.equal(/slice not exposed/i.test(stdout + stderr), false);
+  const doc = JSON.parse(stdout) as { conclusion: string; error?: string };
+  assert.equal(doc.conclusion, "malformed-state");
+  assert.match(doc.error ?? "", /AST allowlist|eval/i);
 });
