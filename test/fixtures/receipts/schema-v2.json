@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "checkId": "test/cli.test.ts",
   "command": "scan",
   "fixture": "test/cli.test.ts",
@@ -13,6 +13,5 @@
   "npmDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "actionDigest": null,
   "workflowRun": null,
-  "logDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-  "traces": [{ "symbol": "get" }]
+  "logDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 }

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "checkId": "test/cli.test.ts",
   "command": "scan",
-  "fixture": "local-scan",
+  "fixture": "test/cli.test.ts",
   "environment": "local",
   "provider": null,
   "service": null,

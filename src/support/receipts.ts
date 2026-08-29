@@ -47,6 +47,24 @@ export interface CandidateIdentity {
   workflowRun?: string | null;
 }
 
+/** Qualification receipts older than this are stale. */
+export const RECEIPT_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+const LIVE_FIXTURES: Record<string, readonly string[]> = {
+  "test/llm-live.test.ts": ["tiny-add"],
+  "test/upstream-live.test.ts": ["ms-watch"],
+  "test/github/pr-live.test.ts": ["ms"],
+  "test/release-live.test.ts": ["release-rehearse"],
+  "test/github/action-live.test.ts": ["packed-action-consumer"],
+};
+
+export function allowedFixtures(entry: InventoryEntry): ReadonlySet<string> {
+  if (entry.receiptClass === "live") {
+    return new Set(LIVE_FIXTURES[entry.checkId] ?? []);
+  }
+  return new Set([entry.checkId]);
+}
+
 const FORBIDDEN_KEYS = new Set([
   "prompt",
   "prompts",
@@ -290,6 +308,14 @@ export function parseReceipt(raw: unknown): QualificationReceipt {
   return receipt;
 }
 
+function requiresNpmDigest(entry: InventoryEntry): boolean {
+  return entry.kind !== "action";
+}
+
+function requiresActionDigest(entry: InventoryEntry): boolean {
+  return entry.kind === "action" || entry.name === "npm-publish";
+}
+
 export function identityMismatch(
   receipt: QualificationReceipt,
   candidate: CandidateIdentity,
@@ -304,14 +330,23 @@ export function identityMismatch(
   if (receipt.fixture === "") {
     return "missing fixture identity";
   }
+  if (!allowedFixtures(entry).has(receipt.fixture)) {
+    return `unknown fixture ${receipt.fixture}`;
+  }
+  if (!receipt.environment) {
+    return "missing environment";
+  }
   if (
     (entry.kind === "command" || entry.kind === "jsonCommand") &&
     receipt.command !== entry.command
   ) {
     return `command ${receipt.command} != ${entry.command}`;
   }
+  if (entry.kind === "action" && receipt.command !== entry.name) {
+    return `command ${receipt.command} != ${entry.name}`;
+  }
   if (entry.kind === "osNode") {
-    const env = receipt.environment ?? "";
+    const env = receipt.environment;
     if (!entry.os || !env.includes(entry.os)) {
       return `osNode environment missing ${entry.os}`;
     }
@@ -320,7 +355,7 @@ export function identityMismatch(
     }
   }
   if (entry.kind === "packageManager") {
-    const env = receipt.environment ?? "";
+    const env = receipt.environment;
     if (!entry.name || !env.includes(entry.name)) {
       return `packageManager environment missing ${entry.name}`;
     }
@@ -331,17 +366,19 @@ export function identityMismatch(
   if (entry.kind === "externalService" && receipt.service !== entry.name) {
     return `service ${receipt.service} != ${entry.name}`;
   }
-  if (entry.kind === "action") {
-    if (!candidate.actionDigest || receipt.actionDigest !== candidate.actionDigest) {
-      return `action digest mismatch`;
-    }
-  } else if (candidate.npmDigest && receipt.npmDigest !== candidate.npmDigest) {
-    return `npm digest mismatch`;
+  if (requiresActionDigest(entry)) {
+    if (!candidate.actionDigest) return "missing action digest";
+    if (receipt.actionDigest !== candidate.actionDigest) return "action digest mismatch";
   }
-  if (candidate.workflowRun !== undefined && candidate.workflowRun !== null) {
-    if (receipt.workflowRun !== candidate.workflowRun) {
-      return `workflow run mismatch`;
-    }
+  if (requiresNpmDigest(entry)) {
+    if (!candidate.npmDigest) return "missing npm digest";
+    if (receipt.npmDigest !== candidate.npmDigest) return "npm digest mismatch";
+  }
+  if (entry.receiptClass === "live") {
+    if (!candidate.workflowRun || !receipt.workflowRun) return "missing workflow run";
+    if (receipt.workflowRun !== candidate.workflowRun) return "workflow run mismatch";
+  } else if (candidate.workflowRun && receipt.workflowRun !== candidate.workflowRun) {
+    return "workflow run mismatch";
   }
   return null;
 }
@@ -352,6 +389,7 @@ function timestampIssue(receipt: QualificationReceipt, now: Date): string | null
   if (Number.isNaN(start) || Number.isNaN(end)) return "invalid timestamp";
   if (start > end) return "startedAt after endedAt";
   if (end > now.getTime() + 60_000) return "endedAt in the future";
+  if (now.getTime() - end > RECEIPT_MAX_AGE_MS) return "endedAt older than freshness window";
   return null;
 }
 

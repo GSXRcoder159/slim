@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "checkId": "test/cli.test.ts",
   "command": "scan",
-  "fixture": "test/cli.test.ts",
+  "fixture": "not-a-real-fixture",
   "environment": "local",
   "provider": null,
   "service": null,
@@ -13,6 +13,5 @@
   "npmDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "actionDigest": null,
   "workflowRun": null,
-  "logDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-  "traces": [{ "symbol": "get" }]
+  "logDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 }

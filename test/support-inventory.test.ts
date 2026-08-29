@@ -10,7 +10,8 @@ import {
   LODASH_SYMBOLS,
 } from "../src/generate/catalog/index.ts";
 import { canonicalInventory, loadInventory } from "../src/support/inventory.ts";
-import { helpText } from "../src/cli.ts";
+import { allowedFixtures } from "../src/support/receipts.ts";
+import { COMMAND_FLAGS, helpText } from "../src/cli.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -106,4 +107,40 @@ test("help, README, dx, and packages only advertise inventory names", () => {
 test("inventory replace.json is false", () => {
   const replace = loadInventory().entries.find((e) => e.id === "command.replace");
   assert.equal(replace?.json, false);
+});
+
+test("CLI parser flags match inventoried commands and JSON modes", () => {
+  const loaded = loadInventory();
+  const parser = Object.keys(COMMAND_FLAGS).sort();
+  const commands = [
+    ...new Set(
+      loaded.entries
+        .filter((e) => e.kind === "command" && e.command && e.command !== "watch")
+        .map((e) => e.command!),
+    ),
+  ].sort();
+  assert.deepEqual(parser, commands);
+  for (const command of loaded.entries.filter((e) => e.kind === "jsonCommand").map((e) => e.command!)) {
+    assert.equal(COMMAND_FLAGS[command]?.has("json"), true, `${command} json`);
+  }
+  assert.equal(COMMAND_FLAGS.replace?.has("json"), false);
+  assert.equal(COMMAND_FLAGS.bloat?.has("json"), false);
+});
+
+test("every checkId is documented, registered, and has allowed fixtures", () => {
+  const loaded = loadInventory();
+  const dx = readFileSync(join(ROOT, "docs/dx.md"), "utf8");
+  const skip = /test\.skip|\.skip\(|skip:\s*true/;
+  for (const entry of loaded.entries) {
+    const allowed = allowedFixtures(entry);
+    assert.ok(allowed.size > 0, `${entry.id} has no allowed fixtures`);
+    assert.match(dx, new RegExp(entry.checkId.replaceAll(".", "\\.")), `${entry.id} checkId missing from dx.md`);
+    const src = readFileSync(join(ROOT, entry.checkId), "utf8");
+    assert.equal(skip.test(src), false, `${entry.checkId} registers a skipped test`);
+    if (entry.receiptClass === "live") {
+      for (const fixture of allowed) {
+        assert.ok(src.includes(fixture), `${entry.checkId} missing fixture ${fixture}`);
+      }
+    }
+  }
 });

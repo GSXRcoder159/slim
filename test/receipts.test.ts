@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -15,6 +16,7 @@ import {
   releaseReceipt,
   localReceipt,
   writeReceipt,
+  providerReceipt,
 } from "../src/support/receipts.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -429,4 +431,310 @@ test("qualify packageManager environment mismatch fails closed", () => {
     now: NOW,
   });
   assert.match(failures[0]?.reason ?? "", /packageManager environment missing pnpm/);
+});
+
+test("epoch timestamps fail against the freshness window", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-epoch-"));
+  writeFileSync(join(dir, receiptFileName(entry.id)), readFileSync(join(FIX, "epoch.json")));
+  const failures = qualifyInventory(inventory, dir, candidate, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /stale|expired|older than/);
+});
+
+test("arbitrary fixture names fail closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-arb-"));
+  writeFileSync(join(dir, receiptFileName(entry.id)), readFileSync(join(FIX, "arbitrary-fixture.json")));
+  const failures = qualifyInventory(inventory, dir, candidate, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /unknown fixture/);
+});
+
+test("omitting candidate npm digest cannot disable comparison", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-omit-"));
+  writeFileSync(join(dir, receiptFileName(entry.id)), readFileSync(join(FIX, "command.scan.json")));
+  const failures = qualifyInventory(
+    inventory,
+    dir,
+    { commit: COMMIT, npmDigest: null, actionDigest: null },
+    { now: NOW },
+  );
+  assert.match(failures[0]?.reason ?? "", /missing npm digest/);
+});
+
+test("incompatible receipt schemaVersion is rejected", () => {
+  assert.throws(
+    () => parseReceipt(loadFix("schema-v2.json")),
+    (err: unknown) => err instanceof Error && /schemaVersion|schema/.test(err.message),
+  );
+});
+
+test("qualify checkId mismatch fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-cid-"));
+  writeReceipt(
+    dir,
+    entry.id,
+    localReceipt({
+      entry: { ...entry, checkId: "test/json-contract.test.ts" },
+      commit: COMMIT,
+      npmDigest: NPM,
+      actionDigest: null,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+      environment: "local",
+    }),
+  );
+  const failures = qualifyInventory(inventory, dir, candidate, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /checkId/);
+});
+
+test("empty environment fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-env-"));
+  const rec = localReceipt({
+    entry,
+    commit: COMMIT,
+    npmDigest: NPM,
+    actionDigest: null,
+    startedAt: new Date("2026-08-27T14:00:00.000Z"),
+    endedAt: new Date("2026-08-27T14:00:01.000Z"),
+    log: "ok",
+    environment: "local",
+  });
+  writeReceipt(dir, entry.id, { ...rec, environment: "" });
+  const failures = qualifyInventory(inventory, dir, candidate, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /environment/);
+});
+
+const WORKFLOW = "33135306891";
+
+test("omitting candidate action digest cannot disable comparison", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-omit-act-"));
+  writeReceipt(
+    dir,
+    actionEntry.id,
+    actionReceipt({
+      command: "check",
+      fixture: "packed-action-consumer",
+      commit: COMMIT,
+      actionDigest: ACTION,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+      workflowRun: WORKFLOW,
+    }),
+  );
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [actionEntry] }, dir, {
+    commit: COMMIT,
+    npmDigest: NPM,
+    actionDigest: null,
+    workflowRun: WORKFLOW,
+  }, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /missing action digest/);
+});
+
+test("qualify action command mismatch fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-act-cmd-"));
+  writeReceipt(
+    dir,
+    actionEntry.id,
+    actionReceipt({
+      command: "bloat",
+      fixture: "packed-action-consumer",
+      commit: COMMIT,
+      actionDigest: ACTION,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+      workflowRun: WORKFLOW,
+    }),
+  );
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [actionEntry] }, dir, {
+    ...candidate,
+    actionDigest: ACTION,
+    workflowRun: WORKFLOW,
+  }, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /command bloat != check/);
+});
+
+const osvEntry: InventoryEntry = {
+  id: "externalService.osv",
+  kind: "externalService",
+  name: "osv",
+  docs: ["docs/dx.md"],
+  checkId: "test/upstream-live.test.ts",
+  receiptClass: "live",
+};
+
+test("live receipt missing workflow run fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-wf-miss-"));
+  writeReceipt(
+    dir,
+    osvEntry.id,
+    sourceReceipt({
+      service: "osv",
+      fixture: "ms-watch",
+      commit: COMMIT,
+      npmDigest: NPM,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+    }),
+  );
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [osvEntry] }, dir, {
+    ...candidate,
+    workflowRun: WORKFLOW,
+  }, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /missing workflow run/);
+});
+
+test("live candidate missing workflow run fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-wf-cand-"));
+  writeReceipt(
+    dir,
+    osvEntry.id,
+    sourceReceipt({
+      service: "osv",
+      fixture: "ms-watch",
+      commit: COMMIT,
+      npmDigest: NPM,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+      workflowRun: WORKFLOW,
+    }),
+  );
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [osvEntry] }, dir, candidate, {
+    now: NOW,
+  });
+  assert.match(failures[0]?.reason ?? "", /missing workflow run/);
+});
+
+test("live workflow run mismatch fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-wf-mm-"));
+  writeReceipt(
+    dir,
+    osvEntry.id,
+    sourceReceipt({
+      service: "osv",
+      fixture: "ms-watch",
+      commit: COMMIT,
+      npmDigest: NPM,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+      workflowRun: WORKFLOW,
+    }),
+  );
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [osvEntry] }, dir, {
+    ...candidate,
+    workflowRun: "999",
+  }, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /workflow run mismatch/);
+});
+
+test("npm-publish requires both digests", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-pub-"));
+  const pub: InventoryEntry = {
+    id: "externalService.npm-publish",
+    kind: "externalService",
+    name: "npm-publish",
+    docs: ["docs/repo.md"],
+    checkId: "test/release-live.test.ts",
+    receiptClass: "live",
+  };
+  writeReceipt(
+    dir,
+    pub.id,
+    releaseReceipt({
+      fixture: "release-rehearse",
+      commit: COMMIT,
+      npmDigest: NPM,
+      actionDigest: ACTION,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+      workflowRun: WORKFLOW,
+    }),
+  );
+  const missingAction = qualifyInventory({ schemaVersion: 1, entries: [pub] }, dir, {
+    commit: COMMIT,
+    npmDigest: NPM,
+    actionDigest: null,
+    workflowRun: WORKFLOW,
+  }, { now: NOW });
+  assert.match(missingAction[0]?.reason ?? "", /missing action digest/);
+  const ok = qualifyInventory({ schemaVersion: 1, entries: [pub] }, dir, {
+    commit: COMMIT,
+    npmDigest: NPM,
+    actionDigest: ACTION,
+    workflowRun: WORKFLOW,
+  }, { now: NOW });
+  assert.deepEqual(ok, []);
+});
+
+test("providerReceipt qualifies with live fixture and workflow identity", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-prov-"));
+  const prov: InventoryEntry = {
+    id: "provider.anthropic",
+    kind: "provider",
+    name: "anthropic",
+    docs: ["docs/dx.md"],
+    checkId: "test/llm-live.test.ts",
+    receiptClass: "live",
+  };
+  writeReceipt(
+    dir,
+    prov.id,
+    providerReceipt({
+      provider: "anthropic",
+      model: "claude-sonnet-4-5",
+      fixture: "tiny-add",
+      commit: COMMIT,
+      npmDigest: NPM,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "ok",
+      workflowRun: WORKFLOW,
+    }),
+  );
+  assert.deepEqual(
+    qualifyInventory({ schemaVersion: 1, entries: [prov] }, dir, {
+      ...candidate,
+      workflowRun: WORKFLOW,
+    }, { now: NOW }),
+    [],
+  );
+});
+
+test("qualify-receipts refuses missing npm digest", () => {
+  const r = spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", join(ROOT, "scripts/qualify-receipts.ts"), "--commit", COMMIT],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, SLIM_NPM_DIGEST: "", SLIM_ACTION_DIGEST: "" },
+    },
+  );
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /npm-digest/);
+});
+
+test("qualify-receipts refuses missing action digest", () => {
+  const r = spawnSync(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      join(ROOT, "scripts/qualify-receipts.ts"),
+      "--commit",
+      COMMIT,
+      "--npm-digest",
+      NPM,
+    ],
+    {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, SLIM_ACTION_DIGEST: "" },
+    },
+  );
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /action-digest/);
 });

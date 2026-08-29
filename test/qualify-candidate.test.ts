@@ -108,6 +108,24 @@ test("collect mode fails closed until all six osNode receipts exist", () => {
   assert.deepEqual(ok.failures, []);
 });
 
+test("collect mode without npm digest fails closed", () => {
+  const from = mkdtempSync(join(tmpdir(), "slim-qc-nodig-"));
+  const dest = mkdtempSync(join(tmpdir(), "slim-qc-nodig-dest-"));
+  for (const os of INVENTORY_OS) {
+    for (const node of INVENTORY_NODES) writeOsNodeReceipt(from, os, node);
+  }
+  const missing = runQualifyCandidate({
+    root: ROOT,
+    mode: "collect",
+    receiptsDir: dest,
+    fromDir: from,
+    commit: COMMIT,
+    osNodeOnly: true,
+    env: {},
+  });
+  assert.ok(missing.failures.some((f) => /missing npm digest/.test(f.reason)));
+});
+
 test("emit mode refuses a dirty tree", () => {
   const root = mkdtempSync(join(tmpdir(), "slim-qc-dirty-"));
   git(root, ["init", "--template=", "-b", "main"]);
