@@ -1,0 +1,423 @@
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { join, relative, dirname } from "node:path";
+import { EXIT_ENV, EXIT_FAIL, EXIT_OK, SlimExit } from "./exit.js";
+import { JSON_SCHEMA_VERSION, statusFromExit, writeJson } from "./json.js";
+import { assertDocument, readDocument } from "./schema/documents.js";
+import { loadProject } from "./project.js";
+import { loadConfig } from "./config.js";
+import { queryOsv } from "./upstream/osv.js";
+import { npmLatest } from "./upstream/npm.js";
+import { sliceExposure } from "./upstream/slice.js";
+import { createPullRequest, probeGithubAvailability, UPSTREAM_PR_LABELS } from "./github/pr.js";
+import { applyUpstreamFix, canFuzzOracle, } from "./upstream/fix.js";
+import { assertReplacementState, replacementStateIssues, resolveReplacementPaths, } from "./upstream/state.js";
+import { cmpVersion, isConsultedFailure, sourceNotRequired, sourceErr, } from "./upstream/status.js";
+import { MutationTxn } from "./rewrite/transaction.js";
+import { assertSafeStatePath, toPosixPath } from "./rewrite/paths.js";
+import { runMergeGate } from "./replace.js";
+export { applyUpstreamFix } from "./upstream/fix.js";
+export async function runUpstream(args, deps = {}) {
+    const project = loadProject(deps.cwd);
+    const config = loadConfig(project.root);
+    const query = deps.queryOsv ?? queryOsv;
+    const latestOf = deps.npmLatest ?? npmLatest;
+    const openPr = deps.createPullRequest ?? createPullRequest;
+    const manPath = join(project.root, ".slim", "manifest.json");
+    const notRequired = () => sourceNotRequired();
+    const sources = {
+        osv: notRequired(),
+        npm: notRequired(),
+        oracle: notRequired(),
+        github: notRequired(),
+    };
+    try {
+        assertSafeStatePath(project.root, manPath);
+    }
+    catch (err) {
+        const msg = err instanceof SlimExit ? err.message : `unsafe state path: .slim/manifest.json`;
+        return finish(args, reportOf("malformed-state", EXIT_FAIL, sources, [], [], msg), null, msg);
+    }
+    if (!existsSync(manPath)) {
+        return finish(args, reportOf("missing-state", EXIT_FAIL, sources, [], [], "no .slim/manifest.json — nothing to watch"), null, "no .slim/manifest.json — nothing to watch");
+    }
+    let man;
+    try {
+        man = readDocument("manifest", manPath, ".slim/manifest.json");
+    }
+    catch (err) {
+        const msg = err instanceof SlimExit ? err.message : `malformed .slim/manifest.json`;
+        return finish(args, reportOf("malformed-state", EXIT_FAIL, sources, [], [], msg), null, msg);
+    }
+    const names = Object.keys(man.replacements ?? {});
+    if (!names.length) {
+        return finish(args, reportOf("no-replacements", EXIT_OK, sources, [], []), "no replacements.\n");
+    }
+    for (const name of names) {
+        const state = replacementStateIssues(project.root, name, man.replacements[name], {
+            outDir: config.outDir,
+            envelope: config.replacements[name]?.envelope,
+        });
+        if (state.kind !== "ok") {
+            const msg = state.fatal?.message ?? state.drift[0]?.detail ?? `incomplete replacement state for ${name}`;
+            const conclusion = state.kind === "missing" ? "missing-state" : "malformed-state";
+            return finish(args, reportOf(conclusion, EXIT_FAIL, sources, [], [], msg), null, msg);
+        }
+    }
+    if (args.pr) {
+        sources.github = deps.githubStatus ? deps.githubStatus() : probeGithubAvailability(project.root);
+    }
+    if (isConsultedFailure(sources.github)) {
+        return finish(args, reportOf("source-unavailable", EXIT_ENV, sources, [], [], `github ${sources.github.detail}`), null, `github ${sources.github.detail}`);
+    }
+    const findings = [];
+    const routineLines = [];
+    const osvStatuses = [];
+    const npmStatuses = [];
+    for (const name of names) {
+        const rec = man.replacements[name];
+        const pinned = rec.version;
+        let npmRes = await latestOf(name);
+        if (npmRes.status === "success" && npmRes.value) {
+            const latest = npmRes.value.version;
+            if (cmpVersion(latest, pinned) < 0) {
+                npmRes = sourceErr("stale", `npm latest ${latest} is older than pinned ${pinned}`);
+            }
+            else if (npmRes.value.versions && !npmRes.value.versions.includes(pinned)) {
+                npmRes = sourceErr("stale", `pinned ${pinned} absent from npm registry`);
+            }
+        }
+        npmStatuses.push({ status: npmRes.status, detail: npmRes.detail });
+        const latest = npmRes.status === "success" && npmRes.value ? npmRes.value.version : pinned;
+        const pinnedOsv = await query(name, pinned);
+        osvStatuses.push({ status: pinnedOsv.status, detail: pinnedOsv.detail });
+        let latestOsv = { status: "success", detail: "not required", value: [] };
+        if (npmRes.status === "success" && latest !== pinned) {
+            latestOsv = await query(name, latest);
+            osvStatuses.push({ status: latestOsv.status, detail: latestOsv.detail });
+        }
+        if (isConsultedFailure(npmRes) || isConsultedFailure(pinnedOsv) || isConsultedFailure(latestOsv)) {
+            continue;
+        }
+        const seen = new Map();
+        for (const v of [...(pinnedOsv.value ?? []), ...(latestOsv.value ?? [])])
+            seen.set(v.id, v);
+        for (const v of seen.values()) {
+            const exp = sliceExposure(v, rec.symbols);
+            findings.push({
+                package: name,
+                pinned,
+                latest,
+                id: v.id,
+                summary: v.summary,
+                details: v.details,
+                exposure: exp.exposure,
+                affectedRange: exp.affectedRange,
+                usedSymbols: rec.symbols,
+                mappedEvidence: exp.mappedEvidence,
+                upstreamChange: latest === pinned ? `pinned ${pinned}` : `${pinned} → ${latest}`,
+                unmappedReason: exp.unmappedReason,
+            });
+        }
+        if (latest !== pinned && seen.size === 0) {
+            routineLines.push(`${name}: ${pinned} → ${latest} (routine release, fail-open)\n`);
+        }
+    }
+    sources.npm = worstSource(npmStatuses, sources.npm);
+    sources.osv = worstSource(osvStatuses, sources.osv);
+    if (isConsultedFailure(sources.npm) ||
+        isConsultedFailure(sources.osv) ||
+        isConsultedFailure(sources.github)) {
+        return finish(args, reportOf("source-unavailable", EXIT_ENV, sources, findings, [], sourceFailDetail(sources)), null, sourceFailDetail(sources));
+    }
+    const hasUnmapped = findings.some((f) => f.exposure === "unmapped");
+    const hasExposed = findings.some((f) => f.exposure === "exposed");
+    const fixResults = [];
+    let regenError;
+    if (hasExposed) {
+        const exposedJobs = [];
+        for (const name of names) {
+            const rec = man.replacements[name];
+            const pkgFindings = findings.filter((f) => f.package === name && f.exposure === "exposed");
+            if (!pkgFindings.length)
+                continue;
+            exposedJobs.push({ name, rec, pkgFindings });
+        }
+        let oracleOk = true;
+        for (const job of exposedJobs) {
+            const ok = await canFuzzOracle({ root: project.root, pkg: job.name, rec: job.rec, findings: job.pkgFindings, args, config }, deps);
+            if (!ok) {
+                oracleOk = false;
+                break;
+            }
+        }
+        if (!oracleOk) {
+            sources.oracle = { status: "unavailable", detail: "fuzz skipped: no installable oracle" };
+        }
+        else {
+            const txn = new MutationTxn(project.root);
+            try {
+                for (const job of exposedJobs) {
+                    fixResults.push(await applyUpstreamFix({ root: project.root, pkg: job.name, rec: job.rec, findings: job.pkgFindings, args, config }, deps, txn));
+                }
+                if (fixResults.some((r) => r.fuzzed)) {
+                    sources.oracle = { status: "success", detail: "ok" };
+                }
+                for (const job of exposedJobs) {
+                    const rec = man.replacements[job.name];
+                    assertReplacementState(project.root, job.name, rec, {
+                        outDir: config.outDir,
+                        envelope: config.replacements[job.name]?.envelope,
+                    });
+                }
+                runMergeGate(project.root, config.testCommand, Boolean(args.json));
+                txn.writeFile(join(project.root, ".slim", "UPSTREAM.md"), prBody(project.root, findings, fixResults, config, man));
+                txn.commit();
+            }
+            catch (err) {
+                txn.rollback();
+                fixResults.length = 0;
+                regenError = err instanceof SlimExit ? err.message : String(err);
+            }
+        }
+    }
+    let conclusion;
+    let exit;
+    let msg;
+    if (hasUnmapped) {
+        conclusion = "unmapped";
+        exit = EXIT_FAIL;
+        msg = "slice exposed or advisory unmapped";
+    }
+    else if (hasExposed && isConsultedFailure(sources.oracle)) {
+        conclusion = "oracle-unavailable";
+        exit = EXIT_FAIL;
+        msg = "verification unavailable: no installable oracle";
+    }
+    else if (hasExposed && regenError) {
+        conclusion = "regeneration-failure";
+        exit = EXIT_FAIL;
+        msg = regenError;
+    }
+    else if (hasExposed) {
+        conclusion = "exposed";
+        exit = EXIT_FAIL;
+        msg = "slice exposed or advisory unmapped";
+    }
+    else if (routineLines.length) {
+        conclusion = "routine-release";
+        exit = EXIT_OK;
+        msg = "";
+    }
+    else {
+        conclusion = "not-exposed";
+        exit = EXIT_OK;
+        msg = "";
+    }
+    const wroteFix = fixResults.some((r) => r.regenerated);
+    emitHuman(args, findings, routineLines, conclusion, sources, fixResults);
+    const review = conclusion === "unmapped" || (conclusion === "exposed" && wroteFix);
+    if (conclusion === "unmapped" && !wroteFix) {
+        const upstreamMd = join(project.root, ".slim", "UPSTREAM.md");
+        assertSafeStatePath(project.root, upstreamMd);
+        mkdirSync(join(project.root, ".slim"), { recursive: true });
+        writeFileSync(upstreamMd, prBody(project.root, findings, fixResults, config, man));
+    }
+    if (review && args.pr) {
+        const firstId = findings.find((f) => f.exposure === "exposed" || f.exposure === "unmapped")?.id ?? "advisory";
+        const body = readFileSync(join(project.root, ".slim", "UPSTREAM.md"), "utf8");
+        await openPr({
+            root: project.root,
+            title: `slim: upstream slice fix for ${firstId}`,
+            body,
+            branch: "slim/upstream",
+            files: upstreamPrFiles(project.root, man, fixResults, config),
+            labels: [...UPSTREAM_PR_LABELS],
+            kind: "upstream",
+        });
+    }
+    const humanOk = conclusion === "not-exposed" ? "slice not exposed.\n" : null;
+    return finish(args, reportOf(conclusion, exit, sources, findings, regenerationOf(fixResults), exit === EXIT_OK ? undefined : msg), humanOk, exit === EXIT_OK ? undefined : msg);
+}
+function emitHuman(args, findings, routineLines, conclusion, sources, results) {
+    const write = args.json
+        ? (s) => process.stderr.write(s)
+        : (s) => process.stdout.write(s);
+    for (const f of findings) {
+        if (f.exposure === "exposed" || f.exposure === "unmapped") {
+            write(`${f.package}: ${f.id} ${f.exposure} — ${f.summary ?? ""}\n  fail-closed: advisory ${f.exposure === "unmapped" ? "could not be mapped to used exports" : "hits this slice"}\n`);
+        }
+    }
+    if (conclusion !== "source-unavailable") {
+        for (const line of routineLines)
+            write(line);
+    }
+    if (conclusion === "oracle-unavailable") {
+        write(`verification unavailable: ${sources.oracle.detail}\n`);
+    }
+    if (conclusion === "regeneration-failure") {
+        write(`regeneration failed\n`);
+    }
+    for (const r of results) {
+        if (r.regenerated && r.fuzz) {
+            write(`${r.pkg}: regenerated ${r.usedCatalog ? "catalog" : "llm"} oracle=${r.oracleKind ?? "none"}@${r.oracleVersion ?? "?"} cases=${r.fuzz.cases} residual=${r.residualRisk.join("; ") || "none"}\n`);
+        }
+    }
+}
+function finish(args, doc, humanOk, failMsg) {
+    if (args.json) {
+        assertDocument("upstream", doc);
+        writeJson(doc);
+    }
+    if (doc.exit !== EXIT_OK) {
+        throw new SlimExit(doc.exit, failMsg || doc.error || "upstream failed", { skipJson: args.json });
+    }
+    if (humanOk && !args.json)
+        process.stdout.write(humanOk);
+    return doc.exit;
+}
+function actionOf(conclusion, regeneration) {
+    if (conclusion === "unmapped")
+        return "review";
+    if (conclusion === "exposed")
+        return regeneration.some((r) => r.regenerated) ? "regenerated" : "blocked";
+    if (conclusion === "incomplete-state" ||
+        conclusion === "missing-state" ||
+        conclusion === "malformed-state" ||
+        conclusion === "regeneration-failure" ||
+        conclusion === "source-unavailable" ||
+        conclusion === "oracle-unavailable") {
+        return "blocked";
+    }
+    return "none";
+}
+function regenerationOf(results) {
+    return results.map((r) => ({
+        package: r.pkg,
+        regenerated: r.regenerated,
+        usedCatalog: r.usedCatalog,
+        fuzzed: r.fuzzed,
+        oracleKind: r.oracleKind,
+        oracleVersion: r.oracleVersion,
+        residualRisk: r.residualRisk,
+        ...(r.fuzz ? { fuzz: r.fuzz } : {}),
+    }));
+}
+function reportOf(conclusion, exit, sources, findings, regeneration, error) {
+    return {
+        schemaVersion: JSON_SCHEMA_VERSION,
+        ok: exit === EXIT_OK,
+        exit,
+        status: statusFromExit(exit),
+        conclusion,
+        action: actionOf(conclusion, regeneration),
+        sources,
+        findings,
+        regeneration,
+        ...(error ? { error } : {}),
+    };
+}
+function worstSource(rows, fallback) {
+    const consulted = rows.filter((s) => s.detail !== "not required");
+    if (!consulted.length)
+        return fallback;
+    const fail = consulted.find(isConsultedFailure);
+    return fail ?? consulted[consulted.length - 1];
+}
+function sourceFailDetail(sources) {
+    const hits = ["osv", "npm", "github"]
+        .filter((k) => isConsultedFailure(sources[k]))
+        .map((k) => `${k}: ${sources[k].detail}`);
+    return hits.join("; ") || "source unavailable";
+}
+function upstreamPrFiles(root, man, results, config) {
+    const files = new Set([".slim/UPSTREAM.md", ".slim/manifest.json"]);
+    if (existsSync(join(root, "slim.json")))
+        files.add("slim.json");
+    for (const [name, rec] of Object.entries(man.replacements)) {
+        try {
+            const paths = resolveReplacementPaths(root, name, rec, {
+                outDir: config.outDir,
+                envelope: config.replacements[name]?.envelope,
+            });
+            files.add(toPosixPath(relative(root, paths.envelopeAbs)));
+            files.add(toPosixPath(relative(root, paths.evidenceAbs)));
+            files.add(toPosixPath(relative(root, join(dirname(paths.evidenceAbs), "evidence.md"))));
+            if (paths.moduleRel) {
+                files.add(toPosixPath(paths.moduleRel));
+                files.add(toPosixPath(paths.moduleRel.replace(/\.(ts|js|mjs|cjs)$/, ".hardened.test.ts")));
+            }
+        }
+        catch {
+            /* unsafe paths are not PR candidates */
+        }
+    }
+    for (const r of results) {
+        if (r.hardenedTest)
+            files.add(relative(root, r.hardenedTest).replace(/\\/g, "/"));
+    }
+    return [...files]
+        .map((f) => f.replace(/\\/g, "/"))
+        .filter((f) => existsSync(join(root, f)));
+}
+function prBody(root, findings, results, config, man) {
+    const pkgs = [
+        ...new Set(findings
+            .filter((f) => f.exposure === "exposed" || f.exposure === "unmapped")
+            .map((f) => f.package)),
+    ];
+    let evidence = "";
+    for (const pkg of pkgs) {
+        try {
+            const paths = resolveReplacementPaths(root, pkg, man.replacements[pkg], {
+                outDir: config.outDir,
+                envelope: config.replacements[pkg]?.envelope,
+            });
+            const p = join(dirname(paths.evidenceAbs), "evidence.md");
+            if (existsSync(p))
+                evidence += readFileSync(p, "utf8") + "\n";
+        }
+        catch {
+            /* skip */
+        }
+    }
+    if (!evidence.includes("EVIDENCE, NOT PROOF")) {
+        evidence =
+            (evidence ? evidence + "\n" : "") +
+                "EVIDENCE, NOT PROOF — differential fuzzing is evidence, not proof.\n";
+    }
+    const regenerated = results.filter((r) => r.regenerated && r.fuzzed);
+    const unmappedOnly = findings.some((f) => f.exposure === "unmapped") && !regenerated.length;
+    const intro = unmappedOnly
+        ? "Fail-closed: an advisory could not be mapped to used exports. Human must decide. Slim did not write an automatic fix."
+        : regenerated.length && regenerated.length === results.filter((r) => r.pkg).length && results.every((r) => r.fuzzed)
+            ? "Fail-closed: an advisory may expose this repo's slice. Slim regenerated the replacement and fuzzed it."
+            : results.some((r) => r.fuzzSkipReason)
+                ? "Fail-closed: an advisory may expose this repo's slice. verification unavailable: no installable oracle."
+                : "Fail-closed: an advisory may expose this repo's slice.";
+    const fuzzLines = results
+        .map((r) => r.fuzzed && r.fuzz
+        ? `- ${r.pkg}: cases: ${r.fuzz.cases} comparisons: ${r.fuzz.comparisons} timerCases: ${r.fuzz.timerCases}`
+        : `- ${r.pkg}: ${r.fuzzSkipReason ?? "no automatic fix"}`)
+        .join("\n");
+    return `# Slim upstream slice fix
+
+${intro}
+
+EVIDENCE, NOT PROOF — differential fuzzing is evidence, not proof.
+
+## Fuzz
+
+${fuzzLines || "- (no fix attempt)"}
+
+## Findings
+
+\`\`\`json
+${JSON.stringify(findings, null, 2)}
+\`\`\`
+
+## Evidence
+
+${evidence}
+`;
+}
+//# sourceMappingURL=upstream.js.map

@@ -1,0 +1,563 @@
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
+import { spawnSync } from "node:child_process";
+import { resolveScriptFile, scriptSpawnOpts } from "./rewrite/lockfile.js";
+import { inspect } from "node:util";
+import { randomInt } from "node:crypto";
+import { tmpdir } from "node:os";
+import { EXIT_FAIL, EXIT_OK, EXIT_REFUSED, EXIT_USAGE, SlimExit } from "./exit.js";
+import { loadConfig } from "./config.js";
+import { loadProject, walkSourceFiles, filterSourceFiles, loadTargetTypescript } from "./project.js";
+import { analyzePackage } from "./analyze/index.js";
+import { closeEnvelope } from "./envelope/close.js";
+import { hashEnvelope } from "./envelope/hash.js";
+import { envelopeForDisk } from "./envelope/types.js";
+import { assertDocument } from "./schema/documents.js";
+import { refusePackage, formatRefuse } from "./scan/refuse.js";
+import { estimatePackageSize } from "./size/estimate.js";
+import { matchCatalog } from "./generate/catalog/index.js";
+import { catalogBoundary } from "./generate/catalog/boundary.js";
+import { assembleCatalogModule } from "./generate/assemble.js";
+import { withGeneratedHeader } from "./generate/header.js";
+import { llmConfigFromEnv, generateWithLlm } from "./generate/llm.js";
+import { assertValidGenerated, assertSmaller } from "./generate/validate.js";
+import { loadPublicApi } from "./generate/public-api.js";
+import { runFuzz } from "./fuzz/run.js";
+import { repairLoop } from "./generate/repair.js";
+import { rewriteSpecifiers as spliceSpecifiers } from "./rewrite/splice.js";
+import { removeDependencyKey } from "./rewrite/packagejson.js";
+import { installCommandFor, refreshLockfile, shouldRefreshLockfile } from "./rewrite/lockfile.js";
+import { writeEvidence } from "./evidence/report.js";
+import { emitHardenedGetSetTest, emitStandingTests } from "./evidence/emit-tests.js";
+import { maybeCreatePullRequest, prBodyFromEvidence, REPLACE_PR_LABELS } from "./github/pr.js";
+import { detectRunner } from "./trace/runners.js";
+import { runTraces, withLocalBinPath, writeTracesMeta } from "./trace/run.js";
+import { MutationTxn, lockfilePath } from "./rewrite/transaction.js";
+import { rewriteSpecifiers as envelopeSpecifiers, removeDependencyNames } from "./rewrite/siblings.js";
+import { assertGeneratedOutputSafe, assertInsideRoot, fileBase, isSafeToRewrite, } from "./rewrite/paths.js";
+import { emitCjsSource, isCjsConsumer } from "./rewrite/cjs-emit.js";
+export { withLocalBinPath, writeTracesMeta };
+/** ponytail: qualification inject; not a public flag */
+function injectFail(step) {
+    if (process.env.SLIM_INJECT_FAIL === step) {
+        throw new SlimExit(EXIT_FAIL, `injected failure: ${step}`);
+    }
+}
+function refuseCatalogBoundary(env, args) {
+    if (args.force || !args.pkg)
+        return;
+    const boundary = catalogBoundary(env, args.pkg);
+    if (boundary) {
+        throw new SlimExit(EXIT_REFUSED, formatRefuse(boundary));
+    }
+}
+export async function runReplace(args) {
+    if (!args.pkg)
+        throw new SlimExit(EXIT_USAGE, "usage: slim replace <pkg>");
+    const project = loadProject();
+    const config = loadConfig(project.root);
+    const refuse = refusePackage(args.pkg);
+    if (refuse && !args.force) {
+        process.stderr.write(formatRefuse(refuse) + "\n");
+        return EXIT_REFUSED;
+    }
+    process.stderr.write(`analyzing ${args.pkg}…\n`);
+    let env = analyzePackage(project, args.pkg, {
+        allowUnknown: args.allowUnknown,
+        include: config.include,
+        ignore: config.ignore,
+    });
+    refuseCatalogBoundary(env, args);
+    const outDir = args.out ?? config.outDir;
+    const outAbs = assertInsideRoot(project.root, outDir);
+    const base = fileBase(env.package.name);
+    const slimPath = join(outAbs, `${base}.ts`);
+    assertGeneratedOutputSafe(project.root, slimPath, [
+        slimPath,
+        join(outAbs, `${base}.cjs`),
+        join(outAbs, `${base}.test.ts`),
+        join(outAbs, `${base}.hardened.test.ts`),
+    ], env.package.name);
+    if (!args.noTrace) {
+        const traceDir = mkdtempSync(join(tmpdir(), "slim-trace-"));
+        try {
+            env = runTraces(project.root, args.pkg, env, { traceDir });
+        }
+        finally {
+            rmSync(traceDir, { recursive: true, force: true });
+        }
+        env = closeEnvelope(env, { allowUnknown: args.allowUnknown });
+    }
+    else {
+        env = closeEnvelope(env, { allowUnknown: args.allowUnknown, staticOnly: true });
+    }
+    assertNoPollutionDependence(env.traces);
+    if (!env.symbols.length) {
+        const rec = config.replacements[args.pkg] ?? config.replacements[env.package.name];
+        if (rec?.module && existsSync(join(project.root, rec.module))) {
+            process.stdout.write(`already replaced ${env.package.name} (${rec.module}); nothing to do\n`);
+            return EXIT_OK;
+        }
+    }
+    if (env.slimmable.verdict === "refuse" && !args.force) {
+        throw new SlimExit(EXIT_REFUSED, `refused ${args.pkg}: ${env.slimmable.blockers.join("; ") || env.closure.reason}`);
+    }
+    if (!env.closure.readyToGenerate && !args.force) {
+        throw new SlimExit(EXIT_REFUSED, `envelope not closed: ${env.closure.reason}`);
+    }
+    if (!env.symbols.length) {
+        throw new SlimExit(EXIT_FAIL, `no used symbols found for ${args.pkg}`);
+    }
+    const symbols = env.symbols.map((s) => s.exportName).filter((n) => n !== "*" && n !== "(scan)");
+    const catalog = matchCatalog(args.pkg, symbols);
+    refuseCatalogBoundary(env, args);
+    const llm = llmConfigFromEnv();
+    let source;
+    let catalogIds = [];
+    let usedCatalog = false;
+    let publicApi;
+    let promptHash;
+    let genAttempts = 1;
+    let genExamples = [];
+    if (!args.llm && catalog.missing.length === 0 && catalog.matched.length) {
+        const assembled = assembleCatalogModule(env, project.root);
+        if (!assembled) {
+            throw new SlimExit(EXIT_FAIL, "catalog matched but assemble failed");
+        }
+        source = assembled;
+        catalogIds = catalog.matched.map((m) => m.id);
+        usedCatalog = true;
+    }
+    else if (args.templateOnly || (!llm && catalog.missing.length)) {
+        throw new SlimExit(EXIT_REFUSED, `no catalog for ${catalog.missing.join(", ") || args.pkg} and no LLM key (set OPENAI_API_KEY or ANTHROPIC_API_KEY)`);
+    }
+    else if (!llm) {
+        throw new SlimExit(EXIT_REFUSED, "LLM requested but no API key");
+    }
+    else {
+        process.stderr.write("generating with LLM (clean-room)…\n");
+        publicApi = loadPublicApi(project.root, env.package.name, env.package.subpath);
+        const gen = await generateWithLlm(env, publicApi, [], llm);
+        source = withGeneratedHeader(gen.source, env, { promptHash: gen.promptHash });
+        promptHash = gen.promptHash;
+    }
+    const ts = loadTargetTypescript(project.root);
+    assertValidGenerated(ts, source, env);
+    const originalSize = estimatePackageSize(project.root, env.package.name);
+    const replacementBytes = Buffer.byteLength(source);
+    if (!usedCatalog) {
+        assertSmaller(replacementBytes, originalSize.minBytes ?? 0, args.force);
+    }
+    const seed = args.seed ?? randomInt(1, 2 ** 31);
+    const budget = args.budgetMs ?? config.budgetMs;
+    if (args.dryRun) {
+        printDryRun(env, source, catalogIds);
+        return EXIT_OK;
+    }
+    const transpile = (src) => ts.transpileModule(src, {
+        compilerOptions: {
+            module: ts.ModuleKind.ESNext,
+            target: ts.ScriptTarget.ES2022,
+            moduleResolution: ts.ModuleResolutionKind.NodeNext,
+        },
+        fileName: slimPath,
+    }).outputText;
+    const tmpSlim = join(tmpdir(), `slim-fuzz-${process.pid}-${randomInt(1e9)}.mjs`);
+    const fuzzSource = async (src, hashExtra = "") => {
+        writeFileSync(tmpSlim, transpile(src));
+        return runFuzz({
+            origModule: env.package.name,
+            slimModule: tmpSlim,
+            slimHash: `${hashEnvelope(env)}:${seed}${hashExtra}`,
+            envelope: env,
+            budgetMs: budget,
+            seed,
+            workers: args.workers ?? undefined,
+            allowFlaky: args.allowFlaky,
+            projectRoot: project.root,
+        });
+    };
+    process.stderr.write(`fuzzing (budget ${budget}ms, seed ${seed})…\n`);
+    let report;
+    try {
+        if (!usedCatalog && llm) {
+            publicApi ??= loadPublicApi(project.root, env.package.name, env.package.subpath);
+            const repaired = await repairLoop({
+                envelope: env,
+                publicApi,
+                initial: source,
+                maxAttempts: args.maxAttempts,
+                llm,
+                projectRoot: project.root,
+                catalog: false,
+                fuzz: (src) => fuzzSource(src),
+            });
+            source = repaired.source;
+            report = repaired.report;
+            genAttempts = repaired.attempts;
+            genExamples = repaired.examples;
+            promptHash = repaired.promptHash ?? promptHash;
+        }
+        else {
+            report = await fuzzSource(source);
+        }
+    }
+    finally {
+        try {
+            unlinkSync(tmpSlim);
+        }
+        catch {
+            /* gone */
+        }
+    }
+    if (report.disagreements.length) {
+        const first = report.disagreements[0];
+        const argsPreview = inspect(first.args, { depth: 4, breakLength: 80, maxArrayLength: 8 });
+        const msg = usedCatalog
+            ? `catalog disagreement (Slim bug, not LLM-patched): ${first.symbol} ${first.reason}\n${argsPreview}`
+            : `fuzz disagreements remain: ${first.symbol} ${first.reason}`;
+        throw new SlimExit(EXIT_FAIL, msg);
+    }
+    const txn = new MutationTxn(project.root);
+    const fromSpecs = envelopeSpecifiers(env, args.pkg);
+    const declared = [
+        ...Object.keys(project.packageJson.dependencies ?? {}),
+        ...Object.keys(project.packageJson.devDependencies ?? {}),
+        ...Object.keys(project.packageJson.optionalDependencies ?? {}),
+    ];
+    const removeNames = args.keepOriginal ? new Set() : removeDependencyNames(env, declared);
+    const pkgType = project.packageJson.type;
+    const files = filterSourceFiles(walkSourceFiles(project.root), project.root, {
+        include: config.include,
+        ignore: config.ignore,
+    }).filter((f) => {
+        if (f === slimPath || f.endsWith(".tmp.mjs"))
+            return false;
+        if (f === outAbs || f.startsWith(outAbs + sep))
+            return false;
+        return true;
+    });
+    for (const f of files) {
+        if (!isSafeToRewrite(project.root, f)) {
+            throw new SlimExit(EXIT_USAGE, `unsafe write: ${relative(project.root, f).replace(/\\/g, "/")} escapes the project, is a symlink, or is a special file`);
+        }
+    }
+    const needsCjs = files.some((f) => isCjsConsumer(f, pkgType));
+    const cjsPath = needsCjs ? join(outAbs, `${fileBase(env.package.name)}.cjs`) : null;
+    const standingTestRel = relative(project.root, join(outAbs, `${fileBase(env.package.name)}.test.ts`)).replace(/\\/g, "/");
+    const moduleRel = relative(project.root, slimPath).replace(/\\/g, "/");
+    const cjsRel = cjsPath ? relative(project.root, cjsPath).replace(/\\/g, "/") : null;
+    let slimFiles = [];
+    try {
+        txn.writeFile(slimPath, source);
+        if (cjsPath) {
+            txn.writeFile(cjsPath, emitCjsSource(ts, source, cjsPath));
+        }
+        injectFail("after-slice");
+        const changed = [];
+        const rewrites = [];
+        for (const file of files) {
+            const dest = needsCjs && isCjsConsumer(file, pkgType) && cjsPath ? cjsPath : slimPath;
+            const rel = toRelativeSpecifier(file, dest);
+            const src = readFileSync(file, "utf8");
+            const next = spliceSpecifiers(ts, src, file, fromSpecs, rel);
+            if (next.changed) {
+                txn.writeFile(file, next.text);
+                changed.push(file);
+                const orig = env.imports.find((i) => join(project.root, i.loc.file) === file)?.specifier;
+                rewrites.push({
+                    file: relative(project.root, file).replace(/\\/g, "/"),
+                    original: orig ?? env.package.name,
+                    replacement: rel,
+                });
+            }
+        }
+        injectFail("after-rewrites");
+        txn.snapshot(project.packageJsonPath);
+        if (!args.keepOriginal) {
+            let pkgText = readFileSync(project.packageJsonPath, "utf8");
+            let removed = false;
+            for (const name of removeNames) {
+                const next = removeDependencyKey(pkgText, name);
+                if (next.removed) {
+                    pkgText = next.text;
+                    removed = true;
+                }
+            }
+            if (removed)
+                txn.writeFile(project.packageJsonPath, pkgText);
+        }
+        const lf = lockfilePath(project.root, project.lockfile);
+        if (lf)
+            txn.snapshot(lf);
+        if (shouldRefreshLockfile({ keepOriginal: args.keepOriginal, noInstall: args.noInstall })) {
+            refreshLockfile(project);
+            txn.lockfileRefreshed = true;
+        }
+        injectFail("after-lockfile");
+        const holes = coverageHoles(env);
+        const revert = {
+            package: env.package.name,
+            version: env.package.version,
+            module: moduleRel,
+            tests: standingTestRel,
+            cjsCompanion: cjsRel,
+            rewrites,
+            lockfile: project.lockfile,
+            installCommand: installCommandFor(project.lockfile),
+        };
+        const runner = detectRunner(project.root);
+        const testRunner = runner.kind === "vitest" ? "vitest" : "node:test";
+        const testAbs = join(project.root, standingTestRel);
+        txn.prepareWrite(testAbs);
+        const modSpec = toRelativeSpecifier(testAbs, slimPath);
+        emitStandingTests({
+            root: project.root,
+            outDir,
+            pkg: fileBase(env.package.name),
+            env,
+            traces: env.traces,
+            runner: testRunner,
+            moduleSpecifier: modSpec,
+        });
+        const hardenedAbs = slimPath.replace(/\.(ts|js|mjs|cjs)$/, ".hardened.test.ts");
+        txn.prepareWrite(hardenedAbs);
+        emitHardenedGetSetTest({
+            root: project.root,
+            moduleRel: relative(project.root, slimPath),
+            runner: testRunner,
+        });
+        injectFail("after-standing");
+        const evidenceDir = join(project.root, ".slim", env.package.name);
+        txn.prepareWrite(join(evidenceDir, "evidence.md"));
+        txn.prepareWrite(join(evidenceDir, "evidence.json"));
+        writeEvidence({
+            root: project.root,
+            env,
+            replacementBytes: Buffer.byteLength(source),
+            originalMin: originalSize.minBytes,
+            moduleSource: source,
+            fuzz: {
+                cases: report.cases,
+                comparisons: report.comparisons,
+                timerCases: report.timerCases,
+                tracesReplayed: report.tracesReplayed,
+                wallMs: report.wallMs,
+                seed: report.seed,
+                disagreements: report.disagreements.length,
+                ...(report.allowFlaky ? { allowFlaky: true } : {}),
+            },
+            catalogIds,
+            coverageHoles: holes,
+            revert,
+            generation: usedCatalog
+                ? {
+                    kind: "catalog",
+                    catalogIds,
+                    attempts: 1,
+                    specSource: "catalog",
+                    counterexamples: [],
+                }
+                : {
+                    kind: "llm",
+                    catalogIds: [],
+                    provider: llm?.kind,
+                    model: llm?.model,
+                    promptHash,
+                    attempts: genAttempts,
+                    specSource: publicApi?.source ?? "envelope-only",
+                    limitation: publicApi?.limitation,
+                    counterexamples: genExamples,
+                },
+        });
+        injectFail("after-evidence");
+        txn.prepareWrite(join(project.root, ".slim", "manifest.json"));
+        writeManifest(project.root, env, slimPath);
+        txn.prepareWrite(join(project.root, "slim.json"));
+        writeSlimJson(project.root, env, slimPath);
+        const pkgSlimDir = join(project.root, ".slim", env.package.name);
+        txn.prepareWrite(join(pkgSlimDir, "envelope.json"));
+        const disk = envelopeForDisk(env);
+        assertDocument("envelope", disk);
+        writeFileSync(join(pkgSlimDir, "envelope.json"), JSON.stringify(disk, null, 2) + "\n");
+        txn.prepareWrite(join(pkgSlimDir, "traces.meta.json"));
+        writeTracesMeta(pkgSlimDir);
+        injectFail("after-manifest");
+        process.stdout.write(`wrote ${relative(project.root, slimPath)}  (${replacementBytes} B, hash ${hashEnvelope(env).slice(0, 12)}…)\n`);
+        process.stdout.write(`fuzz cases=${report.cases} comparisons=${report.comparisons} timerCases=${report.timerCases}\n`);
+        process.stdout.write("EVIDENCE, NOT PROOF — see .slim/" + env.package.name + "/evidence.md\n");
+        if (changed.length)
+            process.stdout.write(`rewrote ${changed.length} import files\n`);
+        if (shouldRunMergeGate(args)) {
+            runMergeGate(project.root, config.testCommand);
+        }
+        slimFiles = txn.mutatedPaths();
+        txn.commit();
+    }
+    catch (err) {
+        const ranInstall = txn.lockfileRefreshed;
+        txn.rollback();
+        if (ranInstall) {
+            try {
+                refreshLockfile(project, { keepOriginal: false, noInstall: false, frozen: true });
+            }
+            catch {
+                process.stderr.write("lockfile restored; node_modules may need a manual install\n");
+            }
+        }
+        throw err;
+    }
+    if (!args.noPr) {
+        const pr = await maybeCreatePullRequest(!args.noPr, {
+            root: project.root,
+            title: `slim: replace ${env.package.name} with a verified slice`,
+            body: prBodyFromEvidence(project.root, env.package.name),
+            branch: `slim/${fileBase(env.package.name)}`,
+            files: slimFiles,
+            labels: [...REPLACE_PR_LABELS],
+            kind: "replace",
+            pkg: env.package.name,
+        });
+        if (pr?.url)
+            process.stdout.write(pr.url + "\n");
+    }
+    return EXIT_OK;
+}
+export function shouldRunMergeGate(opts) {
+    return !opts.dryRun;
+}
+export function runMergeGate(root, testCommand, json = false) {
+    let cmd = testCommand?.trim() || null;
+    if (!cmd) {
+        try {
+            const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+            cmd = pkg.scripts?.test?.trim() || null;
+        }
+        catch {
+            cmd = null;
+        }
+    }
+    if (!cmd)
+        return;
+    const parts = cmd.split(/\s+/).filter(Boolean);
+    const file = resolveScriptFile(parts[0]);
+    const r = spawnSync(file, parts.slice(1), {
+        cwd: root,
+        encoding: "utf8",
+        stdio: json ? ["ignore", "pipe", "pipe"] : "inherit",
+        env: withLocalBinPath(root),
+        ...scriptSpawnOpts(file),
+    });
+    if (json) {
+        if (r.stdout)
+            process.stderr.write(r.stdout);
+        if (r.stderr)
+            process.stderr.write(r.stderr);
+    }
+    if (r.status !== 0) {
+        throw new SlimExit(EXIT_FAIL, `merge gate failed: tests exited ${r.status ?? "signal"}`);
+    }
+}
+const PROTO = "__proto__";
+function pathHasProtoSegment(path) {
+    if (!path)
+        return false;
+    if (path.t === "str")
+        return path.v.split(/[./]/).includes(PROTO);
+    if (path.t === "arr") {
+        return path.v.some((el) => {
+            if (el.t === "str")
+                return el.v === PROTO || el.v.split(/[./]/).includes(PROTO);
+            return pathHasProtoSegment(el);
+        });
+    }
+    return false;
+}
+export function assertNoPollutionDependence(traces) {
+    for (const t of traces) {
+        if (t.symbol !== "get" && t.symbol !== "set")
+            continue;
+        if (!pathHasProtoSegment(t.args[1]))
+            continue;
+        throw new SlimExit(EXIT_FAIL, `prototype pollution: traces show ${t.symbol} depending on __proto__ ` +
+            `(original returned a polluted object or mutated Object.prototype). ` +
+            `Slim replacements are hardened and will not reproduce this. ` +
+            `Remove __proto__ paths from runtime usage or do not replace this package.`);
+    }
+}
+function toRelativeSpecifier(fromFile, toFile) {
+    let rel = relative(dirname(fromFile), toFile).replace(/\\/g, "/");
+    if (!rel.startsWith("."))
+        rel = "./" + rel;
+    return rel;
+}
+function coverageHoles(env) {
+    const holes = [];
+    for (const s of env.symbols) {
+        if (s.exportName === "debounce") {
+            const opts = s.callSites.some((c) => (c.argc.max ?? 0) >= 3);
+            if (!opts)
+                holes.push("debounce options (maxWait/leading) never observed; taxonomy still run in Slim CI");
+            const cancel = s.resultMembers.includes("cancel") || s.callSites.some((c) => c.resultMembers.includes("cancel"));
+            if (!cancel)
+                holes.push("debounce.cancel never accessed at call sites");
+        }
+    }
+    if (!env.traces.length)
+        holes.push("zero traces replayed");
+    return holes;
+}
+function writeManifest(root, env, modulePath) {
+    const p = join(root, ".slim", "manifest.json");
+    let man = {
+        schemaVersion: 1,
+        replacements: {},
+    };
+    if (existsSync(p)) {
+        try {
+            const raw = JSON.parse(readFileSync(p, "utf8"));
+            man = {
+                schemaVersion: 1,
+                replacements: raw.replacements && typeof raw.replacements === "object" ? raw.replacements : {},
+            };
+        }
+        catch {
+            /* reset */
+        }
+    }
+    man.replacements[env.package.name] = {
+        version: env.package.version,
+        envelopeHash: hashEnvelope(env),
+        symbols: env.symbols.map((s) => s.exportName),
+        module: relative(root, modulePath),
+    };
+    mkdirSync(dirname(p), { recursive: true });
+    assertDocument("manifest", man);
+    writeFileSync(p, JSON.stringify(man, null, 2) + "\n");
+}
+function writeSlimJson(root, env, modulePath) {
+    const p = join(root, "slim.json");
+    const cur = existsSync(p)
+        ? {
+            replacements: {},
+            ...JSON.parse(readFileSync(p, "utf8")),
+        }
+        : { outDir: "src/slim", replacements: {} };
+    cur.replacements = cur.replacements ?? {};
+    cur.replacements[env.package.name] = {
+        version: env.package.version,
+        envelope: `.slim/${env.package.name}/envelope.json`,
+        module: relative(root, modulePath),
+    };
+    assertDocument("slim", cur);
+    writeFileSync(p, JSON.stringify(cur, null, 2) + "\n");
+}
+function printDryRun(env, source, ids) {
+    process.stdout.write(`dry-run ${env.package.name} symbols=${env.symbols.map((s) => s.exportName).join(",")}\n`);
+    process.stdout.write(`catalog ${ids.join(",") || "llm"}\n`);
+    if (env.closure.reason.includes("--no-trace")) {
+        process.stdout.write("static-only --no-trace (cannot claim trace-closed)\n");
+    }
+    process.stdout.write(`---\n${source.slice(0, 2000)}\n`);
+}
+//# sourceMappingURL=replace.js.map

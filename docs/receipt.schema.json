@@ -40,6 +40,8 @@
     "npmDigest": { "type": ["string", "null"] },
     "actionDigest": { "type": ["string", "null"] },
     "workflowRun": { "type": ["string", "null"] },
-    "logDigest": { "type": "string", "minLength": 64, "maxLength": 64 }
+    "logDigest": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "repository": { "type": ["string", "null"] },
+    "ref": { "type": ["string", "null"] }
   }
 }

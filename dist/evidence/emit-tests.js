@@ -1,0 +1,354 @@
+import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { emptyHyrum } from "../envelope/types.js";
+import { STANDING_RUNTIME } from "./standing-equal.js";
+import { hardeningTestPaths } from "./paths.js";
+export function emitStandingTests(opts) {
+    mkdirSync(join(opts.root, opts.outDir), { recursive: true });
+    const file = join(opts.root, opts.outDir, `${opts.pkg.replace(/\//g, "-")}.test.ts`);
+    const wanted = standingSymbols(opts.env);
+    const pairs = opts.traces.filter((t) => t.symbol &&
+        wanted.has(t.symbol) &&
+        !/[.(]/.test(t.symbol) &&
+        standingPairReplayable(t, opts.env));
+    const body = standingFile(opts.runner, opts.moduleSpecifier, pairs, opts.env);
+    writeFileSync(file, body);
+    const pkgPath = join(opts.root, "package.json");
+    if (existsSync(pkgPath)) {
+        const raw = readFileSync(pkgPath, "utf8");
+        if (!raw.includes("slim:evidence")) {
+            const json = JSON.parse(raw);
+            json.scripts = json.scripts ?? {};
+            json.scripts["slim:evidence"] =
+                opts.runner === "vitest"
+                    ? `vitest run ${relative(opts.root, file)}`
+                    : `node --experimental-strip-types --test ${relative(opts.root, file)}`;
+            writeFileSync(pkgPath, JSON.stringify(json, null, 2) + "\n");
+        }
+    }
+    return file;
+}
+function standingFile(runner, mod, traces, env) {
+    const imports = runner === "vitest"
+        ? `import { test } from "vitest";
+import * as slim from ${JSON.stringify(mod)};
+`
+        : `import { test } from "node:test";
+import * as slim from ${JSON.stringify(mod)};
+`;
+    const hyrumBySymbol = Object.fromEntries(env.symbols.map((s) => [s.exportName, s.hyrum ?? emptyHyrum()]));
+    return `${imports}
+// Frozen I/O pairs. This file must not import the original package.
+const pairs = ${JSON.stringify(traces.map((t) => compactTrace(t, hyrumBySymbol[t.symbol] ?? emptyHyrum())), null, 2)};
+
+${STANDING_RUNTIME}
+test("slim ${env.package.name} frozen pairs", () => {
+  for (const p of pairs) {
+    const fn = (slim as Record<string, unknown>)[p.symbol];
+    if (typeof fn !== "function") continue;
+    checkFrozenPair(fn as Function, p);
+  }
+});
+${debounceBlock(env)}
+${FAKE_CLOCK}
+`.replace(/\n+$/, "\n");
+}
+function compactTrace(t, hyrum) {
+    return {
+        symbol: t.symbol,
+        args: t.args,
+        thisArg: t.thisArg ?? null,
+        threw: t.threw ?? null,
+        result: t.result ?? null,
+        hyrum,
+        ...(t.argsAfter && !t.argsAfter.some((a) => slimValueHasFn(a)) ? { argsAfter: t.argsAfter } : {}),
+        ...(t.thisAfter && !slimValueHasFn(t.thisAfter) ? { thisAfter: t.thisAfter } : {}),
+    };
+}
+function standingSymbols(env) {
+    const out = new Set();
+    for (const s of env.symbols) {
+        if (!s.exportName || s.exportName === "*" || s.exportName === "(scan)")
+            continue;
+        out.add(s.exportName);
+        if (s.exportName === "head")
+            out.add("first");
+        if (s.exportName === "first")
+            out.add("head");
+    }
+    return out;
+}
+/** Drop successful traces whose args/result contain functions; revive cannot reconstruct them. */
+function standingPairReplayable(t, env) {
+    if (t.threw)
+        return true;
+    if (t.args.some(slimValueHasFn))
+        return false;
+    if (t.result && slimValueHasFn(t.result))
+        return false;
+    if (t.result && slimValueNotReviveable(t.result))
+        return false;
+    if (env.cryptoRandom && !hasInjectableRandomArg(t))
+        return false;
+    return true;
+}
+/** URL / Promise / host objects serialize as empty proto:other objects that revive cannot rebuild. */
+function slimValueNotReviveable(v, depth = 0) {
+    if (depth > 24)
+        return false;
+    if (v.t === "promise")
+        return true;
+    if (v.t === "obj" && v.proto === "other" && (v.keys ?? []).length === 0)
+        return true;
+    if (v.t === "arr")
+        return v.v.some((el) => slimValueNotReviveable(el, depth + 1));
+    if (v.t === "obj") {
+        if (Object.values(v.v).some((el) => slimValueNotReviveable(el, depth + 1)))
+            return true;
+        return (v.syms ?? []).some((s) => slimValueNotReviveable(s.v, depth + 1));
+    }
+    if (v.t === "map") {
+        return v.v.some(([k, val]) => slimValueNotReviveable(k, depth + 1) || slimValueNotReviveable(val, depth + 1));
+    }
+    if (v.t === "set")
+        return v.v.some((item) => slimValueNotReviveable(item, depth + 1));
+    return false;
+}
+/** uuid v4({ random }) is replayable; bare nanoid()/v4() is not without a seeded CSPRNG. */
+function hasInjectableRandomArg(t) {
+    for (const a of t.args) {
+        if (a.t !== "obj")
+            continue;
+        const random = a.v?.random;
+        if (random && random.t === "bytes" && (random.b64 || (random.len ?? 0) >= 16))
+            return true;
+    }
+    return false;
+}
+function slimValueHasFn(v, depth = 0) {
+    /* ponytail: depth 24; nested SlimValues beyond that are treated as non-fn. */
+    if (!v || depth > 24)
+        return false;
+    if (v.t === "fn")
+        return true;
+    if (v.t === "arr")
+        return v.v.some((el) => slimValueHasFn(el, depth + 1));
+    if (v.t === "obj") {
+        if (Object.values(v.v).some((el) => slimValueHasFn(el, depth + 1)))
+            return true;
+        return (v.syms ?? []).some((s) => slimValueHasFn(s.v, depth + 1));
+    }
+    if (v.t === "map") {
+        return v.v.some(([k, val]) => slimValueHasFn(k, depth + 1) || slimValueHasFn(val, depth + 1));
+    }
+    if (v.t === "set")
+        return v.v.some((el) => slimValueHasFn(el, depth + 1));
+    return false;
+}
+function debounceBlock(env) {
+    const timer = env.symbols.find((s) => s.exportName === "debounce" || s.exportName === "throttle");
+    if (!timer)
+        return "";
+    const name = timer.exportName;
+    const scripts = ["trailing-single", "cancel-mid", "flush-mid", "flush-empty"];
+    if (observedOptions(timer.callSites)) {
+        scripts.push("leading-only");
+    }
+    const bodies = {
+        "trailing-single": `
+test("debounce trailing-single", () => {
+  const clock = createStandingClock();
+  try {
+    const ${name} = (slim as { ${name}: Function }).${name};
+    let n = 0;
+    let last: unknown;
+    const d = ${name}((x: unknown) => { n++; last = x; }, 32);
+    d("a");
+    clock.advance(32);
+    eq(n, 1);
+    eq(last, "a");
+  } finally {
+    clock.restore();
+  }
+});
+`,
+        "cancel-mid": `
+test("debounce cancel-mid", () => {
+  const clock = createStandingClock();
+  try {
+    const ${name} = (slim as { ${name}: Function }).${name};
+    let n = 0;
+    const d = ${name}(() => { n++; }, 32);
+    d("nope");
+    clock.advance(10);
+    d.cancel();
+    clock.advance(32);
+    eq(n, ${name === "throttle" ? 1 : 0});
+  } finally {
+    clock.restore();
+  }
+});
+`,
+        "flush-mid": `
+test("debounce flush-mid", () => {
+  const clock = createStandingClock();
+  try {
+    const ${name} = (slim as { ${name}: Function }).${name};
+    let n = 0;
+    let last: unknown;
+    const d = ${name}((x: unknown) => { n++; last = x; }, 32);
+    d("flush-me");
+    clock.advance(10);
+    d.flush();
+    eq(n, 1);
+    eq(last, "flush-me");
+    clock.advance(32);
+    eq(n, 1);
+  } finally {
+    clock.restore();
+  }
+});
+`,
+        "flush-empty": `
+test("debounce flush-empty", () => {
+  const clock = createStandingClock();
+  try {
+    const ${name} = (slim as { ${name}: Function }).${name};
+    let n = 0;
+    const d = ${name}(() => { n++; }, 32);
+    const flushed = d.flush();
+    eq(n, 0);
+    eq(flushed, undefined);
+  } finally {
+    clock.restore();
+  }
+});
+`,
+        "leading-only": `
+test("debounce leading-only", () => {
+  const clock = createStandingClock();
+  try {
+    const ${name} = (slim as { ${name}: Function }).${name};
+    let n = 0;
+    let last: unknown;
+    const d = ${name}((x: unknown) => { n++; last = x; }, 32, { leading: true, trailing: false });
+    d("L");
+    clock.advance(10);
+    d("ignored");
+    clock.advance(32);
+    eq(n, 1);
+    eq(last, "L");
+  } finally {
+    clock.restore();
+  }
+});
+`,
+    };
+    return scripts.map((s) => bodies[s] ?? "").join("");
+}
+function observedOptions(callSites) {
+    for (const c of callSites) {
+        if ((c.argc.max ?? 0) >= 3 || c.argc.observed.some((n) => n >= 3))
+            return true;
+        const opts = c.argShapes[2];
+        if (opts && shapeHasOptions(opts))
+            return true;
+    }
+    return false;
+}
+function shapeHasOptions(shape) {
+    if (shape.kind === "object")
+        return true;
+    if (shape.kind === "literal" && shape.literals?.some((v) => v && typeof v === "object"))
+        return true;
+    return false;
+}
+const FAKE_CLOCK = `
+function createStandingClock(): {
+  advance(ms: number): void;
+  restore(): void;
+} {
+  let time = 0;
+  let nextId = 1;
+  const timers = new Map<number, { cb: () => void; when: number }>();
+  const savedNow = Date.now;
+  const savedSet = globalThis.setTimeout;
+  const savedClear = globalThis.clearTimeout;
+  Date.now = () => time;
+  globalThis.setTimeout = ((cb: () => void, ms?: number) => {
+    const id = nextId++;
+    timers.set(id, { cb, when: time + (Number(ms) || 0) });
+    return id as unknown as ReturnType<typeof setTimeout>;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((id: ReturnType<typeof setTimeout>) => {
+    timers.delete(id as unknown as number);
+  }) as typeof clearTimeout;
+  return {
+    advance(ms: number) {
+      time += ms;
+      let progressed = true;
+      while (progressed) {
+        progressed = false;
+        for (const [id, timer] of [...timers]) {
+          if (timer.when <= time) {
+            timers.delete(id);
+            timer.cb();
+            progressed = true;
+          }
+        }
+      }
+    },
+    restore() {
+      Date.now = savedNow;
+      globalThis.setTimeout = savedSet;
+      globalThis.clearTimeout = savedClear;
+      timers.clear();
+    },
+  };
+}
+`;
+export function emitHardenedGetSetTest(opts) {
+    const absMod = join(opts.root, opts.moduleRel);
+    const { tsAbs } = hardeningTestPaths(opts.root, opts.moduleRel);
+    mkdirSync(dirname(tsAbs), { recursive: true });
+    const spec = `./${absMod.slice(dirname(absMod).length + 1)}`;
+    const vitest = opts.runner === "vitest";
+    const header = vitest
+        ? `import { test, expect } from "vitest";
+import * as slim from ${JSON.stringify(spec)};`
+        : `import { test } from "node:test";
+import assert from "node:assert/strict";
+import * as slim from ${JSON.stringify(spec)};`;
+    const checks = vitest
+        ? `    expect(Object.prototype.hasOwnProperty("polluted")).toBe(before);
+    expect(proto.polluted).toBeUndefined();
+    expect(({} as { polluted?: unknown }).polluted).toBeUndefined();`
+        : `    assert.equal(Object.prototype.hasOwnProperty("polluted"), before);
+    assert.equal(proto.polluted, undefined);
+    assert.equal(({} as { polluted?: unknown }).polluted, undefined);`;
+    writeFileSync(tsAbs, `${header}
+
+test("hardened get/set ignore __proto__ and do not pollute Object.prototype", () => {
+  const get = (slim as { get?: Function }).get;
+  const set = (slim as { set?: Function }).set;
+  if (typeof get !== "function" && typeof set !== "function") return;
+  const proto = Object.prototype as { polluted?: unknown };
+  const before = Object.prototype.hasOwnProperty("polluted");
+  delete proto.polluted;
+  try {
+    if (typeof set === "function") {
+      set({}, "__proto__.polluted", true);
+      set({}, ["__proto__", "polluted"], true);
+    }
+    if (typeof get === "function") {
+      get({ a: 1 }, "__proto__.polluted");
+    }
+${checks}
+  } finally {
+    delete proto.polluted;
+  }
+});
+`);
+    return tsAbs;
+}
+//# sourceMappingURL=emit-tests.js.map

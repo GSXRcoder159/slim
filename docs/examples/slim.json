@@ -1,9 +1,0 @@
-{
-  "$schema": "../slim.schema.json",
-  "outDir": "src/slim",
-  "budgetMs": 30000,
-  "testCommand": null,
-  "include": [],
-  "ignore": [],
-  "replacements": {}
-}

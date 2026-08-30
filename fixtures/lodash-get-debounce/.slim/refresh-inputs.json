@@ -1,8 +1,0 @@
-{
-  "seed": 1,
-  "workers": 1,
-  "budgetMs": 30000,
-  "templateOnly": true,
-  "lodashVersion": "4.17.21",
-  "package": "lodash"
-}

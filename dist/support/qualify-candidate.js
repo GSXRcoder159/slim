@@ -1,0 +1,130 @@
+/**
+ * MIT License
+ *
+ * Candidate qualification: identity, pack, local emit, optional live, inventory gate.
+ */
+import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { EXIT_FAIL, EXIT_REFUSED, SlimExit } from "../exit.js";
+import { EXPECTED_REGISTRY, assertCleanTree, assertMigrationGuidance, assertPackageIdentity, assertRegistry, assertVersionIdentity, assertWorkflowPermissions, packageVersion, readReleaseWorkflow, versionTag, } from "../release/identity.js";
+import { collectOsNodeReceipts, emitLocalReceipts, packAndDigest, removePackDir, } from "./emit-local.js";
+import { loadInventory } from "./inventory.js";
+import { qualifyInventory, } from "./receipts.js";
+export const LIVE_GATES = [
+    { env: "SLIM_LLM_LIVE", file: "test/llm-live.test.ts" },
+    { env: "SLIM_UPSTREAM_LIVE", file: "test/upstream-live.test.ts" },
+    { env: "SLIM_PR_LIVE", file: "test/github/pr-live.test.ts" },
+    { env: "SLIM_ACTION_LIVE", file: "test/github/action-live.test.ts" },
+    { env: "SLIM_RELEASE_LIVE", file: "test/release-live.test.ts" },
+];
+export function liveTestFiles(env = process.env) {
+    return LIVE_GATES.filter((g) => env[g.env] === "1").map((g) => g.file);
+}
+function defaultRunLive(root, files, env) {
+    if (!files.length)
+        return;
+    const r = spawnSync(process.execPath, ["--experimental-strip-types", "--test", ...files], {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 600_000,
+        env,
+    });
+    if (r.status !== 0) {
+        throw new SlimExit(EXIT_FAIL, `live checks failed\n${r.stdout ?? ""}\n${r.stderr ?? ""}`);
+    }
+}
+export function runQualifyCandidate(opts) {
+    const env = opts.env ?? process.env;
+    const inventory = loadInventory();
+    const written = [];
+    if (opts.mode === "collect") {
+        const fromDir = opts.fromDir ?? opts.receiptsDir;
+        collectOsNodeReceipts(fromDir, opts.receiptsDir);
+        const candidate = {
+            commit: opts.commit,
+            npmDigest: opts.npmDigest ?? env.SLIM_NPM_DIGEST ?? null,
+            actionDigest: opts.actionDigest ?? env.SLIM_ACTION_DIGEST ?? null,
+        };
+        const scoped = opts.osNodeOnly
+            ? { schemaVersion: 1, entries: inventory.entries.filter((e) => e.kind === "osNode") }
+            : inventory;
+        return {
+            failures: qualifyInventory(scoped, opts.receiptsDir, candidate),
+            npmDigest: candidate.npmDigest,
+            actionDigest: candidate.actionDigest,
+            written,
+        };
+    }
+    assertCleanTree(opts.root);
+    assertVersionIdentity({ root: opts.root, tag: versionTag(packageVersion(opts.root)) });
+    assertMigrationGuidance(opts.root);
+    assertPackageIdentity(opts.root);
+    assertRegistry(opts.registryUrl ?? env.npm_config_registry ?? EXPECTED_REGISTRY);
+    assertWorkflowPermissions(readReleaseWorkflow(opts.root));
+    let packDir;
+    let npmDigest = opts.npmDigest ?? env.SLIM_NPM_DIGEST ?? null;
+    let actionDigest = opts.actionDigest ?? env.SLIM_ACTION_DIGEST ?? null;
+    if (!npmDigest || !actionDigest) {
+        const packed = opts.pack ? opts.pack() : packAndDigest(opts.root);
+        npmDigest = packed.npmDigest;
+        actionDigest = packed.actionDigest;
+        packDir = packed.packDir;
+    }
+    try {
+        const candidate = {
+            commit: opts.commit,
+            npmDigest,
+            actionDigest,
+        };
+        const emitted = emitLocalReceipts({
+            inventory,
+            receiptsDir: opts.receiptsDir,
+            candidate,
+            root: opts.root,
+            runCheck: opts.runCheck,
+            env,
+        });
+        written.push(...emitted.written);
+        if (emitted.failed.length) {
+            throw new SlimExit(EXIT_FAIL, `local checks failed: ${emitted.failed.join(", ")}`);
+        }
+        const liveFiles = liveTestFiles(env);
+        if (liveFiles.length) {
+            const liveEnv = {
+                ...env,
+                SLIM_RECEIPTS_DIR: opts.receiptsDir,
+                SLIM_CANDIDATE_COMMIT: opts.commit,
+                SLIM_NPM_DIGEST: npmDigest ?? "",
+                SLIM_ACTION_DIGEST: actionDigest ?? "",
+            };
+            const runLive = opts.runLiveFiles ?? ((files, e) => defaultRunLive(opts.root, files, e));
+            runLive(liveFiles, liveEnv);
+        }
+        const scoped = opts.osNodeOnly
+            ? { schemaVersion: 1, entries: inventory.entries.filter((e) => e.kind === "osNode") }
+            : inventory;
+        return {
+            failures: qualifyInventory(scoped, opts.receiptsDir, candidate),
+            npmDigest,
+            actionDigest,
+            written,
+        };
+    }
+    finally {
+        if (packDir && existsSync(packDir))
+            removePackDir(packDir);
+    }
+}
+export function throwIfUnqualified(failures) {
+    if (!failures.length)
+        return;
+    const lines = failures.map((f) => `${f.entryId}: ${f.reason}`).join("\n");
+    throw new SlimExit(EXIT_FAIL, `stale or missing receipts\n${lines}`);
+}
+export function requireCommit(commit) {
+    if (!commit || commit.length !== 40 || !/^[0-9a-f]{40}$/.test(commit)) {
+        throw new SlimExit(EXIT_REFUSED, "qualify-candidate: --commit (40-char sha) is required");
+    }
+    return commit;
+}
+//# sourceMappingURL=qualify-candidate.js.map

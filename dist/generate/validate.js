@@ -1,0 +1,732 @@
+import { SlimExit, EXIT_FAIL, EXIT_REFUSED } from "../exit.js";
+const FORBIDDEN_IDS = new Set([
+    "eval",
+    "Function",
+    "WebAssembly",
+    "Proxy",
+    "fetch",
+    "require",
+]);
+const FORBIDDEN_CALLEES = new Set(["eval", "Function"]);
+const ALLOWED_GLOBALS = new Set([
+    "Math",
+    "Number",
+    "String",
+    "JSON",
+    "Map",
+    "Set",
+    "Reflect",
+    "Date",
+    "setTimeout",
+    "clearTimeout",
+    "setInterval",
+    "clearInterval",
+    "Promise",
+    "Object",
+    "Array",
+    "Boolean",
+    "Symbol",
+    "RegExp",
+    "Error",
+    "TypeError",
+    "RangeError",
+    "parseInt",
+    "parseFloat",
+    "isNaN",
+    "isFinite",
+    "undefined",
+    "NaN",
+    "Infinity",
+    "globalThis",
+    "crypto",
+    "arguments",
+    "Uint8Array",
+    "ArrayBuffer",
+    "DataView",
+    "URL",
+    "URLSearchParams",
+]);
+const REFLECT_METHODS = new Set(["get", "set", "has", "ownKeys"]);
+const THROW_CTORS = new Set(["Error", "TypeError", "RangeError"]);
+const TIMER_FNS = new Set(["setTimeout", "clearTimeout", "setInterval", "clearInterval"]);
+const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const HOST_GLOBALS = new Set(["globalThis", "global", "window"]);
+export function validateGenerated(ts, source, fileNameOrOpts = "slim-generated.ts") {
+    const opts = typeof fileNameOrOpts === "string" ? { fileName: fileNameOrOpts } : (fileNameOrOpts ?? {});
+    const fileName = opts.fileName ?? "slim-generated.ts";
+    const envelope = opts.envelope;
+    const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+    const errors = [];
+    const allowBuffer = envelope?.env.includes("node") === true;
+    const hardened = hasHardenedGetSetHas(ts, sf);
+    if (exportsTimerWrapper(ts, sf)) {
+        checkCachedTimers(ts, sf, errors);
+    }
+    const moduleScope = { names: new Set(["arguments"]), aliases: new Map() };
+    collectScopeBindings(ts, sf, moduleScope.names, { letConst: true, vars: true, functions: true });
+    const visit = (node, stack) => {
+        if (entersFunctionScope(ts, node)) {
+            const fnScope = { names: new Set(), aliases: new Map() };
+            if (!ts.isArrowFunction(node))
+                fnScope.names.add("arguments");
+            if (node.name && ts.isIdentifier(node.name))
+                fnScope.names.add(node.name.text);
+            for (const p of node.parameters)
+                addBinding(ts, p.name, fnScope.names);
+            if (node.body)
+                collectVarsAndFuncs(ts, node.body, fnScope.names);
+            const inner = [...stack, fnScope];
+            for (const p of node.parameters) {
+                if (p.initializer)
+                    visit(p.initializer, inner);
+                if (p.type)
+                    visit(p.type, inner);
+            }
+            if (node.body)
+                visit(node.body, inner);
+            return;
+        }
+        if (ts.isBlock(node)) {
+            const blockScope = { names: new Set(), aliases: new Map() };
+            collectScopeBindings(ts, node, blockScope.names, { letConst: true, vars: false, functions: false });
+            const inner = [...stack, blockScope];
+            for (const stmt of node.statements)
+                visit(stmt, inner);
+            return;
+        }
+        if (ts.isCatchClause(node)) {
+            const catchScope = { names: new Set(), aliases: new Map() };
+            if (node.variableDeclaration)
+                addBinding(ts, node.variableDeclaration.name, catchScope.names);
+            visit(node.block, [...stack, catchScope]);
+            return;
+        }
+        if (ts.isForStatement(node) || ts.isForInStatement(node) || ts.isForOfStatement(node)) {
+            const forScope = { names: new Set(), aliases: new Map() };
+            const init = ts.isForStatement(node) ? node.initializer : ts.isForInStatement(node) || ts.isForOfStatement(node) ? node.initializer : undefined;
+            if (init && ts.isVariableDeclarationList(init)) {
+                for (const d of init.declarations)
+                    addBinding(ts, d.name, forScope.names);
+            }
+            const inner = [...stack, forScope];
+            ts.forEachChild(node, (c) => visit(c, inner));
+            return;
+        }
+        if (ts.isVariableDeclaration(node)) {
+            recordAliases(ts, node, stack, allowBuffer, errors);
+        }
+        if (ts.isIdentifier(node)) {
+            checkIdentifier(ts, node, stack, allowBuffer, errors);
+        }
+        if (ts.isPropertyAccessExpression(node)) {
+            checkPropertyAccess(ts, node, stack, allowBuffer, errors);
+        }
+        if (ts.isElementAccessExpression(node)) {
+            checkElementAccess(ts, node, stack, allowBuffer, errors);
+        }
+        if (ts.isObjectLiteralExpression(node)) {
+            checkDangerousKeys(ts, node, hardened, errors);
+        }
+        if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+            const expr = node.expression;
+            if (ts.isIdentifier(expr) && FORBIDDEN_CALLEES.has(expr.text)) {
+                errors.push(`forbidden callee ${expr.text}`);
+            }
+            if (expr.kind === ts.SyntaxKind.ImportKeyword) {
+                errors.push("forbidden import()");
+            }
+        }
+        if (ts.isCallExpression(node)) {
+            checkPrototypeMutationCall(ts, node, stack, errors);
+        }
+        if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+            checkPrototypeMutationAssign(ts, node, stack, errors);
+        }
+        if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require") {
+            errors.push("forbidden require");
+        }
+        if (ts.isCallExpression(node) &&
+            ts.isIdentifier(node.expression) &&
+            node.expression.text === "setTimeout") {
+            if (node.arguments[0] &&
+                (ts.isStringLiteral(node.arguments[0]) || ts.isNoSubstitutionTemplateLiteral(node.arguments[0]))) {
+                errors.push("forbidden string-setTimeout");
+            }
+        }
+        if (ts.isThrowStatement(node)) {
+            checkThrow(ts, node, errors);
+        }
+        if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+            const spec = node.moduleSpecifier;
+            if (spec && ts.isStringLiteral(spec)) {
+                const kind = ts.isExportDeclaration(node) ? "export" : "import";
+                errors.push(`forbidden ${kind} ${spec.text}`);
+            }
+        }
+        ts.forEachChild(node, (c) => visit(c, stack));
+    };
+    visit(sf, [moduleScope]);
+    if (/Function\s*\(/.test(source) && errors.every((e) => !e.includes("Function"))) {
+        errors.push("forbidden Function(");
+    }
+    return { ok: errors.length === 0, errors };
+}
+export function assertValidGenerated(ts, source, envelope) {
+    const r = validateGenerated(ts, source, { envelope });
+    if (!r.ok) {
+        const template = r.errors.some((e) => e.includes("Function"));
+        throw new SlimExit(template ? EXIT_REFUSED : EXIT_FAIL, `generated code failed AST allowlist: ${r.errors.join("; ")}`);
+    }
+}
+export function assertSmaller(replacementBytes, originalBytes, force) {
+    if (!force && originalBytes > 0 && replacementBytes >= originalBytes) {
+        throw new SlimExit(EXIT_FAIL, `replacement (${replacementBytes} B) is not smaller than original estimate (${originalBytes} B); pass --force`);
+    }
+}
+const CALL_APPLY = new Set(["call", "apply"]);
+function entersFunctionScope(ts, node) {
+    return (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isConstructorDeclaration(node) ||
+        ts.isGetAccessorDeclaration(node) ||
+        ts.isSetAccessorDeclaration(node));
+}
+function collectScopeBindings(ts, container, names, opts) {
+    for (const stmt of container.statements) {
+        if (opts.functions && ts.isFunctionDeclaration(stmt) && stmt.name)
+            names.add(stmt.name.text);
+        if (ts.isClassDeclaration(stmt) && stmt.name)
+            names.add(stmt.name.text);
+        if (ts.isInterfaceDeclaration(stmt) || ts.isTypeAliasDeclaration(stmt) || ts.isEnumDeclaration(stmt)) {
+            names.add(stmt.name.text);
+        }
+        if (ts.isVariableStatement(stmt)) {
+            const flags = stmt.declarationList.flags;
+            const isVar = !(flags & ts.NodeFlags.Let) && !(flags & ts.NodeFlags.Const);
+            if ((isVar && opts.vars) || (!isVar && opts.letConst)) {
+                for (const d of stmt.declarationList.declarations)
+                    addBinding(ts, d.name, names);
+            }
+        }
+        if (ts.isImportDeclaration(stmt) && stmt.importClause) {
+            if (stmt.importClause.name)
+                names.add(stmt.importClause.name.text);
+            const nb = stmt.importClause.namedBindings;
+            if (nb && ts.isNamespaceImport(nb))
+                names.add(nb.name.text);
+            if (nb && ts.isNamedImports(nb)) {
+                for (const el of nb.elements)
+                    names.add(el.name.text);
+            }
+        }
+    }
+}
+function collectVarsAndFuncs(ts, root, names) {
+    const visit = (node) => {
+        if (ts.isFunctionDeclaration(node) && node.name)
+            names.add(node.name.text);
+        if (entersFunctionScope(ts, node) && node !== root)
+            return;
+        if (ts.isVariableStatement(node)) {
+            const flags = node.declarationList.flags;
+            const isVar = !(flags & ts.NodeFlags.Let) && !(flags & ts.NodeFlags.Const);
+            if (isVar) {
+                for (const d of node.declarationList.declarations)
+                    addBinding(ts, d.name, names);
+            }
+        }
+        ts.forEachChild(node, visit);
+    };
+    visit(root);
+}
+function addBinding(ts, name, names) {
+    if (ts.isIdentifier(name)) {
+        names.add(name.text);
+        return;
+    }
+    for (const el of name.elements) {
+        if (ts.isBindingElement(el))
+            addBinding(ts, el.name, names);
+    }
+}
+function isLocal(stack, name) {
+    for (let i = stack.length - 1; i >= 0; i--) {
+        if (stack[i].names.has(name))
+            return true;
+    }
+    return false;
+}
+function lookupAlias(stack, name) {
+    for (let i = stack.length - 1; i >= 0; i--) {
+        const scope = stack[i];
+        if (scope.aliases.has(name))
+            return scope.aliases.get(name);
+        if (scope.names.has(name))
+            return undefined;
+    }
+    return undefined;
+}
+function alwaysForbiddenResolved(r, allowBuffer) {
+    if (r.kind === "setPrototypeOf")
+        return true;
+    if (r.kind === "hostMember") {
+        if (ALLOWED_GLOBALS.has(r.name))
+            return false;
+        if (r.name === "Buffer")
+            return !allowBuffer;
+        return true;
+    }
+    return false;
+}
+function forbiddenResolvedMessage(r) {
+    if (r.kind === "setPrototypeOf")
+        return "prototype-mutation: Object.setPrototypeOf";
+    if (r.kind === "hostMember")
+        return `forbidden globalThis.${r.name}`;
+    return "forbidden";
+}
+function checkIdentifier(ts, node, stack, allowBuffer, errors) {
+    if (isPropertyNameId(ts, node) || isLabel(ts, node) || inTypePosition(ts, node))
+        return;
+    const name = node.text;
+    if (FORBIDDEN_IDS.has(name)) {
+        errors.push(`forbidden identifier ${name}`);
+        return;
+    }
+    const alias = lookupAlias(stack, name);
+    if (alias && alwaysForbiddenResolved(alias, allowBuffer)) {
+        errors.push(forbiddenResolvedMessage(alias));
+        return;
+    }
+    if (isLocal(stack, name) || ALLOWED_GLOBALS.has(name))
+        return;
+    if (name === "Buffer") {
+        if (!allowBuffer)
+            errors.push("forbidden identifier Buffer (node env only)");
+        return;
+    }
+    errors.push(`identifier not on allowlist: ${name}`);
+}
+function isPropertyNameId(ts, node) {
+    const p = node.parent;
+    if (!p)
+        return false;
+    if (ts.isPropertyDeclaration(p) && p.name === node)
+        return true;
+    if (ts.isPropertySignature(p) && p.name === node)
+        return true;
+    if (ts.isPropertyAccessExpression(p) && p.name === node)
+        return true;
+    if (ts.isPropertyAssignment(p) && p.name === node)
+        return true;
+    if (ts.isMethodDeclaration(p) && p.name === node)
+        return true;
+    if (ts.isGetAccessorDeclaration(p) && p.name === node)
+        return true;
+    if (ts.isSetAccessorDeclaration(p) && p.name === node)
+        return true;
+    if (ts.isEnumMember(p) && p.name === node)
+        return true;
+    if (ts.isQualifiedName(p) && p.right === node)
+        return true;
+    if (ts.isBindingElement(p) && p.propertyName === node)
+        return true;
+    // Shorthand `{ foo }` is a value reference of `foo`.
+    return false;
+}
+function isLabel(ts, node) {
+    const p = node.parent;
+    return Boolean(p && ts.isLabeledStatement(p) && p.label === node);
+}
+function inTypePosition(ts, node) {
+    let cur = node.parent;
+    while (cur) {
+        if (ts.isTypeQueryNode(cur))
+            return false;
+        if (ts.isTypeNode(cur))
+            return true;
+        if (ts.isTypeAliasDeclaration(cur) ||
+            ts.isInterfaceDeclaration(cur) ||
+            ts.isTypeParameterDeclaration(cur) ||
+            ts.isHeritageClause(cur) ||
+            ts.isExpressionWithTypeArguments(cur)) {
+            return true;
+        }
+        if ((ts.isAsExpression(cur) || ts.isTypeAssertionExpression(cur) || ts.isSatisfiesExpression(cur)) &&
+            inside(cur.type, node)) {
+            return true;
+        }
+        if ((ts.isVariableDeclaration(cur) ||
+            ts.isParameter(cur) ||
+            ts.isFunctionDeclaration(cur) ||
+            ts.isMethodDeclaration(cur) ||
+            ts.isPropertyDeclaration(cur) ||
+            ts.isPropertySignature(cur) ||
+            ts.isIndexSignatureDeclaration(cur) ||
+            ts.isConstructorDeclaration(cur)) &&
+            cur.type &&
+            inside(cur.type, node)) {
+            return true;
+        }
+        if (isFunctionLike(ts, cur) && cur.typeParameters) {
+            for (const tp of cur.typeParameters) {
+                if (inside(tp, node))
+                    return true;
+            }
+        }
+        cur = cur.parent;
+    }
+    return false;
+}
+function isFunctionLike(ts, node) {
+    return (ts.isFunctionDeclaration(node) ||
+        ts.isFunctionExpression(node) ||
+        ts.isArrowFunction(node) ||
+        ts.isMethodDeclaration(node) ||
+        ts.isConstructorDeclaration(node) ||
+        ts.isGetAccessorDeclaration(node) ||
+        ts.isSetAccessorDeclaration(node));
+}
+function inside(root, target) {
+    let cur = target;
+    while (cur) {
+        if (cur === root)
+            return true;
+        cur = cur.parent;
+    }
+    return false;
+}
+function checkPropertyAccess(ts, node, stack, allowBuffer, errors) {
+    checkMember(ts, node.expression, node.name.text, stack, allowBuffer, errors);
+}
+function checkElementAccess(ts, node, stack, allowBuffer, errors) {
+    const key = foldString(ts, node.argumentExpression, stack);
+    if (key == null)
+        return;
+    checkMember(ts, node.expression, key, stack, allowBuffer, errors);
+}
+function checkMember(ts, objExpr, prop, stack, allowBuffer, errors) {
+    const obj = resolveExpr(ts, objExpr, stack);
+    const resolved = resolveMember(obj, prop);
+    if (resolved.kind === "setPrototypeOf") {
+        errors.push("prototype-mutation: Object.setPrototypeOf");
+        return;
+    }
+    if (obj.kind === "reflect" && !REFLECT_METHODS.has(prop) && prop !== "apply") {
+        errors.push(`forbidden Reflect.${prop}`);
+        return;
+    }
+    if (resolved.kind === "hostMember" && alwaysForbiddenResolved(resolved, allowBuffer)) {
+        errors.push(forbiddenResolvedMessage(resolved));
+    }
+}
+function checkPrototypeMutationCall(ts, node, stack, errors) {
+    const shape = callShape(ts, node, stack);
+    if (shape.fn.kind === "setPrototypeOf") {
+        errors.push("prototype-mutation: Object.setPrototypeOf");
+        return;
+    }
+    if (shape.fn.kind === "hostMember" && FORBIDDEN_CALLEES.has(shape.fn.name)) {
+        errors.push(`forbidden callee ${shape.fn.name}`);
+        return;
+    }
+    if (shape.fn.kind === "defineProperty" || shape.fn.kind === "defineProperties" || shape.fn.kind === "assign") {
+        if (shape.target) {
+            const target = resolveExpr(ts, shape.target, stack);
+            if (target.kind === "prototype") {
+                errors.push(`prototype-mutation: Object.${shape.fn.kind} on a prototype`);
+            }
+            return;
+        }
+        if (shape.unresolvedTarget) {
+            errors.push(`prototype-mutation: Object.${shape.fn.kind} on a prototype`);
+        }
+    }
+}
+function checkPrototypeMutationAssign(ts, node, stack, errors) {
+    const left = node.left;
+    if (ts.isPropertyAccessExpression(left) && left.name.text === "__proto__") {
+        errors.push("prototype-mutation: __proto__ assignment");
+        return;
+    }
+    if (ts.isElementAccessExpression(left)) {
+        const key = foldString(ts, left.argumentExpression, stack);
+        if (key === "__proto__") {
+            errors.push("prototype-mutation: __proto__ assignment");
+        }
+    }
+}
+function unwrapExpr(ts, expr) {
+    let e = expr;
+    for (;;) {
+        if (ts.isParenthesizedExpression(e)) {
+            e = e.expression;
+            continue;
+        }
+        if (ts.isAsExpression(e) || ts.isTypeAssertionExpression(e) || ts.isSatisfiesExpression(e) || ts.isNonNullExpression(e)) {
+            e = e.expression;
+            continue;
+        }
+        if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+            e = e.right;
+            continue;
+        }
+        return e;
+    }
+}
+function foldString(ts, expr, stack) {
+    const e = unwrapExpr(ts, expr);
+    if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e))
+        return e.text;
+    if (ts.isIdentifier(e)) {
+        const alias = lookupAlias(stack, e.text);
+        return alias?.kind === "string" ? alias.value : undefined;
+    }
+    if (ts.isBinaryExpression(e) && e.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+        const left = foldString(ts, e.left, stack);
+        const right = foldString(ts, e.right, stack);
+        if (left != null && right != null)
+            return left + right;
+    }
+    return undefined;
+}
+function resolveExpr(ts, expr, stack) {
+    const e = unwrapExpr(ts, expr);
+    if (ts.isStringLiteral(e) || ts.isNoSubstitutionTemplateLiteral(e)) {
+        return { kind: "string", value: e.text };
+    }
+    if (ts.isIdentifier(e)) {
+        if (e.text === "Object")
+            return { kind: "object" };
+        if (e.text === "Reflect")
+            return { kind: "reflect" };
+        if (HOST_GLOBALS.has(e.text))
+            return { kind: "host", name: e.text };
+        return lookupAlias(stack, e.text) ?? { kind: "unknown" };
+    }
+    if (ts.isPropertyAccessExpression(e) && e.name.text === "prototype") {
+        return { kind: "prototype" };
+    }
+    if (ts.isPropertyAccessExpression(e)) {
+        return resolveMember(resolveExpr(ts, e.expression, stack), e.name.text);
+    }
+    if (ts.isElementAccessExpression(e)) {
+        const key = foldString(ts, e.argumentExpression, stack);
+        if (key === "prototype")
+            return { kind: "prototype" };
+        if (key == null)
+            return { kind: "unknown" };
+        return resolveMember(resolveExpr(ts, e.expression, stack), key);
+    }
+    return { kind: "unknown" };
+}
+function resolveMember(obj, prop) {
+    if (obj.kind === "object") {
+        if (prop === "setPrototypeOf")
+            return { kind: "setPrototypeOf" };
+        if (prop === "defineProperty")
+            return { kind: "defineProperty" };
+        if (prop === "defineProperties")
+            return { kind: "defineProperties" };
+        if (prop === "assign")
+            return { kind: "assign" };
+        if (prop === "prototype")
+            return { kind: "prototype" };
+        return { kind: "unknown" };
+    }
+    if (obj.kind === "reflect") {
+        if (prop === "setPrototypeOf")
+            return { kind: "setPrototypeOf" };
+        if (prop === "defineProperty")
+            return { kind: "defineProperty" };
+        if (prop === "apply")
+            return { kind: "reflectApply" };
+        return { kind: "unknown" };
+    }
+    if (obj.kind === "host") {
+        if (prop === "Object")
+            return { kind: "object" };
+        if (prop === "Reflect")
+            return { kind: "reflect" };
+        return { kind: "hostMember", name: prop };
+    }
+    return { kind: "unknown" };
+}
+function firstArrayElement(ts, expr) {
+    if (!expr || !ts.isArrayLiteralExpression(expr))
+        return undefined;
+    const el = expr.elements[0];
+    if (!el || ts.isSpreadElement(el))
+        return undefined;
+    return el;
+}
+function callShape(ts, node, stack) {
+    const expr = unwrapExpr(ts, node.expression);
+    const resolvedCallee = resolveExpr(ts, expr, stack);
+    if (resolvedCallee.kind === "reflectApply") {
+        const fn = node.arguments[0] ? resolveExpr(ts, node.arguments[0], stack) : { kind: "unknown" };
+        const target = firstArrayElement(ts, node.arguments[2]);
+        return target ? { fn, target } : { fn, unresolvedTarget: true };
+    }
+    if (ts.isPropertyAccessExpression(expr) && CALL_APPLY.has(expr.name.text)) {
+        const fn = resolveExpr(ts, expr.expression, stack);
+        if (expr.name.text === "call") {
+            return { fn, target: node.arguments[1] };
+        }
+        const target = firstArrayElement(ts, node.arguments[1]);
+        return target ? { fn, target } : { fn, unresolvedTarget: true };
+    }
+    return { fn: resolvedCallee, target: node.arguments[0] };
+}
+function recordAliases(ts, node, stack, allowBuffer, errors) {
+    const scope = stack[stack.length - 1];
+    if (!scope)
+        return;
+    bindAliasPattern(ts, node.name, node.initializer, stack, scope, allowBuffer, errors);
+}
+function bindAliasPattern(ts, name, init, stack, scope, allowBuffer, errors) {
+    if (ts.isIdentifier(name) && init) {
+        const resolved = resolveExpr(ts, init, stack);
+        scope.aliases.set(name.text, resolved);
+        if (alwaysForbiddenResolved(resolved, allowBuffer)) {
+            errors.push(forbiddenResolvedMessage(resolved));
+        }
+        return;
+    }
+    if (!ts.isObjectBindingPattern(name) || !init)
+        return;
+    const src = resolveExpr(ts, init, stack);
+    for (const el of name.elements) {
+        if (!ts.isBindingElement(el))
+            continue;
+        const prop = bindingPropertyName(ts, el);
+        if (!prop)
+            continue;
+        const resolved = resolveMember(src, prop);
+        if (ts.isIdentifier(el.name)) {
+            scope.aliases.set(el.name.text, resolved);
+            if (alwaysForbiddenResolved(resolved, allowBuffer)) {
+                errors.push(forbiddenResolvedMessage(resolved));
+            }
+        }
+    }
+}
+function bindingPropertyName(ts, el) {
+    if (el.propertyName) {
+        if (ts.isIdentifier(el.propertyName) || ts.isStringLiteral(el.propertyName))
+            return el.propertyName.text;
+        if (ts.isComputedPropertyName(el.propertyName)) {
+            return foldString(ts, el.propertyName.expression, []);
+        }
+        return undefined;
+    }
+    return ts.isIdentifier(el.name) ? el.name.text : undefined;
+}
+function checkDangerousKeys(ts, node, hardened, errors) {
+    if (hardened)
+        return;
+    for (const prop of node.properties) {
+        if (ts.isPropertyAssignment(prop) ||
+            ts.isShorthandPropertyAssignment(prop) ||
+            ts.isMethodDeclaration(prop) ||
+            ts.isGetAccessorDeclaration(prop) ||
+            ts.isSetAccessorDeclaration(prop)) {
+            const text = propertyNameText(ts, prop.name);
+            if (text && DANGEROUS_KEYS.has(text)) {
+                errors.push(`forbidden literal key ${text}`);
+            }
+        }
+    }
+}
+function propertyNameText(ts, name) {
+    if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name))
+        return name.text;
+    if (ts.isComputedPropertyName(name) &&
+        (ts.isStringLiteral(name.expression) || ts.isNoSubstitutionTemplateLiteral(name.expression))) {
+        return name.expression.text;
+    }
+    return undefined;
+}
+function hasHardenedGetSetHas(ts, sf) {
+    for (const stmt of sf.statements) {
+        if (ts.isFunctionDeclaration(stmt) && stmt.name && /^(get|set|has)$/.test(stmt.name.text)) {
+            return true;
+        }
+        if (ts.isVariableStatement(stmt)) {
+            for (const d of stmt.declarationList.declarations) {
+                if (ts.isIdentifier(d.name) && /^(get|set|has)$/.test(d.name.text))
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+function checkThrow(ts, node, errors) {
+    const expr = node.expression;
+    if (ts.isIdentifier(expr))
+        return;
+    if (ts.isNewExpression(expr) &&
+        ts.isIdentifier(expr.expression) &&
+        THROW_CTORS.has(expr.expression.text)) {
+        return;
+    }
+    errors.push("forbidden throw");
+}
+function exportsTimerWrapper(ts, sf) {
+    for (const stmt of sf.statements) {
+        if (ts.isFunctionDeclaration(stmt) &&
+            stmt.name &&
+            /^(debounce|throttle)$/.test(stmt.name.text)) {
+            return true;
+        }
+        if (ts.isVariableStatement(stmt)) {
+            for (const d of stmt.declarationList.declarations) {
+                if (ts.isIdentifier(d.name) && /^(debounce|throttle)$/.test(d.name.text))
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+function checkCachedTimers(ts, sf, errors) {
+    for (const stmt of sf.statements) {
+        if (!ts.isVariableStatement(stmt))
+            continue;
+        for (const d of stmt.declarationList.declarations) {
+            if (d.initializer && initializerCachesTimer(ts, d.initializer)) {
+                errors.push("cached-timers: module-scope capture of Date.now/setTimeout/clearTimeout");
+                return;
+            }
+        }
+    }
+}
+function initializerCachesTimer(ts, init) {
+    if (isTimerRef(ts, init))
+        return true;
+    if (ts.isCallExpression(init) && isDateNow(ts, init.expression) && init.arguments.length === 0) {
+        return true;
+    }
+    return false;
+}
+function isTimerRef(ts, node) {
+    if (ts.isIdentifier(node) && TIMER_FNS.has(node.text))
+        return true;
+    if (isDateNow(ts, node))
+        return true;
+    if (ts.isPropertyAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        HOST_GLOBALS.has(node.expression.text) &&
+        (TIMER_FNS.has(node.name.text) || node.name.text === "Date")) {
+        return true;
+    }
+    return false;
+}
+function isDateNow(ts, node) {
+    return (ts.isPropertyAccessExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "Date" &&
+        node.name.text === "now");
+}
+//# sourceMappingURL=validate.js.map

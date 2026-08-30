@@ -1,7 +1,0 @@
-{
-  "name": "analyze-env-node",
-  "private": true,
-  "type": "module",
-  "engines": { "node": ">=22" },
-  "devDependencies": { "@types/node": "^24.0.0" }
-}

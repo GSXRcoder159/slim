@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://unpkg.com/slim/docs/scan.schema.json",
   "title": "Slim scan --json report",
-  "description": "One JSON document on stdout. Scan is an inventory and ranking heuristic, not a closed envelope. schemaVersion 2. importSites are runtime-only; typeOnlySites are type-only import/export declarations. sizeProvenance describes unpacked minBytes (gzipBytes is always a 0.36 estimate). partial means the directory walk hit a cap, unreadable entry, or omitted file.",
+  "description": "One JSON document on stdout. Scan is an inventory and ranking heuristic, not a closed envelope. schemaVersion 2. importSites are runtime-only; typeOnlySites are type-only import/export declarations. sizeProvenance describes unpacked minBytes: estimated is the known min table after a complete install walk; measured is a complete walk of a package not in that table; partial is an incomplete walk (cap, unreadable, omitted, broken or escaping link), including known-size packages, and then sizeState is review; unknown is a missing install tree, including known-size packages (table minBytes may still be present). gzipBytes is always 0.36 × minBytes (a guess of the displayed min, not a second measurement). sizeState review is measurement quality, not ranking verdict review.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "lockfile", "rows"],
@@ -54,11 +54,19 @@
         "verdict": { "type": "string", "enum": ["candidate", "review", "refuse", "unused"] },
         "slimmable": { "type": "number" },
         "minBytes": { "type": ["integer", "null"] },
-        "gzipBytes": { "type": ["integer", "null"] },
-        "sizeProvenance": { "type": "string", "enum": ["measured", "estimated", "unknown", "partial"] },
+        "gzipBytes": {
+          "type": ["integer", "null"],
+          "description": "Always 0.36 × minBytes when minBytes is present; a guess of the displayed min, not a second measurement."
+        },
+        "sizeProvenance": {
+          "type": "string",
+          "enum": ["measured", "estimated", "unknown", "partial"],
+          "description": "estimated and measured are complete-like. Incomplete walks stay partial; missing installs stay unknown — even when a catalog minBytes is present."
+        },
         "sizeState": {
           "type": "string",
-          "enum": ["measured", "estimated", "unknown", "refused", "review"]
+          "enum": ["measured", "estimated", "unknown", "refused", "review"],
+          "description": "Copies sizeProvenance except partial → review and refuse verdict → refused. review is measurement quality, not ranking verdict review."
         },
         "note": { "type": "string" }
       }

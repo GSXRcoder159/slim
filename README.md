@@ -20,7 +20,7 @@ slim replace lodash
 
 You get:
 
-- `src/slim/lodash.ts` — readable in one sitting (~250 lines for `get` + `debounce`, not 300 methods). Golden Worker-shaped fixture: `fixtures/lodash-get-debounce/` (`wrangler.toml`, `src/worker.ts`).
+- `src/slim/lodash.ts` — readable in one sitting (~250 lines for `get` + `debounce`, not 300 methods). Golden Worker-shaped fixture: `fixtures/lodash-get-debounce/` (`wrangler.toml`, `src/worker.ts`). `replace` refuses unowned files already at `--out` and a symlinked `--out` (internal or escaping) before any write.
 - `.slim/lodash/evidence.md` — what was used, byte delta, fuzz counts, residual risk (never empty)
 - standing tests that replay frozen I/O pairs **without** keeping lodash installed
 - `lodash` removed from `package.json`
@@ -47,7 +47,7 @@ Exit codes: `0` ok · `1` fail · `2` usage · `3` refused / no catalog and no L
 
 ## GitHub Actions
 
-Published Actions (`slim-hq/slim/action/check@v1`, `bloat`, `upstream`) run only compiled distributable code. Missing or stale `dist/` is exit 4, not a source fallback. The release workflow publishes the exact packed tarball and attaches that pack to `vX.Y.Z` and `v1` so those tags contain `dist/`.
+Published Actions (`GSXRcoder159/slim/action/check@v1`, `bloat`, `upstream`) run only compiled distributable code. Missing or stale `dist/` is exit 4, not a source fallback. The release workflow publishes the exact packed tarball and attaches that pack to `vX.Y.Z` and `v1` so those tags contain `dist/`.
 
 Every consumer workflow needs checkout, Node `>=22.18`, and `npm ci` before `uses:`. Copy [`docs/examples/slim-check.yml`](docs/examples/slim-check.yml), [`slim-bloat.yml`](docs/examples/slim-bloat.yml), and [`slim-watch.yml`](docs/examples/slim-watch.yml). The upstream Action needs `contents: write` and `pull-requests: write` plus `GITHUB_TOKEN` when it opens a PR.
 
@@ -86,7 +86,7 @@ OpenAI uses the Responses API (`POST /v1/responses`), not Chat Completions.
 
 The generator receives envelope JSON plus public `.d.ts` / README **only**, and only from the target package root (or `@types/<pkg>`). Traversal, absolute paths, and escaping symlinks in `types` / `typings` / `exports` / README are refused before any provider call. Original `.js`, source maps, and package tests are a guard-rail error. If no `.d.ts` or README exists, the prompt and evidence record that as an explicit limitation (envelope call sites only; no invented overloads).
 
-LLM slices pass the same AST, export-contract, size, fuzz, standing-test, and evidence gates as catalog slices. Generated `Object.setPrototypeOf`, `__proto__` assignment, and `Object.defineProperty` on `*.prototype` fail before any project write. Catalog `defineData` may still define an own `__proto__` data property on a user object (hardening, not prototype mutation). Provider HTTP failures (timeout, 429, 5xx) exit 4. Unsafe or exhausted repairs exit 1. Nothing is written to the project until fuzz passes. Evidence records provider, model, prompt hash, attempts, and summarized counterexamples — never API keys.
+LLM slices pass the same AST, export-contract, size, fuzz, standing-test, and evidence gates as catalog slices. Generated `Object.setPrototypeOf` (including aliases, computed access, and `.call`/`.apply`), `__proto__` assignment, `Object.assign` onto a prototype, and `Object.defineProperty` / `defineProperties` on `*.prototype` fail before any project write. Catalog `defineData` may still define an own `__proto__` data property on a user object (hardening, not prototype mutation). A `node_modules/<package>` directory whose realpath leaves the project is refused before any provider call. Provider HTTP failures (timeout, 429, 5xx) exit 4. Unsafe or exhausted repairs exit 1. Nothing is written to the project until fuzz passes. Evidence records provider, model, prompt hash, attempts, and summarized counterexamples — never API keys or prompt bodies.
 
 Live packed `replace --llm` proof for advertised providers is `SLIM_LLM_LIVE=1` plus the matching API key. Live packed `upstream` proof for advertised OSV and npm-registry sources is `SLIM_UPSTREAM_LIVE=1`. Live packed `replace` PR proof is `SLIM_PR_LIVE=1` (GitHub CLI with repo create/push/PR plus `delete_repo`, or `SLIM_PR_TRANSFER_OWNER`) and `SLIM_RECEIPTS_DIR` for the receipt. Live packed Action proof for advertised check/bloat/upstream Actions is `SLIM_ACTION_LIVE=1` (same GitHub CLI plus a disposable consumer workflow on every advertised OS/Node cell). Missing credentials or missing current receipts fail `npm run qualify`; they do not vanish from `npm test`.
 

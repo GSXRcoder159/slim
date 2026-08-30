@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://unpkg.com/slim/docs/evidence.schema.json",
   "title": "Slim replacement evidence.json",
-  "description": "Written by slim replace. schemaVersion 1. Never contains credentials, prompts, raw traces, or oracle source.",
+  "description": "Written by slim replace. schemaVersion 1. Binds envelopeHash plus artifacts (module, standing, hardening, oracle version, fixture revision). Never contains credentials, prompts, raw traces, or oracle source.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -18,7 +18,8 @@
     "coverageHoles",
     "residualRisk",
     "revert",
-    "generation"
+    "generation",
+    "artifacts"
   ],
   "properties": {
     "schemaVersion": { "type": "integer", "const": 1 },
@@ -76,7 +77,8 @@
     "coverageHoles": { "type": "array", "items": { "type": "string" } },
     "residualRisk": { "type": "array", "items": { "type": "string" } },
     "revert": { "$ref": "#/$defs/revert" },
-    "generation": { "$ref": "#/$defs/generation" }
+    "generation": { "$ref": "#/$defs/generation" },
+    "artifacts": { "$ref": "#/$defs/artifacts" }
   },
   "$defs": {
     "revert": {
@@ -123,6 +125,18 @@
         },
         "limitation": { "type": "string" },
         "counterexamples": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["moduleDigest", "standingDigest", "hardeningDigest", "oracleVersion", "fixtureRevision"],
+      "properties": {
+        "moduleDigest": { "type": "string", "minLength": 64, "maxLength": 64 },
+        "standingDigest": { "type": "string", "minLength": 64, "maxLength": 64 },
+        "hardeningDigest": { "type": "string", "minLength": 64, "maxLength": 64 },
+        "oracleVersion": { "type": "string", "minLength": 1 },
+        "fixtureRevision": { "type": "string", "minLength": 64, "maxLength": 64 }
       }
     }
   }

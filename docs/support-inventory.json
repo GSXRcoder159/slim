@@ -343,7 +343,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -354,7 +354,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -365,7 +365,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -376,7 +376,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -387,7 +387,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -398,7 +398,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -409,7 +409,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -420,7 +420,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -431,7 +431,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -442,7 +442,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -453,7 +453,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -464,7 +464,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -475,7 +475,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -486,7 +486,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -497,7 +497,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -508,7 +508,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -519,7 +519,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -530,7 +530,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -541,7 +541,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -552,7 +552,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -563,7 +563,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -574,7 +574,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -585,7 +585,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -596,7 +596,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -607,7 +607,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -618,7 +618,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -629,7 +629,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -640,7 +640,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -651,7 +651,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -662,7 +662,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -673,7 +673,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -684,7 +684,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -695,7 +695,7 @@
       "docs": [
         "docs/packages.md"
       ],
-      "checkId": "test/catalog/index.test.ts",
+      "checkId": "test/catalog/packed-e2e.test.ts",
       "receiptClass": "local"
     },
     {
@@ -1462,6 +1462,7 @@
       "docs": [
         "action/check/action.yml",
         "docs/dx.md",
+        "docs/release-identity.md",
         "docs/examples/slim-check.yml"
       ],
       "checkId": "test/github/action-live.test.ts",
@@ -1474,6 +1475,7 @@
       "docs": [
         "action/bloat/action.yml",
         "docs/dx.md",
+        "docs/release-identity.md",
         "docs/examples/slim-bloat.yml"
       ],
       "checkId": "test/github/action-live.test.ts",
@@ -1486,6 +1488,7 @@
       "docs": [
         "action/upstream/action.yml",
         "docs/dx.md",
+        "docs/release-identity.md",
         "docs/examples/slim-watch.yml"
       ],
       "checkId": "test/github/action-live.test.ts",

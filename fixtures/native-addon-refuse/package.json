@@ -1,7 +1,0 @@
-{
-  "name": "native-addon-refuse-fixture",
-  "private": true,
-  "type": "module",
-  "dependencies": { "better-sqlite3": "11.0.0" },
-  "devDependencies": { "typescript": "^5.9.2" }
-}

@@ -31,6 +31,7 @@
     "slim.schema.json",
     "docs/*.schema.json",
     "docs/support-inventory.json",
+    "docs/README.md",
     "LICENSE",
     "README.md",
     "CHANGELOG.md"
@@ -40,6 +41,8 @@
     "prepack": "npm run build",
     "test": "node --experimental-strip-types --test --test-reporter=spec test/*.test.ts test/*/*.test.ts",
     "similarity": "node --experimental-strip-types scripts/similarity-gate.ts",
+    "typecheck": "node ./node_modules/typescript/bin/tsc -p tsconfig.json --noEmit",
+    "artifacts": "node --experimental-strip-types scripts/artifact-identity.ts",
     "qualify": "node --experimental-strip-types scripts/qualify-receipts.ts",
     "qualify:emit": "node --experimental-strip-types scripts/emit-local-receipts.ts",
     "qualify:candidate": "node --experimental-strip-types scripts/qualify-candidate.ts",
@@ -58,12 +61,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/slim-hq/slim.git"
+    "url": "git+https://github.com/GSXRcoder159/slim.git"
   },
   "bugs": {
-    "url": "https://github.com/slim-hq/slim/issues"
+    "url": "https://github.com/GSXRcoder159/slim/issues"
   },
-  "homepage": "https://github.com/slim-hq/slim#readme",
+  "homepage": "https://github.com/GSXRcoder159/slim#readme",
   "dependencies": {},
   "devDependencies": {
     "@types/lodash": "^4.17.20",
