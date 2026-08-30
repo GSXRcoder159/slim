@@ -4,5 +4,13 @@
   "budgetMs": 30000,
   "templateOnly": true,
   "lodashVersion": "4.17.21",
-  "package": "lodash"
+  "package": "lodash",
+  "node": "22.18",
+  "os": "linux",
+  "lockfileSha256": "ade834c4c10f9522bd76a22170e53cd886cbb682579e33d0ab93febb9ad7c90a",
+  "envelopeHash": "217c102e5c34a74ba017061f1a5574a2ada6cd6a6497e6797e6eb97eafa706c4",
+  "moduleDigest": "1bdd877f80ea1179d0ef654c9cc6779a0b16bb07d4dcacc7383e7e0e2122b7d3",
+  "standingDigest": "c7e3043c0df1fd45a2372a9a17823f1ebbdfaee8b946bf849b7c508ede9c13ff",
+  "hardeningDigest": "c2b78a75e949486cb0cdaaa2d65f01d4bb80e2ecd85d2f3c049c28762e4ee090",
+  "fixtureRevision": "6effe6f80549b75165e46e1c44f70a30e389c85ea6e606bfa64ccb840e4a72d0"
 }

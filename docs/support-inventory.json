@@ -1493,6 +1493,19 @@
       ],
       "checkId": "test/github/action-live.test.ts",
       "receiptClass": "live"
+    },
+    {
+      "id": "measurement.claims",
+      "kind": "measurement",
+      "name": "claims",
+      "docs": [
+        "docs/measurements.json",
+        "docs/packages.md",
+        "docs/dx.md",
+        "docs/repo.md"
+      ],
+      "checkId": "test/measurements.test.ts",
+      "receiptClass": "local"
     }
   ]
 }

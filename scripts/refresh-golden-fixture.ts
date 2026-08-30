@@ -5,13 +5,17 @@
  * traces.jsonl stays gitignored.
  *
  * `--check` refreshes twice into temp dirs and compares equivalent artifacts
- * without writing the repository fixture.
+ * without writing the repository fixture. Identity fields must also match
+ * the committed fixture. Overlay install cannot npm ci after adding lodash;
+ * committed package-lock.json sha256 is the lockfile identity.
  */
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hashEnvelope, type Envelope } from "../src/envelope/types.ts";
+import { fixtureRevision, sha256Bytes, sha256File } from "../src/evidence/digests.ts";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..");
 const FIXTURE = join(REPO, "fixtures", "lodash-get-debounce");
@@ -23,7 +27,26 @@ export const GOLDEN_REFRESH_INPUTS = {
   templateOnly: true,
   lodashVersion: "4.17.21",
   package: "lodash",
+  node: "22.18",
+  os: "linux",
 } as const;
+
+export interface GoldenRefreshRecord {
+  seed: number;
+  workers: number;
+  budgetMs: number;
+  templateOnly: boolean;
+  lodashVersion: string;
+  package: string;
+  node: string;
+  os: string;
+  lockfileSha256: string;
+  envelopeHash: string;
+  moduleDigest: string;
+  standingDigest: string;
+  hardeningDigest: string;
+  fixtureRevision: string;
+}
 
 const BYTE_FILES = [
   ".slim/lodash/envelope.json",
@@ -33,6 +56,84 @@ const BYTE_FILES = [
   "src/index.ts",
   "slim.json",
 ] as const;
+
+const IDENTITY_FILES = [".slim/refresh-inputs.json"] as const;
+
+export function collectGoldenIdentities(
+  root: string,
+  lockfileRoot = root,
+): Pick<
+  GoldenRefreshRecord,
+  | "lockfileSha256"
+  | "envelopeHash"
+  | "moduleDigest"
+  | "standingDigest"
+  | "hardeningDigest"
+  | "fixtureRevision"
+> {
+  const envelope = JSON.parse(readFileSync(join(root, ".slim", "lodash", "envelope.json"), "utf8")) as Envelope;
+  const standing = readFileSync(join(root, "src", "slim", "lodash.test.ts"));
+  const hardening = readFileSync(join(root, "src", "slim", "lodash.hardened.test.ts"));
+  return {
+    lockfileSha256: sha256File(join(lockfileRoot, "package-lock.json")),
+    envelopeHash: hashEnvelope(envelope),
+    moduleDigest: sha256File(join(root, "src", "slim", "lodash.ts")),
+    standingDigest: sha256Bytes(standing),
+    hardeningDigest: sha256Bytes(hardening),
+    fixtureRevision: fixtureRevision(standing, hardening),
+  };
+}
+
+export function refreshInputsRecord(root: string, lockfileRoot = root): GoldenRefreshRecord {
+  return { ...GOLDEN_REFRESH_INPUTS, ...collectGoldenIdentities(root, lockfileRoot) };
+}
+
+export function writeRefreshInputs(dest: string, record: GoldenRefreshRecord): void {
+  writeFileSync(join(dest, ".slim", "refresh-inputs.json"), JSON.stringify(record, null, 2) + "\n");
+}
+
+export function assertGoldenInputs(root: string): string[] {
+  const path = join(root, ".slim", "refresh-inputs.json");
+  if (!existsSync(path)) return ["refresh-inputs.json"];
+  const got = JSON.parse(readFileSync(path, "utf8")) as Partial<GoldenRefreshRecord>;
+  const live = refreshInputsRecord(root);
+  const mismatches: string[] = [];
+  for (const key of Object.keys(GOLDEN_REFRESH_INPUTS) as (keyof typeof GOLDEN_REFRESH_INPUTS)[]) {
+    if (got[key] !== GOLDEN_REFRESH_INPUTS[key]) mismatches.push(`refresh-inputs.${key}`);
+  }
+  if (got.lockfileSha256 !== live.lockfileSha256) mismatches.push("lockfileSha256");
+  if (got.envelopeHash !== live.envelopeHash) mismatches.push("envelopeHash");
+  if (got.moduleDigest !== live.moduleDigest) mismatches.push("moduleDigest");
+  if (got.standingDigest !== live.standingDigest) mismatches.push("standingDigest");
+  if (got.hardeningDigest !== live.hardeningDigest) mismatches.push("hardeningDigest");
+  if (got.fixtureRevision !== live.fixtureRevision) mismatches.push("fixtureRevision");
+  const evidencePath = join(root, ".slim", "lodash", "evidence.json");
+  if (!existsSync(evidencePath)) {
+    mismatches.push("evidence.json");
+    return mismatches;
+  }
+  const evidence = JSON.parse(readFileSync(evidencePath, "utf8")) as {
+    envelopeHash?: string;
+    artifacts?: {
+      moduleDigest?: string;
+      standingDigest?: string;
+      hardeningDigest?: string;
+      fixtureRevision?: string;
+    };
+  };
+  if (evidence.envelopeHash !== live.envelopeHash) mismatches.push("evidence.envelopeHash");
+  if (evidence.artifacts?.moduleDigest !== live.moduleDigest) mismatches.push("evidence.artifacts.moduleDigest");
+  if (evidence.artifacts?.standingDigest !== live.standingDigest) {
+    mismatches.push("evidence.artifacts.standingDigest");
+  }
+  if (evidence.artifacts?.hardeningDigest !== live.hardeningDigest) {
+    mismatches.push("evidence.artifacts.hardeningDigest");
+  }
+  if (evidence.artifacts?.fixtureRevision !== live.fixtureRevision) {
+    mismatches.push("evidence.artifacts.fixtureRevision");
+  }
+  return mismatches;
+}
 
 function run(file: string, args: string[], cwd: string): void {
   const r = spawnSync(file, args, { cwd, stdio: "inherit", encoding: "utf8" });
@@ -135,10 +236,7 @@ function copyArtifacts(from: string, fixture: string): void {
   if (existsSync(join(from, ".slim", "manifest.json"))) {
     copyIfExists(join(from, ".slim", "manifest.json"), join(fixture, ".slim", "manifest.json"));
   }
-  writeFileSync(
-    join(fixture, ".slim", "refresh-inputs.json"),
-    JSON.stringify(GOLDEN_REFRESH_INPUTS, null, 2) + "\n",
-  );
+  writeRefreshInputs(fixture, refreshInputsRecord(from, fixture));
 }
 
 export function goldenEquivalent(a: string, b: string): string[] {
@@ -154,11 +252,29 @@ export function goldenEquivalent(a: string, b: string): string[] {
     const right = readFileSync(rightPath);
     if (!left.equals(right)) mismatches.push(rel);
   }
+  for (const rel of IDENTITY_FILES) {
+    const leftPath = join(a, rel);
+    const rightPath = join(b, rel);
+    if (!existsSync(leftPath) && !existsSync(rightPath)) continue;
+    if (!existsSync(leftPath) || !existsSync(rightPath)) {
+      mismatches.push(rel);
+      continue;
+    }
+    const left = readFileSync(leftPath);
+    const right = readFileSync(rightPath);
+    if (!left.equals(right)) mismatches.push(rel);
+  }
   const ea = JSON.parse(readFileSync(join(a, ".slim", "lodash", "evidence.json"), "utf8")) as {
     package: { version: string };
     envelopeHash: string;
     byteDelta: { replacement: number };
     generation?: { kind: string };
+    artifacts?: {
+      moduleDigest?: string;
+      standingDigest?: string;
+      hardeningDigest?: string;
+      fixtureRevision?: string;
+    };
     fuzz: { seed: number; tracesReplayed: number; disagreements: number };
   };
   const eb = JSON.parse(readFileSync(join(b, ".slim", "lodash", "evidence.json"), "utf8")) as typeof ea;
@@ -169,6 +285,18 @@ export function goldenEquivalent(a: string, b: string): string[] {
   if ((ea.generation?.kind ?? "") !== (eb.generation?.kind ?? "")) mismatches.push("evidence.generation.kind");
   if (ea.fuzz.tracesReplayed !== eb.fuzz.tracesReplayed) mismatches.push("evidence.fuzz.tracesReplayed");
   if (ea.fuzz.disagreements !== eb.fuzz.disagreements) mismatches.push("evidence.fuzz.disagreements");
+  if ((ea.artifacts?.moduleDigest ?? "") !== (eb.artifacts?.moduleDigest ?? "")) {
+    mismatches.push("evidence.artifacts.moduleDigest");
+  }
+  if ((ea.artifacts?.standingDigest ?? "") !== (eb.artifacts?.standingDigest ?? "")) {
+    mismatches.push("evidence.artifacts.standingDigest");
+  }
+  if ((ea.artifacts?.hardeningDigest ?? "") !== (eb.artifacts?.hardeningDigest ?? "")) {
+    mismatches.push("evidence.artifacts.hardeningDigest");
+  }
+  if ((ea.artifacts?.fixtureRevision ?? "") !== (eb.artifacts?.fixtureRevision ?? "")) {
+    mismatches.push("evidence.artifacts.fixtureRevision");
+  }
   return mismatches;
 }
 
@@ -188,6 +316,7 @@ export function refreshGoldenFixture(opts?: {
   run("npm", ["install", "--no-audit", "--no-fund"], work);
   runReplace(work, repo);
   assertRefreshSanity(work);
+  writeRefreshInputs(work, refreshInputsRecord(work, fixture));
   if (opts?.copyBack === false) return work;
   try {
     copyArtifacts(work, fixture);
@@ -207,11 +336,16 @@ export function refreshGoldenFixture(opts?: {
 }
 
 export function checkGoldenRefresh(opts?: { repo?: string; fixture?: string }): string[] {
+  const fixture = opts?.fixture ?? FIXTURE;
   const a = refreshGoldenFixture({ ...opts, copyBack: false });
   let b = "";
   try {
     b = refreshGoldenFixture({ ...opts, copyBack: false });
-    return goldenEquivalent(a, b);
+    return [
+      ...goldenEquivalent(a, b).map((m) => `pair:${m}`),
+      ...goldenEquivalent(a, fixture).map((m) => `committed:${m}`),
+      ...assertGoldenInputs(fixture).map((m) => `inputs:${m}`),
+    ];
   } finally {
     rmSync(a, { recursive: true, force: true });
     if (b) rmSync(b, { recursive: true, force: true });

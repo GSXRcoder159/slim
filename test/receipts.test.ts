@@ -800,3 +800,33 @@ test("qualify-receipts refuses missing action digest", () => {
   assert.equal(r.status, 2);
   assert.match(r.stderr, /action-digest/);
 });
+
+test("measurement claims qualify the checked-in file and fail when stale", () => {
+  const meas: InventoryEntry = {
+    id: "measurement.claims",
+    kind: "measurement",
+    docs: ["docs/measurements.json"],
+    checkId: "test/measurements.test.ts",
+    receiptClass: "local",
+    name: "claims",
+  };
+  const inv: SupportInventory = { schemaVersion: 1, entries: [meas] };
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-meas-"));
+  assert.deepEqual(qualifyInventory(inv, dir, candidate, { now: new Date(), root: ROOT }), []);
+
+  const staleRoot = mkdtempSync(join(tmpdir(), "slim-meas-stale-"));
+  mkdirSync(join(staleRoot, "docs"), { recursive: true });
+  const live = JSON.parse(readFileSync(join(ROOT, "docs/measurements.json"), "utf8")) as {
+    date: string;
+  };
+  writeFileSync(
+    join(staleRoot, "docs", "measurements.json"),
+    JSON.stringify({ ...live, date: "2020-01-01" }) + "\n",
+  );
+  const failures = qualifyInventory(inv, dir, candidate, {
+    now: new Date("2026-08-29T00:00:00.000Z"),
+    root: staleRoot,
+  });
+  assert.equal(failures[0]?.entryId, "measurement.claims");
+  assert.match(failures[0]?.reason ?? "", /freshness|older than/i);
+});

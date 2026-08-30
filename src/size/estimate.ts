@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, sep } from "node:path";
 
-/** Bundlephobia-ish min bytes for first-wave packages (2026-08-15). */
+/** Catalog estimated mins. gzipGuess is 0.36 × min. Regenerated via `npm run measure:claims`. */
 export const KNOWN_MIN_BYTES: Record<string, number> = {
   lodash: 71_000,
   "lodash-es": 71_000,

@@ -1,27 +1,32 @@
 {
+  "schemaVersion": 1,
+  "command": "npm run measure:claims",
   "slimVersion": "0.1.0",
   "node": "22.23.2",
   "os": "darwin",
-  "date": "2026-08-28",
-  "notes": "Node parse/size of the golden lodash slice vs installed lodash.js. Worker isolate CPU is a vendor budget, not measured here. originalMin is Bundlephobia-ish table, estimated.",
+  "date": "2026-08-30",
+  "maxAgeDays": 7,
+  "notes": "Node parse/size of the golden lodash slice vs installed lodash.js. Worker isolate CPU is unavailable. Catalog mins are estimated. parseNs is env-local and expires with the receipt.",
   "files": {
     "goldenLodashSlice": {
       "path": "fixtures/lodash-get-debounce/src/slim/lodash.ts",
+      "sha256": "1bdd877f80ea1179d0ef654c9cc6779a0b16bb07d4dcacc7383e7e0e2122b7d3",
       "bytes": {
-        "value": 6997,
+        "value": 7328,
         "provenance": "measured"
       },
       "gzipBytes": {
-        "value": 2125,
+        "value": 2192,
         "provenance": "measured"
       },
       "parseNs": {
-        "value": 1805833,
+        "value": 1178292,
         "provenance": "measured"
       }
     },
     "lodashOracleEntry": {
       "path": "node_modules/lodash/lodash.js",
+      "sha256": "4c04561befdf653aef017a42ac5addf68ea943cdfca6bdee5ce04e04e8139f54",
       "bytes": {
         "value": 544098,
         "provenance": "measured"
@@ -31,14 +36,148 @@
         "provenance": "measured"
       },
       "parseNs": {
-        "value": 20413917,
+        "value": 19168208,
         "provenance": "measured"
+      }
+    },
+    "workerColdStart": {
+      "path": "",
+      "sha256": null,
+      "bytes": {
+        "value": null,
+        "provenance": "unavailable",
+        "reason": "Worker isolate CPU is a vendor budget, not measured here."
+      },
+      "gzipBytes": {
+        "value": null,
+        "provenance": "unavailable",
+        "reason": "Worker isolate CPU is a vendor budget, not measured here."
+      },
+      "parseNs": {
+        "value": null,
+        "provenance": "unavailable",
+        "reason": "Worker isolate CPU is a vendor budget, not measured here."
       }
     }
   },
   "estimatedOriginalMin": {
     "lodash": {
       "value": 71000,
+      "gzipBytes": 25560,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "lodash-es": {
+      "value": 71000,
+      "gzipBytes": 25560,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "moment": {
+      "value": 60600,
+      "gzipBytes": 21816,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "moment-timezone": {
+      "value": 300000,
+      "gzipBytes": 108000,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "whatwg-url": {
+      "value": 470900,
+      "gzipBytes": 169524,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "mime-types": {
+      "value": 162500,
+      "gzipBytes": 58500,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "validator": {
+      "value": 125200,
+      "gzipBytes": 45072,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "cron-parser": {
+      "value": 100000,
+      "gzipBytes": 36000,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "bluebird": {
+      "value": 79000,
+      "gzipBytes": 28440,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "date-fns": {
+      "value": 72100,
+      "gzipBytes": 25956,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "crypto-js": {
+      "value": 65600,
+      "gzipBytes": 23616,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "js-yaml": {
+      "value": 57600,
+      "gzipBytes": 20736,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "ramda": {
+      "value": 55100,
+      "gzipBytes": 19836,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "jsonwebtoken": {
+      "value": 54500,
+      "gzipBytes": 19620,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "qs": {
+      "value": 40900,
+      "gzipBytes": 14724,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "async": {
+      "value": 21900,
+      "gzipBytes": 7884,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "uuid": {
+      "value": 10200,
+      "gzipBytes": 3672,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "ms": {
+      "value": 2000,
+      "gzipBytes": 720,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "nanoid": {
+      "value": 1500,
+      "gzipBytes": 540,
+      "provenance": "estimated",
+      "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
+    },
+    "clsx": {
+      "value": 800,
+      "gzipBytes": 288,
       "provenance": "estimated",
       "source": "src/size/estimate.ts KNOWN_MIN_BYTES"
     }

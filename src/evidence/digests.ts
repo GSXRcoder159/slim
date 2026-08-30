@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { EXIT_FAIL, SlimExit } from "../exit.ts";
-import { evidenceScript, hardeningTestPaths, standingTestPaths } from "./paths.ts";
+import { hardeningTestPaths, standingTestPaths } from "./paths.ts";
 
 export interface ArtifactDigests {
   moduleDigest: string;
@@ -31,8 +31,6 @@ export function fixtureRevision(standing: Buffer, hardening: Buffer): string {
 }
 
 export function standingSuiteBytes(root: string, pkg: string, outDir: string): Buffer | null {
-  const script = evidenceScript(root);
-  if (script) return Buffer.from(script, "utf8");
   const paths = standingTestPaths(root, pkg, outDir);
   if (existsSync(paths.tsAbs)) return readFileSync(paths.tsAbs);
   if (existsSync(paths.jsAbs)) return readFileSync(paths.jsAbs);

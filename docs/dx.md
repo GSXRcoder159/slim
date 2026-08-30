@@ -48,7 +48,7 @@ The shipped CLI uses **0–4 only**. SIGINT is the process default (typically 13
 
 The advertised product surface is [`docs/support-inventory.json`](./support-inventory.json). Help and this file may name only those entries.
 
-Qualification receipts live in gitignored `qualification/receipts/` and bind one commit plus the packed npm and Action content digests. A receipt is current only if `endedAt` is within 7 days of validation and not in the future. Local `fixture` identity is the entry `checkId`; live fixtures are `tiny-add` (LLM), `request-watch` (OSV/npm registry), `ms` (GitHub PR), `release-rehearse` (npm publish), and `packed-action-consumer` (Actions). `npm run qualify` and release publish refuse when `--npm-digest` or `--action-digest` is omitted. Live receipts also require a matching `workflowRun` (`SLIM_WORKFLOW_RUN` or `GITHUB_RUN_ID`). `npm run artifacts` prints one schema-valid identity document (`docs/artifact-identity.schema.json`) for that commit. `npm run qualify:emit` writes local receipts after the named `checkId` tests pass; it will not mint an `osNode` cell for a different OS or Node. `npm run qualify:candidate` packs once, emits locals, runs live tests when `SLIM_*_LIVE=1`, and fail-closes. CI uploads six `osNode` receipts; `npm run qualify:candidate -- --mode collect --os-node-only` merges them. Missing, stale, unknown-fixture, or incompletely identified receipts fail `npm run qualify`; they do not vanish from `npm test`. Named checks: `test/cli.test.ts`, `test/json-contract.test.ts`, `test/catalog/index.test.ts`, `test/catalog/packed-e2e.test.ts`, `test/catalog/qualify-matrix.test.ts`, `test/docs-contract.test.ts`, `test/replace-lockfile-pm.test.ts`, `test/llm-live.test.ts`, `test/upstream-live.test.ts`, `test/github/pr-live.test.ts`, `test/release-live.test.ts`, `test/github/action-live.test.ts`.
+Qualification receipts live in gitignored `qualification/receipts/` and bind one commit plus the packed npm and Action content digests. A receipt is current only if `endedAt` is within 7 days of validation and not in the future. Local `fixture` identity is the entry `checkId`; live fixtures are `tiny-add` (LLM), `request-watch` (OSV/npm registry), `ms` (GitHub PR), `release-rehearse` (npm publish), and `packed-action-consumer` (Actions). `npm run qualify` and release publish refuse when `--npm-digest` or `--action-digest` is omitted. Live receipts also require a matching `workflowRun` (`SLIM_WORKFLOW_RUN` or `GITHUB_RUN_ID`). `npm run artifacts` prints one schema-valid identity document (`docs/artifact-identity.schema.json`) for that commit. `npm run qualify:emit` writes local receipts after the named `checkId` tests pass; it will not mint an `osNode` cell for a different OS or Node. `npm run qualify:candidate` packs once, emits locals, runs live tests when `SLIM_*_LIVE=1`, and fail-closes. CI uploads six `osNode` receipts; `npm run qualify:candidate -- --mode collect --os-node-only` merges them. Missing, stale, unknown-fixture, or incompletely identified receipts fail `npm run qualify`; they do not vanish from `npm test`. Named checks: `test/cli.test.ts`, `test/json-contract.test.ts`, `test/catalog/index.test.ts`, `test/catalog/packed-e2e.test.ts`, `test/catalog/qualify-matrix.test.ts`, `test/docs-contract.test.ts`, `test/replace-lockfile-pm.test.ts`, `test/measurements.test.ts`, `test/llm-live.test.ts`, `test/upstream-live.test.ts`, `test/github/pr-live.test.ts`, `test/release-live.test.ts`, `test/github/action-live.test.ts`. Public size/gzip/parse claims are `docs/measurements.json` (`npm run measure:claims`); `measurement.claims` qualifies that checked-in file (7-day freshness, no gitignored duplicate). `parseNs` is env-local and is not accepted by a numeric tolerance.
 
 Shipped top-level help is the `HELP` string in `src/cli.ts` (`slim --help`). Keep [`help.txt`](./help.txt) equal to that string; `test/cli.test.ts` diffs them.
 
@@ -207,7 +207,7 @@ JSON (`--json`) is `{ schemaVersion: 2, lockfile, rows }`. See `docs/scan.schema
 
 ```
 $ slim inspect lodash
-lodash@4.17.21  MIT  71.0 kB min / 25.8 kB gz
+lodash@4.17.21  MIT  71.0 kB min / 25.6 kB gz (estimated)
 
   call sites (2)
     src/handler.ts:14  _.get(event, 'query.id')
@@ -224,7 +224,7 @@ lodash@4.17.21  MIT  71.0 kB min / 25.8 kB gz
     get path as function
 
   size (measured Node parse/size of the golden slice; see docs/measurements.json)
-    package:     71.0 kB estimated original min  →  6997 B / 2125 B gzip replacement
+    package:     71.0 kB estimated original min  →  7328 B / 2192 B gzip replacement (`measured`)
     Worker gzip / cold-start CPU: not measured by Slim (vendor isolate budget).
     Unbundled Lambda `node_modules/lodash` directory size is not a Slim-published measurement.
     Oracle `lodash.js` bytes/gzip live in docs/measurements.json when lodash is installed.

@@ -192,3 +192,26 @@ test("collectOsNodeReceipts copies nested artifact files", () => {
   assert.deepEqual(copied, ["osNode.ubuntu-latest.22.18.json"]);
   assert.equal(existsSync(join(dest, "osNode.ubuntu-latest.22.18.json")), true);
 });
+
+test("emit-local does not write a gitignored measurement receipt", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-emit-meas-"));
+  const meas: InventoryEntry = {
+    id: "measurement.claims",
+    kind: "measurement",
+    name: "claims",
+    docs: ["docs/measurements.json"],
+    checkId: "test/measurements.test.ts",
+    receiptClass: "local",
+  };
+  const result = emitLocalReceipts({
+    inventory: { schemaVersion: 1, entries: [meas, scanEntry()] },
+    receiptsDir: dir,
+    candidate: { commit: COMMIT, npmDigest: NPM, actionDigest: null },
+    root: "/unused",
+    now: NOW,
+    runCheck: () => ({ ok: true, log: "ok" }),
+  });
+  assert.equal(result.written.includes("measurement.claims"), false);
+  assert.equal(existsSync(join(dir, "measurement.claims.json")), false);
+  assert.deepEqual(result.written, ["command.scan"]);
+});

@@ -610,6 +610,45 @@ test("standing hardening and fixtureRevision digest mismatches fail check", asyn
   assert.ok(docH.packages[0]?.drift.some((d) => d.kind === "digest" && /hardeningDigest/.test(d.detail)));
 });
 
+test("standingDigest hashes the standing test file, not the slim:evidence script", async () => {
+  const root = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: completeFiles({ "ok.js": "process.exit(0);\n" }),
+  });
+  writeFileSync(
+    join(root, "src", "slim", "lodash.test.ts"),
+    `import { test } from "node:test";\ntest("standing-file-changed", () => {});\n`,
+  );
+  const spawn: CheckSpawn = () => ({ status: 0 });
+  const { stdout } = await capture(() => runCheck(parseCli(["check", "--json"]), { cwd: root, spawn }));
+  const doc = JSON.parse(stdout) as { packages: { drift: { kind: string; detail: string }[] }[] };
+  assert.ok(doc.packages[0]?.drift.some((d) => d.kind === "digest" && /standingDigest/.test(d.detail)));
+  assert.ok(doc.packages[0]?.drift.some((d) => d.kind === "digest" && /fixtureRevision/.test(d.detail)));
+
+  const rootScript = fixture({
+    scripts: { "slim:evidence": "node ok.js" },
+    files: completeFiles({ "ok.js": "process.exit(0);\n" }),
+  });
+  writeFileSync(
+    join(rootScript, "package.json"),
+    JSON.stringify({
+      name: "check-mini",
+      type: "module",
+      scripts: { "slim:evidence": "node other.js" },
+    }),
+  );
+  writeFileSync(join(rootScript, "other.js"), "process.exit(0);\n");
+  const { stdout: outS } = await capture(() =>
+    runCheck(parseCli(["check", "--json"]), { cwd: rootScript, spawn }),
+  );
+  const docS = JSON.parse(outS) as { packages: { drift: { kind: string; detail: string }[] }[] };
+  assert.equal(
+    docS.packages[0]?.drift.some((d) => d.kind === "digest" && /standingDigest/.test(d.detail)),
+    false,
+    "changing slim:evidence must not retarget standingDigest",
+  );
+});
+
 test("oracleVersion drift fails check", async () => {
   const root = fixture({
     scripts: { "slim:evidence": "node ok.js" },

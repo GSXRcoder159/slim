@@ -24,6 +24,7 @@ const SCHEMA_FILES = {
   inventory: "support-inventory.schema.json",
   receipt: "receipt.schema.json",
   artifactIdentity: "artifact-identity.schema.json",
+  measurements: "measurements.schema.json",
 } as const;
 
 export type SchemaName = keyof typeof SCHEMA_FILES;

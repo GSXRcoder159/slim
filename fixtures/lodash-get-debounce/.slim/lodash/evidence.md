@@ -14,16 +14,16 @@ Differential fuzzing over the inferred envelope is strong evidence, not proof.
 - Unknowns: 0
 - Catalog: lodash.get, lodash.debounce
 - Envelope hash: `217c102e5c34a74ba017061f1a5574a2ada6cd6a6497e6797e6eb97eafa706c4`
-- Evidence hash: `862c1ff9409241772de9b806b0487f9f27cc442350a566df54636a5c8080e0ae`
-- Module digest: `0f98884df95f6c2d6151847b635b54318e2b031f112ded8047f9e1019a07c366`
-- Standing digest: `ffe575db9c9e1fb5645db8b3dd2c52959f7ceaf0ad6c963eba6616d2dbe75e2d`
+- Evidence hash: `270f980f7b7e70ca0cdba9414c58841293fcb0edfac12bb4afb87bda7c5f20a7`
+- Module digest: `1bdd877f80ea1179d0ef654c9cc6779a0b16bb07d4dcacc7383e7e0e2122b7d3`
+- Standing digest: `c7e3043c0df1fd45a2372a9a17823f1ebbdfaee8b946bf849b7c508ede9c13ff`
 - Hardening digest: `c2b78a75e949486cb0cdaaa2d65f01d4bb80e2ecd85d2f3c049c28762e4ee090`
 - Oracle version: `4.17.21`
-- Fixture revision: `fa3f39bf4374d01aa0b197a575ab79a6e5ba7ebc985beef46d59212ae9833d8d`
+- Fixture revision: `6effe6f80549b75165e46e1c44f70a30e389c85ea6e606bfa64ccb840e4a72d0`
 
 ## 3. Byte delta
 
-71000 B estimated original min → 6997 B replacement
+71000 B estimated original min → 7328 B replacement
 
 ## 4. Edge
 

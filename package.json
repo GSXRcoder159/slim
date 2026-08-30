@@ -31,6 +31,7 @@
     "slim.schema.json",
     "docs/*.schema.json",
     "docs/support-inventory.json",
+    "docs/measurements.json",
     "docs/README.md",
     "LICENSE",
     "README.md",

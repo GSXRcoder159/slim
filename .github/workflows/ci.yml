@@ -53,6 +53,7 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run refresh:golden -- --check
+      - run: npm run measure:claims -- --check
 
   receipts:
     needs: [test, golden-refresh]

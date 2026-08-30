@@ -21,6 +21,15 @@ function toKey(value: unknown): PropertyKey {
   return typeof value === "string" ? value : String(value);
 }
 
+function lodashToString(value: unknown): string {
+  if (value == null) return "";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map((v) => lodashToString(v)).join(",");
+  if (typeof value === "symbol") return value.toString();
+  const result = String(value);
+  return result === "0" && Object.is(value, -0) ? "-0" : result;
+}
+
 function isKey(value: unknown, object?: unknown): boolean {
   if (Array.isArray(value)) return false;
   const t = typeof value;
@@ -83,8 +92,7 @@ function parseStringPath(path: string): string[] {
 function castPath(path: unknown, object?: unknown): PropertyKey[] {
   if (Array.isArray(path)) return path.map((p) => toKey(p));
   if (isKey(path, object)) return [toKey(path)];
-  if (typeof path === "string") return parseStringPath(path);
-  return [toKey(path)];
+  return parseStringPath(lodashToString(path));
 }
 
 function readProp(object: object, key: PropertyKey): unknown {

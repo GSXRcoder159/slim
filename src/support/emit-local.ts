@@ -145,6 +145,7 @@ export function emitLocalReceipts(opts: EmitLocalOpts): EmitLocalResult {
 
   const entries = opts.inventory.entries.filter((e) => {
     if (e.receiptClass !== "local") return false;
+    if (e.kind === "measurement") return false;
     if (opts.only === "osNode") return e.kind === "osNode";
     return true;
   });

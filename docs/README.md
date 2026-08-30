@@ -8,7 +8,8 @@
 | [repo.md](./repo.md) | Current TS layout, MIT, GSXRcoder159/slim, CI matrix, slim.json |
 | [release-identity.md](./release-identity.md) | Approved GitHub/Action identity; npm publication is Phase 17 |
 | [evidence.lodash.sample.md](./evidence.lodash.sample.md) | Copy of the golden fixture evidence report |
-| [measurements.json](./measurements.json) | Versioned Node parse/size receipts (measured vs estimated) |
+| [measurements.json](./measurements.json) | Versioned Node parse/size receipts (`measured` / `estimated` / `unavailable`) |
+| [measurements.schema.json](./measurements.schema.json) | Schema for `measurements.json` |
 | [slim.schema.json](./slim.schema.json) | Config schema (seven fields) |
 | [scan.schema.json](./scan.schema.json) | `slim scan --json` report schema |
 | [envelope.schema.json](./envelope.schema.json) | Envelope JSON (`inspect --json` / `.slim/<pkg>/envelope.json`) |

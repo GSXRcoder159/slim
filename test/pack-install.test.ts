@@ -85,6 +85,7 @@ test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tes
     "docs/scan.schema.json",
     "docs/error.schema.json",
     "docs/support-inventory.json",
+    "docs/measurements.json",
     "CHANGELOG.md",
     "package.json",
     "README.md",
@@ -113,7 +114,7 @@ function packedAllowed(rel: string): boolean {
   if (rel === "package.json" || rel === "LICENSE" || rel === "README.md" || rel === "CHANGELOG.md") {
     return true;
   }
-  if (rel === "slim.schema.json" || rel === "docs/support-inventory.json" || rel === "docs/README.md") {
+  if (rel === "slim.schema.json" || rel === "docs/support-inventory.json" || rel === "docs/measurements.json" || rel === "docs/README.md") {
     return true;
   }
   if (/^docs\/[^/]+\.schema\.json$/.test(rel)) return true;
@@ -139,6 +140,7 @@ test("packed tarball matches the documented production surface exactly", { timeo
       "CHANGELOG.md",
       "slim.schema.json",
       "docs/support-inventory.json",
+      "docs/measurements.json",
       "docs/README.md",
       "dist/main.js",
       "dist/main.d.ts",

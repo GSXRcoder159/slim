@@ -28,7 +28,8 @@ export type InventoryKind =
   | "packageManager"
   | "provider"
   | "externalService"
-  | "action";
+  | "action"
+  | "measurement";
 
 export interface InventoryEntry {
   id: string;
@@ -265,6 +266,16 @@ export function canonicalInventory(): SupportInventory {
       }),
     );
   }
+  entries.push(
+    e({
+      id: "measurement.claims",
+      kind: "measurement",
+      name: "claims",
+      docs: ["docs/measurements.json", "docs/packages.md", "docs/dx.md", "docs/repo.md"],
+      checkId: "test/measurements.test.ts",
+      receiptClass: "local",
+    }),
+  );
   return { schemaVersion: 1, entries };
 }
 

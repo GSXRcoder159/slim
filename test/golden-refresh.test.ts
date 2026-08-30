@@ -9,6 +9,7 @@ import { hashEnvelope, type Envelope } from "../src/envelope/types.ts";
 import type { EvidenceJson } from "../src/evidence/report.ts";
 import {
   GOLDEN_REFRESH_INPUTS,
+  assertGoldenInputs,
   goldenEquivalent,
 } from "../scripts/refresh-golden-fixture.ts";
 
@@ -23,19 +24,62 @@ function gitLf(buf: Buffer): Buffer {
 test("refresh-inputs.json matches the declared golden contract", () => {
   const path = join(FIXTURE, ".slim", "refresh-inputs.json");
   assert.ok(existsSync(path), "fixtures/lodash-get-debounce/.slim/refresh-inputs.json must exist");
-  const got = JSON.parse(readFileSync(path, "utf8")) as typeof GOLDEN_REFRESH_INPUTS;
-  assert.deepEqual(got, {
-    seed: 1,
-    workers: 1,
-    budgetMs: 30000,
-    templateOnly: true,
-    lodashVersion: "4.17.21",
-    package: "lodash",
-  });
+  const got = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+  for (const [key, value] of Object.entries(GOLDEN_REFRESH_INPUTS)) {
+    assert.equal(got[key], value, `refresh-inputs.${key}`);
+  }
   assert.equal(GOLDEN_REFRESH_INPUTS.seed, 1);
   assert.equal(GOLDEN_REFRESH_INPUTS.workers, 1);
   assert.equal(GOLDEN_REFRESH_INPUTS.budgetMs, 30000);
   assert.equal(GOLDEN_REFRESH_INPUTS.templateOnly, true);
+  assert.equal(GOLDEN_REFRESH_INPUTS.node, "22.18");
+  assert.equal(GOLDEN_REFRESH_INPUTS.os, "linux");
+  assert.deepEqual(assertGoldenInputs(FIXTURE), []);
+});
+
+test("assertGoldenInputs fails when lockfile seed budget env or artifact identity drifts", () => {
+  const work = mkdtempSync(join(tmpdir(), "slim-golden-stale-"));
+  const copy = (rel: string) => {
+    const dest = join(work, rel);
+    mkdirSync(dirname(dest), { recursive: true });
+    writeFileSync(dest, readFileSync(join(FIXTURE, rel)));
+  };
+  for (const rel of [
+    "package-lock.json",
+    ".slim/refresh-inputs.json",
+    ".slim/lodash/envelope.json",
+    ".slim/lodash/evidence.json",
+    "src/slim/lodash.ts",
+    "src/slim/lodash.test.ts",
+    "src/slim/lodash.hardened.test.ts",
+  ]) {
+    copy(rel);
+  }
+  assert.deepEqual(assertGoldenInputs(work), []);
+
+  const inputsPath = join(work, ".slim", "refresh-inputs.json");
+  const inputs = JSON.parse(readFileSync(inputsPath, "utf8")) as Record<string, unknown>;
+
+  writeFileSync(join(work, "package-lock.json"), "{}\n");
+  assert.ok(assertGoldenInputs(work).some((m) => /lockfile/i.test(m)));
+  writeFileSync(join(work, "package-lock.json"), readFileSync(join(FIXTURE, "package-lock.json")));
+
+  writeFileSync(inputsPath, JSON.stringify({ ...inputs, seed: 99 }) + "\n");
+  assert.ok(assertGoldenInputs(work).some((m) => /seed/i.test(m)));
+  writeFileSync(inputsPath, JSON.stringify({ ...inputs, budgetMs: 1 }) + "\n");
+  assert.ok(assertGoldenInputs(work).some((m) => /budget/i.test(m)));
+  writeFileSync(inputsPath, JSON.stringify({ ...inputs, node: "24" }) + "\n");
+  assert.ok(assertGoldenInputs(work).some((m) => /node/i.test(m)));
+  writeFileSync(inputsPath, JSON.stringify({ ...inputs, os: "darwin" }) + "\n");
+  assert.ok(assertGoldenInputs(work).some((m) => /\bos\b/i.test(m)));
+  writeFileSync(inputsPath, JSON.stringify({ ...inputs, fixtureRevision: "0".repeat(64) }) + "\n");
+  assert.ok(assertGoldenInputs(work).some((m) => /fixtureRevision/i.test(m)));
+  writeFileSync(inputsPath, JSON.stringify({ ...inputs, moduleDigest: "0".repeat(64) }) + "\n");
+  assert.ok(assertGoldenInputs(work).some((m) => /moduleDigest/i.test(m)));
+  writeFileSync(inputsPath, JSON.stringify(inputs) + "\n");
+
+  writeFileSync(join(work, "src", "slim", "lodash.ts"), "export function get() { return 2; }\n");
+  assert.ok(assertGoldenInputs(work).some((m) => /moduleDigest/i.test(m)));
 });
 
 test("refresh:golden pins seed workers template-only and excludes traces.jsonl", () => {
@@ -44,6 +88,8 @@ test("refresh:golden pins seed workers template-only and excludes traces.jsonl",
   assert.match(src, /"--workers"/);
   assert.match(src, /"--template-only"/);
   assert.match(src, /"--budget-ms"/);
+  assert.match(src, /node: "22\.18"/);
+  assert.match(src, /os: "linux"/);
   assert.match(src, /traces\.jsonl/);
   assert.doesNotMatch(src, /copyIfExists\([^)]*traces\.jsonl/);
 });
@@ -106,6 +152,12 @@ test("goldenEquivalent reports identity fields and ignores wall-clock fuzz stats
     envelopeHash: "aa",
     byteDelta: { replacement: 24 },
     generation: { kind: "catalog" },
+    artifacts: {
+      moduleDigest: "11",
+      standingDigest: "22",
+      hardeningDigest: "33",
+      fixtureRevision: "44",
+    },
     fuzz: {
       seed: 1,
       tracesReplayed: 12,
@@ -132,8 +184,10 @@ test("goldenEquivalent reports identity fields and ignores wall-clock fuzz stats
 
   writeFileSync(join(b, "src", "slim", "lodash.ts"), "export function get() { return 1; }\n");
   bEv.fuzz.seed = 2;
+  bEv.artifacts = { ...bEv.artifacts, moduleDigest: "99" };
   writeFileSync(join(b, ".slim", "lodash", "evidence.json"), JSON.stringify(bEv) + "\n");
   const mismatches = goldenEquivalent(a, b);
   assert.ok(mismatches.includes("src/slim/lodash.ts"));
   assert.ok(mismatches.includes("evidence.fuzz.seed"));
+  assert.ok(mismatches.includes("evidence.artifacts.moduleDigest"));
 });

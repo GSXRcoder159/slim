@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateNamed } from "../src/schema/documents.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG_FIELDS = ["outDir", "budgetMs", "testCommand", "include", "ignore", "replacements"] as const;
@@ -43,6 +44,7 @@ test("docs/examples/slim.json matches config.ts fields", () => {
   assert.equal("dir" in ex, false);
   assert.equal("fuzzIterations" in ex, false);
   assert.doesNotMatch(JSON.stringify(ex), /vendor\/slim/);
+  assert.equal(validateNamed("slim", ex), null);
 });
 
 test("docs replace vendor/slim with src/slim", () => {
@@ -242,6 +244,16 @@ test("evidence, manifest, inventory, receipt, and artifact-identity schemas are 
   assert.equal(ident.additionalProperties, false);
   for (const key of ["schemaVersion", "commit", "npmDigest", "actionDigest", "distSha256", "packedAt"]) {
     assert.ok(ident.required.includes(key), key);
+  }
+  const measurements = JSON.parse(readFileSync(join(ROOT, "docs/measurements.schema.json"), "utf8")) as {
+    required: string[];
+    additionalProperties: boolean;
+    properties: { schemaVersion: { const: number } };
+  };
+  assert.equal(measurements.additionalProperties, false);
+  assert.equal(measurements.properties.schemaVersion.const, 1);
+  for (const key of ["schemaVersion", "command", "date", "maxAgeDays", "files", "estimatedOriginalMin"]) {
+    assert.ok(measurements.required.includes(key), key);
   }
 });
 

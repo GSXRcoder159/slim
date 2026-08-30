@@ -94,6 +94,7 @@ test("package.json files includes command JSON schemas and CHANGELOG", () => {
   };
   assert.ok(pkg.files.includes("docs/*.schema.json"), "files must ship docs/*.schema.json");
   assert.ok(pkg.files.includes("docs/support-inventory.json"), "files must ship support inventory");
+  assert.ok(pkg.files.includes("docs/measurements.json"), "files must ship measurements");
   assert.ok(pkg.files.includes("docs/README.md"), "files must ship docs/README.md");
   assert.ok(pkg.files.includes("CHANGELOG.md"), "files must ship CHANGELOG.md");
   assert.ok(existsSync(join(ROOT, "CHANGELOG.md")));
@@ -140,13 +141,15 @@ test("CI matrix is OS × Node 22.18 and 24", () => {
   assert.match(ci, /receipt-osNode-/);
 });
 
-test("CI runs golden-refresh --check on ubuntu Node 22.18", () => {
+test("CI runs golden-refresh --check and measure:claims --check on ubuntu Node 22.18", () => {
   const ci = readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8");
   assert.match(ci, /golden-refresh:/);
   assert.match(ci, /refresh:golden -- --check/);
+  assert.match(ci, /measure:claims -- --check/);
   const job = ci.slice(ci.indexOf("golden-refresh:"));
   assert.match(job, /ubuntu-latest/);
   assert.match(job, /"22\.18"/);
+  assert.match(job, /measure:claims -- --check/);
 });
 
 test("public docs do not carry unsupported size, command, Action, or TypeScript claims", () => {
@@ -171,6 +174,13 @@ test("public docs do not carry unsupported size, command, Action, or TypeScript 
     }
     if (/~1\.4 MB/.test(text)) hits.push(`${relative(ROOT, f)}: ~1.4 MB`);
     if (/immune system/i.test(text)) hits.push(`${relative(ROOT, f)}: immune system`);
+    if (/Bundlephobia.*as of 2026-08-15/.test(text)) {
+      hits.push(`${relative(ROOT, f)}: unlabeled Bundlephobia date`);
+    }
+    if (/parse time within tolerance|parseNs tolerance/i.test(text)) {
+      hits.push(`${relative(ROOT, f)}: parse time within tolerance`);
+    }
+    if (/~0\.4 kB/.test(text)) hits.push(`${relative(ROOT, f)}: unlabeled ~0.4 kB`);
   }
   assert.deepEqual(hits, []);
 });

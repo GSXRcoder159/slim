@@ -9,7 +9,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { assertDocument } from "../schema/documents.ts";
 import type { InventoryEntry, SupportInventory } from "./inventory.ts";
+import { repoRootFromSupport } from "./inventory.ts";
 import { ADVERTISED_ACTION_TAG, advertisedActionUses } from "../release/identity.ts";
+import { qualifyMeasurementClaims } from "./measurements.ts";
 
 export const RECEIPT_OUTCOMES = [
   "pass",
@@ -425,9 +427,10 @@ export function qualifyInventory(
   inventory: SupportInventory,
   receiptsDir: string,
   candidate: CandidateIdentity,
-  opts: { now?: Date } = {},
+  opts: { now?: Date; root?: string } = {},
 ): QualifyFailure[] {
   const now = opts.now ?? new Date();
+  const root = opts.root ?? repoRootFromSupport();
   const failures: QualifyFailure[] = [];
   const files = existsSync(receiptsDir)
     ? new Map(
@@ -438,6 +441,17 @@ export function qualifyInventory(
     : new Map<string, string>();
 
   for (const entry of inventory.entries) {
+    if (entry.kind === "measurement") {
+      try {
+        qualifyMeasurementClaims(root, now);
+      } catch (err) {
+        failures.push({
+          entryId: entry.id,
+          reason: err instanceof Error ? err.message : String(err),
+        });
+      }
+      continue;
+    }
     const file = files.get(receiptFileName(entry.id));
     if (!file) {
       failures.push({ entryId: entry.id, reason: "missing receipt" });

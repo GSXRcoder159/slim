@@ -1,6 +1,6 @@
 # Slim package-support matrix
 
-Sizes are Bundlephobia **min / gzip** for current latest as of 2026-08-15, unless noted. Slice sizes are estimates for a typical 1–5 function envelope, not a promise. Hardness is for that typical envelope, not the whole library.
+Sizes in the catalog table come from [`docs/measurements.json`](./measurements.json) (`npm run measure:claims`). Original min/gzip are `estimated` catalog mins (gzip is the 0.36 × min guess used by scan). The lodash slim column is `measured` from the golden fixture. Other slim columns are `unavailable` (not golden-measured) unless the replacement is platform-native **0**. Hardness is for a typical envelope, not the whole library.
 
 **Rule:** Slim does not support a *package*. It supports an *envelope*. `inspect` tells you which.
 
@@ -18,19 +18,19 @@ CVE cadence is why a small package can still be worth slicing: you delete the ad
 
 ## Catalog in v1
 
-Shipped catalog packages only. Slice sizes are estimates except where `docs/measurements.json` labels a field `measured`.
+Shipped catalog packages only. Slice sizes are `measured` only where `docs/measurements.json` says so.
 
-| Package | Typical slice | Original min / gz | Slim (est.) | Hardness |
+| Package | Typical slice | Original min / gz (`estimated`) | Slim | Hardness |
 | --- | --- | --- | --- | --- |
-| **lodash** (+ `lodash-es`, per-method packages, `underscore`) | `get`, `pick`, `debounce` | 71.0 kB / 25.8 kB (`4.17.21`) | 6997 B / 2125 B gzip (`measured`, golden `get`+`debounce`) | easy–med |
-| **whatwg-url** (`url-parse` → same) | `URL` / `URLSearchParams` | 470.9 kB / 168.5 kB | **0** (platform `URL`) | easy |
-| **mime-types** (`mime-db`, `mime`) | `lookup` / `extension` allowlist | 162.5 kB / 24.1 kB | ~0.4 kB | easy |
-| **bluebird** | `resolve`, `reject`, `all`, `race`, `delay`, `promisify` | 79.0 kB / 22.4 kB | ~0.8 kB | easy |
-| **moment** | `moment(x).format('YYYY-MM-DD')` | 60.6 kB / 19.7 kB | 1–3 kB | med (format) |
-| **uuid** | `v4` only | 10.2 kB / 3.8 kB | **0** (`crypto.randomUUID`) | easy |
-| **ms** | single duration token | 1.5 / 0.7 | small | easy |
-| **nanoid** | `nanoid` / `customAlphabet` | small | small | easy |
-| **clsx** (`classnames`) | `clsx(...)` | small | small | easy |
+| **lodash** (+ `lodash-es`, per-method packages, `underscore`) | `get`, `pick`, `debounce` | 71.0 kB / 25.6 kB gzip (`4.17.21`) | 7328 B / 2192 B gzip (`measured`, golden `get`+`debounce`) | easy–med |
+| **whatwg-url** (`url-parse` → same) | `URL` / `URLSearchParams` | 470.9 kB / 169.5 kB gzip | **0** (platform `URL`) | easy |
+| **mime-types** (`mime-db`, `mime`) | `lookup` / `extension` allowlist | 162.5 kB / 58.5 kB gzip | unavailable (not golden-measured) | easy |
+| **bluebird** | `resolve`, `reject`, `all`, `race`, `delay`, `promisify` | 79.0 kB / 28.4 kB gzip | unavailable (not golden-measured) | easy |
+| **moment** | `moment(x).format('YYYY-MM-DD')` | 60.6 kB / 21.8 kB gzip | unavailable (not golden-measured) | med (format) |
+| **uuid** | `v4` only | 10.2 kB / 3.7 kB gzip | **0** (`crypto.randomUUID`) | easy |
+| **ms** | single duration token | 2.0 kB / 0.7 kB gzip | unavailable (not golden-measured) | easy |
+| **nanoid** | `nanoid` / `customAlphabet` | 1.5 kB / 0.5 kB gzip | unavailable (not golden-measured) | easy |
+| **clsx** (`classnames`) | `clsx(...)` | 0.8 kB / 0.3 kB gzip | unavailable (not golden-measured) | easy |
 
 Golden fixture: `fixtures/lodash-get-debounce/`.
 
@@ -78,12 +78,12 @@ validator, cron-parser, date-fns, crypto-js, js-yaml, ramda, jsonwebtoken, qs, a
 
 These are slimmable and painful, but the envelope is a project.
 
-| Package | min / gz | Why wait |
+| Package | Size | Why wait |
 | --- | --- | --- |
-| marked / markdown-it | ~40 kB+ | XSS. A wrong parser is a security product, not a size trick. |
+| marked / markdown-it | large | XSS. A wrong parser is a security product, not a size trick. |
 | ajv | large | JSON Schema compiler. |
 | handlebars / mustache | medium | Compile-then-inline is a different generator. |
-| minimatch / micromatch | 24.5 kB / 8.8 kB | Build-tool dep more than a Worker dep. |
+| minimatch / micromatch | medium | Build-tool dep more than a Worker dep. |
 | path-to-regexp | medium | Route DSLs. |
 | he / entities | small–med | HTML entities. |
 | papaparse / csv-parse | med | CSV dialects. |

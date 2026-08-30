@@ -107,7 +107,7 @@ export function runQualifyCandidate(opts: QualifyCandidateOpts): QualifyCandidat
       ? { schemaVersion: 1 as const, entries: inventory.entries.filter((e) => e.kind === "osNode") }
       : inventory;
     return {
-      failures: qualifyInventory(scoped, opts.receiptsDir, candidate),
+      failures: qualifyInventory(scoped, opts.receiptsDir, candidate, { root: opts.root }),
       npmDigest: candidate.npmDigest,
       actionDigest: candidate.actionDigest,
       written,
@@ -170,7 +170,7 @@ export function runQualifyCandidate(opts: QualifyCandidateOpts): QualifyCandidat
       ? { schemaVersion: 1 as const, entries: inventory.entries.filter((e) => e.kind === "osNode") }
       : inventory;
     return {
-      failures: qualifyInventory(scoped, opts.receiptsDir, candidate),
+      failures: qualifyInventory(scoped, opts.receiptsDir, candidate, { root: opts.root }),
       npmDigest,
       actionDigest,
       written,

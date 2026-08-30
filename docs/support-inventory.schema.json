@@ -33,7 +33,8 @@
             "packageManager",
             "provider",
             "externalService",
-            "action"
+            "action",
+            "measurement"
           ]
         },
         "docs": { "type": "array", "items": { "type": "string", "minLength": 1 } },

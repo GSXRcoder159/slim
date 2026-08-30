@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/slim/docs/measurements.schema.json",
+  "title": "Slim public measurement claims",
+  "description": "Regenerable size, gzip, and Node parse receipts. schemaVersion 1. Provenance is measured, estimated, or unavailable. parseNs is env-local and freshness-gated; it is not a portable SLO.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "command",
+    "slimVersion",
+    "node",
+    "os",
+    "date",
+    "maxAgeDays",
+    "notes",
+    "files",
+    "estimatedOriginalMin"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "command": { "type": "string", "const": "npm run measure:claims" },
+    "slimVersion": { "type": "string", "minLength": 1 },
+    "node": { "type": "string", "minLength": 1 },
+    "os": { "type": "string", "minLength": 1 },
+    "date": { "type": "string", "minLength": 10, "maxLength": 10 },
+    "maxAgeDays": { "type": "integer", "const": 7 },
+    "notes": { "type": "string", "minLength": 1 },
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["goldenLodashSlice", "lodashOracleEntry", "workerColdStart"],
+      "properties": {
+        "goldenLodashSlice": { "$ref": "#/$defs/fileClaim" },
+        "lodashOracleEntry": { "$ref": "#/$defs/fileClaim" },
+        "workerColdStart": { "$ref": "#/$defs/fileClaim" }
+      }
+    },
+    "estimatedOriginalMin": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/estimatedMin" }
+    }
+  },
+  "$defs": {
+    "claimValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "provenance"],
+      "properties": {
+        "value": { "type": ["number", "null"] },
+        "provenance": { "type": "string", "enum": ["measured", "estimated", "unavailable"] },
+        "reason": { "type": "string" }
+      }
+    },
+    "fileClaim": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes", "gzipBytes", "parseNs"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": ["string", "null"] },
+        "bytes": { "$ref": "#/$defs/claimValue" },
+        "gzipBytes": { "$ref": "#/$defs/claimValue" },
+        "parseNs": { "$ref": "#/$defs/claimValue" }
+      }
+    },
+    "estimatedMin": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "gzipBytes", "provenance", "source"],
+      "properties": {
+        "value": { "type": "number" },
+        "gzipBytes": { "type": "number" },
+        "provenance": { "type": "string", "const": "estimated" },
+        "source": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

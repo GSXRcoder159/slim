@@ -130,6 +130,7 @@ test("named schemas classify missing, malformed, stale, and incompatible version
     "inventory",
     "receipt",
     "artifactIdentity",
+    "measurements",
   ] as const;
   for (const name of names) {
     const schema = loadSchema(name) as {
