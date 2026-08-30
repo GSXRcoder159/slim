@@ -346,9 +346,9 @@ test("npm pack and publish dry-run leave tracked metadata unchanged and create n
     main: string;
   };
   assert.deepEqual(pkg.dependencies, {});
-  assert.equal(pkg.repository.url, "git+https://github.com/slim-hq/slim.git");
-  assert.equal(pkg.bugs.url, "https://github.com/slim-hq/slim/issues");
-  assert.equal(pkg.homepage, "https://github.com/slim-hq/slim#readme");
+  assert.equal(pkg.repository.url, "git+https://github.com/GSXRcoder159/slim.git");
+  assert.equal(pkg.bugs.url, "https://github.com/GSXRcoder159/slim/issues");
+  assert.equal(pkg.homepage, "https://github.com/GSXRcoder159/slim#readme");
   assert.equal(pkg.main, "./dist/main.js");
 
   const packed = parseNpmJson(pack.stdout) as Array<{ files: Array<{ path: string }> }>;

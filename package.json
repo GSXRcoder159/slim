@@ -61,12 +61,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/slim-hq/slim.git"
+    "url": "git+https://github.com/GSXRcoder159/slim.git"
   },
   "bugs": {
-    "url": "https://github.com/slim-hq/slim/issues"
+    "url": "https://github.com/GSXRcoder159/slim/issues"
   },
-  "homepage": "https://github.com/slim-hq/slim#readme",
+  "homepage": "https://github.com/GSXRcoder159/slim#readme",
   "dependencies": {},
   "devDependencies": {
     "@types/lodash": "^4.17.20",

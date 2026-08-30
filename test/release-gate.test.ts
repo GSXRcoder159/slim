@@ -66,7 +66,7 @@ function initReleaseFixture(opts?: {
       {
         name: opts?.name ?? "slim",
         version,
-        repository: { type: "git", url: opts?.repository ?? "git+https://github.com/slim-hq/slim.git" },
+        repository: { type: "git", url: opts?.repository ?? "git+https://github.com/GSXRcoder159/slim.git" },
       },
       null,
       2,

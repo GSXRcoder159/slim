@@ -69,7 +69,7 @@ test("clone rehearsal: identity, packed dry-run, attach rollback, no tag or tarb
       JSON.stringify({
         name: "slim",
         version: "0.1.0",
-        repository: { type: "git", url: "git+https://github.com/slim-hq/slim.git" },
+        repository: { type: "git", url: "git+https://github.com/GSXRcoder159/slim.git" },
       }) + "\n",
     );
     writeFileSync(join(fixture, "CHANGELOG.md"), "# Changelog\n\n## 0.1.0\n");

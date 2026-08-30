@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: "22.18"
       - run: npm ci
-      - uses: slim-hq/slim/action/upstream@v1
+      - uses: GSXRcoder159/slim/action/upstream@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - if: failure()

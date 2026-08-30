@@ -7,6 +7,7 @@ import { generatedHeader } from "../src/generate/header.ts";
 import { ENVELOPE_VERSION, emptyHyrum } from "../src/envelope/types.ts";
 import type { Envelope } from "../src/envelope/types.ts";
 import { MIN_NODE_ENGINES, MIN_NODE_LABEL } from "../src/node-min.ts";
+import { advertisedActionUses } from "../src/release/identity.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -223,11 +224,11 @@ test("consumer Action examples include checkout, setup-node, and npm ci", () => 
     assert.doesNotMatch(yml, /fail:\s*true/);
   }
   const check = readFileSync(join(ROOT, "docs/examples/slim-check.yml"), "utf8");
-  assert.match(check, /slim-hq\/slim\/action\/check@v1/);
+  assert.ok(check.includes(advertisedActionUses("check")));
   const bloat = readFileSync(join(ROOT, "docs/examples/slim-bloat.yml"), "utf8");
-  assert.match(bloat, /slim-hq\/slim\/action\/bloat@v1/);
+  assert.ok(bloat.includes(advertisedActionUses("bloat")));
   const watch = readFileSync(join(ROOT, "docs/examples/slim-watch.yml"), "utf8");
-  assert.match(watch, /slim-hq\/slim\/action\/upstream@v1/);
+  assert.ok(watch.includes(advertisedActionUses("upstream")));
   const dx = readFileSync(join(ROOT, "docs/dx.md"), "utf8");
   assert.doesNotMatch(dx, /still falls back to source/);
   assert.doesNotMatch(dx, /Default: comment, exit 0/);

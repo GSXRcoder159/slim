@@ -5,7 +5,8 @@
 | [dx.md](./dx.md) | CLI surface, exit codes, stdout/stderr, Friday walkthrough, Hyrum substitution contract, Actions, evidence, watch, v1 vs later |
 | [help.txt](./help.txt) | Snapshot of shipped `slim --help` (`src/cli.ts` HELP) |
 | [packages.md](./packages.md) | Catalog in v1 vs not-in-v1, hardness, refuse errors |
-| [repo.md](./repo.md) | Current TS layout, MIT, slim-hq, CI matrix, slim.json |
+| [repo.md](./repo.md) | Current TS layout, MIT, GSXRcoder159/slim, CI matrix, slim.json |
+| [release-identity.md](./release-identity.md) | Approved GitHub/Action identity; npm publication is Phase 17 |
 | [evidence.lodash.sample.md](./evidence.lodash.sample.md) | Copy of the golden fixture evidence report |
 | [measurements.json](./measurements.json) | Versioned Node parse/size receipts (measured vs estimated) |
 | [slim.schema.json](./slim.schema.json) | Config schema (seven fields) |

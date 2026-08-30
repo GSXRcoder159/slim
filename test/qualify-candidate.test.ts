@@ -136,7 +136,7 @@ test("emit mode refuses a dirty tree", () => {
     JSON.stringify({
       name: "slim",
       version: "0.1.0",
-      repository: { type: "git", url: "git+https://github.com/slim-hq/slim.git" },
+      repository: { type: "git", url: "git+https://github.com/GSXRcoder159/slim.git" },
     }) + "\n",
   );
   writeFileSync(

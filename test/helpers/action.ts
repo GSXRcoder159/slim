@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import { symlinkSync } from "node:fs";
 import { hermeticPmEnv } from "../../src/rewrite/lockfile.ts";
 import { minimalEnvelope, minimalEvidence, minimalManifest, rebindEvidenceArtifacts } from "./documents.ts";
-import { packSlim } from "./llm-replace.ts";
+import { packSlim, ROOT } from "./llm-replace.ts";
 import { actionManifest, STAMP_NAME } from "../../action/digest.mjs";
 
 const require = createRequire(import.meta.url);
@@ -26,6 +26,86 @@ export function extractPackedAction(tarball: string): { dest: string; root: stri
   }
   const { sha256 } = actionManifest(root);
   return { dest, root, actionDigest: sha256 };
+}
+
+export function copyExampleWorkflows(dest: string): void {
+  mkdirSync(join(dest, ".github", "workflows"), { recursive: true });
+  for (const name of ["slim-check.yml", "slim-bloat.yml", "slim-watch.yml"] as const) {
+    const src = join(ROOT, "docs", "examples", name);
+    writeFileSync(join(dest, ".github", "workflows", name), readFileSync(src));
+  }
+}
+
+export function publishedQualifyWorkflow(opts: {
+  actionRepo: string;
+  actionTag: string;
+  actionDigest: string;
+}): string {
+  const uses = (name: string) => `${opts.actionRepo}/action/${name}@${opts.actionTag}`;
+  const failJob = (id: string, fixture: string, action: string, setup: string) => `
+  ${id}:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22.18"
+      - name: install ${fixture} at root
+        shell: bash
+        run: |
+          shopt -s dotglob
+          find . -mindepth 1 -maxdepth 1 ! -name consumers ! -name .git ! -name .github -exec rm -rf {} +
+          cp -R consumers/${fixture}/. .
+      ${setup}
+      - name: ${id} expected
+        id: fail_step
+        continue-on-error: true
+        uses: ${uses(action)}
+        env:
+          SLIM_ACTION_DIGEST: \${{ env.SLIM_ACTION_DIGEST }}
+      - name: assert ${id} failed
+        if: steps.fail_step.outcome != 'failure'
+        shell: bash
+        run: echo "${id} path did not fail" >&2; exit 1
+`;
+  return `name: qualify-actions
+on:
+  push:
+  workflow_dispatch:
+env:
+  SLIM_ACTION_DIGEST: ${opts.actionDigest}
+jobs:
+  cell:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ["22.18", "24"]
+    runs-on: \${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: \${{ matrix.node }}
+      - run: npm ci
+      - name: check success
+        uses: ${uses("check")}
+        env:
+          SLIM_ACTION_DIGEST: \${{ env.SLIM_ACTION_DIGEST }}
+      - name: bloat success
+        uses: ${uses("bloat")}
+        env:
+          SLIM_ACTION_DIGEST: \${{ env.SLIM_ACTION_DIGEST }}
+      - name: upstream success
+        uses: ${uses("upstream")}
+        env:
+          SLIM_ACTION_DIGEST: \${{ env.SLIM_ACTION_DIGEST }}
+${failJob("bloat-fail", "bloat-fail", "bloat", "")}${failJob(
+    "check-fail",
+    "check-fail",
+    "check",
+    `- run: npm install`,
+  )}${failJob("upstream-fail", "upstream-fail", "upstream", "")}`;
 }
 
 /** Copy packed action/dist/docs onto dest so `uses: ./action/*` can load schemas next to dist. */

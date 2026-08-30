@@ -301,16 +301,37 @@ const actionEntry: InventoryEntry = {
   receiptClass: "live",
 };
 
-test("actionReceipt is schema-valid with action digest identity", () => {
-  const rec = actionReceipt({
-    command: "check",
+const ACTION_CONSUMER = "GSXRcoder159/slim-action-consumer";
+const ACTION_REF = "refs/tags/v1";
+
+function checkActionReceipt(
+  extra: Partial<{
+    command: "check" | "bloat" | "upstream";
+    actionDigest: string;
+    workflowRun: string | null;
+    log: string;
+    repository: string;
+    ref: string;
+    cells: string;
+  }> = {},
+) {
+  return actionReceipt({
+    command: extra.command ?? "check",
     fixture: "packed-action-consumer",
     commit: COMMIT,
-    actionDigest: ACTION,
+    actionDigest: extra.actionDigest ?? ACTION,
     startedAt: new Date("2026-08-27T14:00:00.000Z"),
     endedAt: new Date("2026-08-27T14:00:01.000Z"),
-    log: "ubuntu-latest:22.18:check:0",
+    log: extra.log ?? "ok",
+    workflowRun: extra.workflowRun,
+    repository: extra.repository ?? ACTION_CONSUMER,
+    ref: extra.ref ?? ACTION_REF,
+    cells: extra.cells,
   });
+}
+
+test("actionReceipt is schema-valid with action digest identity", () => {
+  const rec = checkActionReceipt({ log: "ubuntu-latest:22.18:check:0" });
   const parsed = parseReceipt(rec);
   assert.equal(parsed.checkId, "test/github/action-live.test.ts");
   assert.equal(parsed.command, "check");
@@ -318,6 +339,10 @@ test("actionReceipt is schema-valid with action digest identity", () => {
   assert.equal(parsed.npmDigest, null);
   assert.equal(parsed.service, null);
   assert.equal(parsed.outcome, "pass");
+  assert.equal(parsed.repository, ACTION_CONSUMER);
+  assert.equal(parsed.ref, ACTION_REF);
+  assert.match(parsed.environment ?? "", /cells=/);
+  assert.doesNotMatch(parsed.environment ?? "", /darwin|linux|win32/);
 });
 
 test("qualify missing action.check receipt fails closed", () => {
@@ -334,15 +359,7 @@ test("qualify action digest mismatch fails closed", () => {
   writeReceipt(
     dir,
     actionEntry.id,
-    actionReceipt({
-      command: "check",
-      fixture: "packed-action-consumer",
-      commit: COMMIT,
-      actionDigest: "d".repeat(64),
-      startedAt: new Date("2026-08-27T14:00:00.000Z"),
-      endedAt: new Date("2026-08-27T14:00:01.000Z"),
-      log: "ok",
-    }),
+    checkActionReceipt({ actionDigest: "d".repeat(64) }),
   );
   const failures = qualifyInventory({ schemaVersion: 1, entries: [actionEntry] }, dir, {
     ...candidate,
@@ -528,16 +545,7 @@ test("omitting candidate action digest cannot disable comparison", () => {
   writeReceipt(
     dir,
     actionEntry.id,
-    actionReceipt({
-      command: "check",
-      fixture: "packed-action-consumer",
-      commit: COMMIT,
-      actionDigest: ACTION,
-      startedAt: new Date("2026-08-27T14:00:00.000Z"),
-      endedAt: new Date("2026-08-27T14:00:01.000Z"),
-      log: "ok",
-      workflowRun: WORKFLOW,
-    }),
+    checkActionReceipt({ workflowRun: WORKFLOW }),
   );
   const failures = qualifyInventory({ schemaVersion: 1, entries: [actionEntry] }, dir, {
     commit: COMMIT,
@@ -553,16 +561,7 @@ test("qualify action command mismatch fails closed", () => {
   writeReceipt(
     dir,
     actionEntry.id,
-    actionReceipt({
-      command: "bloat",
-      fixture: "packed-action-consumer",
-      commit: COMMIT,
-      actionDigest: ACTION,
-      startedAt: new Date("2026-08-27T14:00:00.000Z"),
-      endedAt: new Date("2026-08-27T14:00:01.000Z"),
-      log: "ok",
-      workflowRun: WORKFLOW,
-    }),
+    checkActionReceipt({ command: "bloat", workflowRun: WORKFLOW }),
   );
   const failures = qualifyInventory({ schemaVersion: 1, entries: [actionEntry] }, dir, {
     ...candidate,
@@ -570,6 +569,51 @@ test("qualify action command mismatch fails closed", () => {
     workflowRun: WORKFLOW,
   }, { now: NOW });
   assert.match(failures[0]?.reason ?? "", /command bloat != check/);
+});
+
+test("qualify action receipt missing repository fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-act-repo-miss-"));
+  writeReceipt(dir, actionEntry.id, { ...checkActionReceipt({ workflowRun: WORKFLOW }), repository: null });
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [actionEntry] }, dir, {
+    ...candidate,
+    actionDigest: ACTION,
+    workflowRun: WORKFLOW,
+  }, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /missing repository/);
+});
+
+test("qualify action receipt wrong repository fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-act-repo-bad-"));
+  writeReceipt(dir, actionEntry.id, checkActionReceipt({ workflowRun: WORKFLOW, repository: "not-a-repo" }));
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [actionEntry] }, dir, {
+    ...candidate,
+    actionDigest: ACTION,
+    workflowRun: WORKFLOW,
+  }, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /repository mismatch/);
+});
+
+test("qualify action receipt wrong ref fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-act-ref-"));
+  writeReceipt(dir, actionEntry.id, checkActionReceipt({ workflowRun: WORKFLOW, ref: "refs/heads/main" }));
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [actionEntry] }, dir, {
+    ...candidate,
+    actionDigest: ACTION,
+    workflowRun: WORKFLOW,
+  }, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /ref mismatch/);
+});
+
+test("qualify action receipt missing cells in environment fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-rec-act-cells-"));
+  const rec = checkActionReceipt({ workflowRun: WORKFLOW });
+  writeReceipt(dir, actionEntry.id, { ...rec, environment: "repo=owner/name ref=refs/tags/v1" });
+  const failures = qualifyInventory({ schemaVersion: 1, entries: [actionEntry] }, dir, {
+    ...candidate,
+    actionDigest: ACTION,
+    workflowRun: WORKFLOW,
+  }, { now: NOW });
+  assert.match(failures[0]?.reason ?? "", /missing cells/);
 });
 
 const osvEntry: InventoryEntry = {

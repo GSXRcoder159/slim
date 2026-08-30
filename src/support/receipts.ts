@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { assertDocument } from "../schema/documents.ts";
 import type { InventoryEntry, SupportInventory } from "./inventory.ts";
+import { ADVERTISED_ACTION_TAG, advertisedActionUses } from "../release/identity.ts";
 
 export const RECEIPT_OUTCOMES = [
   "pass",
@@ -38,6 +39,8 @@ export interface QualificationReceipt {
   actionDigest: string | null;
   workflowRun: string | null;
   logDigest: string;
+  repository?: string | null;
+  ref?: string | null;
 }
 
 export interface CandidateIdentity {
@@ -254,13 +257,19 @@ export function actionReceipt(opts: {
   endedAt: Date;
   log: string;
   workflowRun?: string | null;
+  repository: string;
+  ref: string;
+  cells?: string;
 }): QualificationReceipt {
+  const cells =
+    opts.cells ??
+    "ubuntu-latest/22.18,ubuntu-latest/24,macos-latest/22.18,macos-latest/24,windows-latest/22.18,windows-latest/24";
   return {
     schemaVersion: 1,
     checkId: "test/github/action-live.test.ts",
     command: opts.command,
     fixture: opts.fixture,
-    environment: `${process.platform} node-${process.version}`,
+    environment: `repo=${opts.repository} ref=${opts.ref} uses=${advertisedActionUses(opts.command)} cells=${cells}`,
     provider: null,
     service: null,
     startedAt: opts.startedAt.toISOString(),
@@ -271,6 +280,8 @@ export function actionReceipt(opts: {
     actionDigest: opts.actionDigest,
     workflowRun: opts.workflowRun ?? null,
     logDigest: createHash("sha256").update(opts.log).digest("hex"),
+    repository: opts.repository,
+    ref: opts.ref,
   };
 }
 
@@ -349,6 +360,13 @@ export function identityMismatch(
   }
   if (entry.kind === "action" && receipt.command !== entry.name) {
     return `command ${receipt.command} != ${entry.name}`;
+  }
+  if (entry.kind === "action") {
+    if (!receipt.repository) return "missing repository";
+    if (!/^[^/\s]+\/[^/\s]+$/.test(receipt.repository)) return "repository mismatch";
+    if (!receipt.ref) return "missing ref";
+    if (receipt.ref !== `refs/tags/${ADVERTISED_ACTION_TAG}`) return "ref mismatch";
+    if (!receipt.environment.includes("cells=")) return "missing cells";
   }
   if (entry.kind === "osNode") {
     const env = receipt.environment;

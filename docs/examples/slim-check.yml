@@ -12,4 +12,4 @@ jobs:
         with:
           node-version: "22.18"
       - run: npm ci
-      - uses: slim-hq/slim/action/check@v1
+      - uses: GSXRcoder159/slim/action/check@v1

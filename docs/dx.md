@@ -277,9 +277,9 @@ v1 prints estimated original min and measured replacement bytes in evidence. No 
 
 ## 5. GitHub Actions
 
-Three composite actions (`check`, `bloat`, `upstream`) wrap the packed CLI via `action/run.mjs`. They execute only compiled `dist/github/*-action.js` whose SHA-256 (`actionSha256` in `dist/.slim-build.json`) matches the Action distributable. Missing or stale compiled files exit 4. There is no `--experimental-strip-types` source fallback.
+Three composite actions (`check`, `bloat`, `upstream`) wrap the packed CLI via `action/run.mjs`. They execute only compiled `dist/github/*-action.js` whose SHA-256 (`actionSha256` in `dist/.slim-build.json`) matches the Action distributable. Missing, stale, or pin-mismatched compiled files exit 4. There is no `--experimental-strip-types` source fallback. Action exit codes match the packed CLI: 0 success, 1 failure (check drift, bloat hit, upstream malformed/exposed), 4 unavailable (missing distributable or upstream `source-unavailable`). These three Actions do not emit exit 3.
 
-Published `uses: slim-hq/slim/action/check@v1` requires the git ref to contain that compiled `dist/` (the same file set as `npm pack`). This repository gitignores `dist/`; dogfood workflows run `npm run build` then `uses: ./action/*`. A published tag without `dist/` is explicit non-success, not a silent source downgrade. The published upstream Action always sets `SLIM_UPSTREAM_PR=1` (opens a PR when a slice is exposed or unmapped). The CLI `--pr` flag remains optional.
+Published `uses: GSXRcoder159/slim/action/check@v1` requires the git ref to contain that compiled `dist/` (the same file set as `npm pack`). This repository gitignores `dist/`; dogfood workflows run `npm run build` then `uses: ./action/*`. A published tag without `dist/` is explicit non-success, not a silent source downgrade. The published upstream Action always sets `SLIM_UPSTREAM_PR=1` (opens a PR when a slice is exposed or unmapped). The CLI `--pr` flag remains optional. Canonical identity: [`docs/release-identity.md`](./release-identity.md).
 
 Consumers must check out the project, set up Node >= 22.18, and install the project (`npm ci`) so `typescript` is resolvable. Copy [`docs/examples/slim-check.yml`](./examples/slim-check.yml), [`slim-bloat.yml`](./examples/slim-bloat.yml), and [`slim-watch.yml`](./examples/slim-watch.yml).
 
@@ -302,7 +302,7 @@ jobs:
         with:
           node-version: "22.18"
       - run: npm ci
-      - uses: slim-hq/slim/action/check@v1
+      - uses: GSXRcoder159/slim/action/check@v1
 ```
 
 `action/check/action.yml` requires Node >= 22.18 and runs `slim check`. Fails the PR on envelope drift, missing evidence, missing standing/hardening tests, or a failing standing/hardening suite. No recorded replacements → pass.
@@ -322,14 +322,14 @@ jobs:
         with:
           node-version: "22.18"
       - run: npm ci
-      - uses: slim-hq/slim/action/bloat@v1
+      - uses: GSXRcoder159/slim/action/bloat@v1
 ```
 
 Same semantics as `slim bloat`: production `BLOAT_PACKAGES` without a Slim replacement fail the job (exit 1). No `fail:` input. No PR comment.
 
 ### Watch workflow
 
-This repository dogfoods `.github/workflows/slim-upstream.yml` (`npm run build`, `./action/upstream`, Monday `0 8 * * 1`). Consumer template: `docs/examples/slim-watch.yml` (`uses: slim-hq/slim/action/upstream@v1`, Monday `0 14 * * 1`, `GITHUB_TOKEN`). The cron values are independent schedules, not a product contract.
+This repository dogfoods `.github/workflows/slim-upstream.yml` (`npm run build`, `./action/upstream`, Monday `0 8 * * 1`). Consumer template: `docs/examples/slim-watch.yml` (`uses: GSXRcoder159/slim/action/upstream@v1`, Monday `0 14 * * 1`, `GITHUB_TOKEN`). The cron values are independent schedules, not a product contract.
 
 ---
 
@@ -369,7 +369,7 @@ Slim never phones home. Watch uses public APIs from the machine that runs it (yo
 
 There is no daemon.
 
-1. **Default:** GitHub Action, weekly. Copy `docs/examples/slim-watch.yml` (`uses: slim-hq/slim/action/upstream@v1` after checkout, Node 22.18, and `npm ci`).
+1. **Default:** GitHub Action, weekly. Copy `docs/examples/slim-watch.yml` (`uses: GSXRcoder159/slim/action/upstream@v1` after checkout, Node 22.18, and `npm ci`).
 2. **Laptop:** `slim watch` whenever. cron `0 9 * * 1 slim watch` if they insist.
 3. `doctor` warns if slices exist and the workflow file is missing.
 
@@ -392,7 +392,7 @@ jobs:
         with:
           node-version: "22.18"
       - run: npm ci
-      - uses: slim-hq/slim/action/upstream@v1
+      - uses: GSXRcoder159/slim/action/upstream@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 ```
@@ -411,6 +411,8 @@ Consulted OSV/npm `sources.*.status` values: `success`, `unavailable` (HTTP/netw
 Live packed `slim upstream` proof for advertised sources is `SLIM_UPSTREAM_LIVE=1`. Missing or stale `externalService.osv` / `externalService.npm-registry` receipts fail `npm run qualify`; they do not vanish from `npm test`. Set `SLIM_RECEIPTS_DIR` to write those receipts (commit + tarball digest).
 
 Live packed `slim replace` PR proof is `SLIM_PR_LIVE=1` (GitHub CLI with repo create/push/PR plus `delete_repo`, or `SLIM_PR_TRANSFER_OWNER` to transfer leftovers). The packed CLI binds `SLIM_NPM_DIGEST` into the PR body, independently fetches the remote Slim ref and GET the PR, then the live test closes the PR and deletes or transfers the disposable repo. The `externalService.github` receipt names commit, tarball digest, `pr=<url>`, and `cleanup=closed+deleted` (or `closed+transferred:<owner>`). Missing or stale receipts fail `npm run qualify`. Unset `SLIM_PR_LIVE` still registers the live test (it returns; it does not skip off the suite).
+
+Live published Action proof is `SLIM_ACTION_LIVE=1`. It attaches the packed compiled tree to `v0.1.0` and `v1` on public `GSXRcoder159/slim`, then runs `docs/examples` plus a six-cell OS/Node matrix from a public consumer via `uses: GSXRcoder159/slim/action/{check,bloat,upstream}@v1`. Action receipts bind consumer `repository`, Action tag `ref`, `actionDigest`, workflow run, and matrix `cells=`. Unset `SLIM_ACTION_LIVE` still registers `test/github/action-live.test.ts`.
 
 GitHub Advisory GraphQL and OSV `querybatch` are later-scope; OSV already mirrors GHSA ids. No NVD key. No Slim servers.
 

@@ -1,13 +1,15 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { advertisedActionUses } from "../../src/release/identity.ts";
 import { STAMP_NAME } from "../../action/digest.mjs";
 import {
   copyPackedActionCheckout,
   isWorkflowMissingError,
   packAndExtractAction,
+  publishedQualifyWorkflow,
   runPackedAction,
   runPackedCli,
   workflowRunIdFromList,
@@ -35,6 +37,23 @@ test("workflow run list treats GitHub 404 as missing, not fatal", () => {
     true,
   );
   assert.equal(isWorkflowMissingError(new Error("HTTP 403: Resource not accessible")), false);
+});
+
+test("published Action matrix uses the advertised pin and digest, not a local checkout", () => {
+  const yml = publishedQualifyWorkflow({
+    actionRepo: "GSXRcoder159/slim",
+    actionTag: "v1",
+    actionDigest: "a".repeat(64),
+  });
+  assert.ok(yml.includes(`uses: ${advertisedActionUses("check")}`));
+  assert.ok(yml.includes(`uses: ${advertisedActionUses("bloat")}`));
+  assert.ok(yml.includes(`uses: ${advertisedActionUses("upstream")}`));
+  assert.doesNotMatch(yml, /uses:\s*\.\/action\//);
+  assert.match(yml, /SLIM_ACTION_DIGEST: a{64}/);
+  assert.match(yml, /bloat-fail:/);
+  assert.match(yml, /check-fail:/);
+  assert.match(yml, /upstream-fail:/);
+  assert.doesNotMatch(yml, /path: \.slim-action/);
 });
 
 function ensurePack(): void {
@@ -127,6 +146,43 @@ test("packed Action matches packed CLI on success and failure", { timeout: 180_0
   assert.match(upA.stderr + upA.stdout, /manifest/);
   assert.doesNotMatch(upA.stdout, /not exposed/);
   assert.doesNotMatch(upA.stderr, /slice not exposed/);
+});
+
+test("packed Action missing, stale, or pin-mismatched dist is exit 4 with no source fallback", { timeout: 180_000 }, () => {
+  ensurePack();
+  const dest = mkdtempSync(join(tmpdir(), "slim-action-unavail-"));
+  copyPackedActionCheckout(actionRoot, dest);
+  writeAllSuccessConsumer(dest);
+
+  const badCmd = runPackedAction(dest, "not-a-command", dest);
+  assert.equal(badCmd.status, 2);
+  assert.match(badCmd.stderr, /usage: run\.mjs/);
+
+  const pinBad = runPackedAction(dest, "check", dest, { SLIM_ACTION_DIGEST: "a".repeat(64) });
+  assert.equal(pinBad.status, 4, pinBad.stderr);
+  assert.match(pinBad.stderr, /action digest mismatch/);
+  assert.doesNotMatch(pinBad.stdout, /experimental-strip-types/);
+
+  const stampPath = join(dest, "dist", STAMP_NAME);
+  const stamp = readFileSync(stampPath, "utf8");
+  writeFileSync(stampPath, `${JSON.stringify({ ok: true, actionSha256: "b".repeat(64) })}\n`);
+  const stale = runPackedAction(dest, "check", dest);
+  assert.equal(stale.status, 4, stale.stderr);
+  assert.match(stale.stderr, /stale action distributable/);
+  writeFileSync(stampPath, stamp);
+
+  rmSync(stampPath, { force: true });
+  const noStamp = runPackedAction(dest, "check", dest);
+  assert.equal(noStamp.status, 4, noStamp.stderr);
+  assert.match(noStamp.stderr, /missing dist\/\.slim-build\.json/);
+  writeFileSync(stampPath, stamp);
+
+  rmSync(join(dest, "dist", "github", "check-action.js"), { force: true });
+  const missing = runPackedAction(dest, "check", dest);
+  assert.equal(missing.status, 4, missing.stderr);
+  assert.match(missing.stderr, /missing dist\/github\/check-action\.js/);
+  assert.doesNotMatch(missing.stdout, /experimental-strip-types/);
+  rmSync(dest, { recursive: true, force: true });
 });
 
 test("same-tree Action checkout loads packed schemas like uses: ./action", { timeout: 180_000 }, () => {

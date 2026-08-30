@@ -254,7 +254,12 @@ export function canonicalInventory(): SupportInventory {
         id: `action.${name}`,
         kind: "action",
         name,
-        docs: [`action/${name}/action.yml`, "docs/dx.md", `docs/examples/slim-${name === "upstream" ? "watch" : name}.yml`],
+        docs: [
+          `action/${name}/action.yml`,
+          "docs/dx.md",
+          "docs/release-identity.md",
+          `docs/examples/slim-${name === "upstream" ? "watch" : name}.yml`,
+        ],
         checkId: "test/github/action-live.test.ts",
         receiptClass: "live",
       }),

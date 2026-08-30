@@ -10,10 +10,17 @@ import { join } from "node:path";
 import { EXIT_ENV, EXIT_REFUSED, SlimExit } from "../exit.ts";
 
 export const EXPECTED_PACKAGE_NAME = "slim";
-export const EXPECTED_REPOSITORY = "git+https://github.com/slim-hq/slim.git";
+export const EXPECTED_GITHUB_REPO = "GSXRcoder159/slim";
+export const EXPECTED_REPOSITORY = `git+https://github.com/${EXPECTED_GITHUB_REPO}.git`;
+export const EXPECTED_BUGS_URL = `https://github.com/${EXPECTED_GITHUB_REPO}/issues`;
+export const EXPECTED_HOMEPAGE = `https://github.com/${EXPECTED_GITHUB_REPO}#readme`;
 export const EXPECTED_REGISTRY = "https://registry.npmjs.org";
 /** Consumer Action pin in docs/examples. 0.x releases still update this floating tag. */
 export const ADVERTISED_ACTION_TAG = "v1";
+
+export function advertisedActionUses(name: "check" | "bloat" | "upstream"): string {
+  return `${EXPECTED_GITHUB_REPO}/action/${name}@${ADVERTISED_ACTION_TAG}`;
+}
 
 export function versionTag(version: string): string {
   return `v${version}`;
