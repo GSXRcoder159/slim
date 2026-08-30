@@ -18,6 +18,25 @@ import { build, withDistLock } from "../../scripts/build.mjs";
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+/** Windows packed `npm install` of the slim tarball regularly exceeds 60s under file concurrency. */
+export const PACKED_NPM_INSTALL_MS = 300_000;
+
+export function installPackedTarball(cwd: string, tarball: string, extraArgs: string[] = []): void {
+  execPm("npm", ["install", tarball, ...extraArgs], {
+    cwd,
+    encoding: "utf8",
+    timeout: PACKED_NPM_INSTALL_MS,
+    env: npmEnv(),
+  });
+}
+
+export function rmPackedTemp(...dirs: string[]): void {
+  for (const dir of dirs) {
+    if (!dir) continue;
+    rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+  }
+}
+
 const ADD_SRC = `export function add(a: number, b: number): number {
   return a + b;
 }
@@ -181,12 +200,7 @@ export function writeTinyAddFixture(
 }
 
 export function installFixture(dest: string, tarball: string): string {
-  execPm("npm", ["install", tarball], {
-    cwd: dest,
-    encoding: "utf8",
-    timeout: 120_000,
-    env: npmEnv(),
-  });
+  installPackedTarball(dest, tarball);
   const slimJs = join(packageNodeModulesDir(dest), "dist", "main.js");
   if (!existsSync(slimJs)) throw new Error("packed slim CLI missing after npm install");
   return slimJs;

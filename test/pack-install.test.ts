@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
-import { npmPackTo, withRepoDistLock } from "./helpers/llm-replace.ts";
+import { npmPackTo, withRepoDistLock, installPackedTarball, PACKED_NPM_INSTALL_MS } from "./helpers/llm-replace.ts";
 import { extractNpmPack } from "../src/release/digest.ts";
 import { EXPECTED_PACKAGE_NAME, packageImport, packageNodeModulesDir } from "../src/release/identity.ts";
 
@@ -49,6 +49,29 @@ function ensureDist(): void {
     execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
   }
 }
+
+test("packed slim tarball npm install is not capped at 60s or 120s", () => {
+  assert.ok(PACKED_NPM_INSTALL_MS >= 300_000);
+  const hits: string[] = [];
+  const stack = [join(ROOT, "test")];
+  while (stack.length) {
+    const dir = stack.pop()!;
+    for (const name of readdirSync(dir)) {
+      const p = join(dir, name);
+      if (statSync(p).isDirectory()) {
+        if (name === "node_modules") continue;
+        stack.push(p);
+        continue;
+      }
+      if (!name.endsWith(".ts")) continue;
+      const text = readFileSync(p, "utf8");
+      if (/install",\s*(?:tarball|packed\.tarball)[\s\S]{0,180}timeout:\s*(60_000|120_000)/.test(text)) {
+        hits.push(relative(ROOT, p).replace(/\\/g, "/"));
+      }
+    }
+  }
+  assert.deepEqual(hits, []);
+});
 
 test("npm pack contains dist CLI, catalog sources, schema, actions; excludes tests", { timeout: 120_000 }, () => {
   ensureDist();
@@ -240,11 +263,7 @@ test("installed tarball CLI matches source for help, doctor, scan --json, inspec
         2,
       ),
     );
-    execPm("npm", ["install", tarball, "--omit=dev"], {
-      cwd: tmp,
-      encoding: "utf8",
-      timeout: 60_000,
-    });
+    installPackedTarball(tmp, tarball, ["--omit=dev"]);
     const slimJs = join(packageNodeModulesDir(tmp), "dist", "main.js");
     assert.ok(existsSync(slimJs), "installed package missing dist/main.js");
     assert.ok(

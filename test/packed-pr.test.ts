@@ -147,7 +147,7 @@ before(async () => {
     pathToFileURL(join(packageNodeModulesDir(host), "dist", "github", "pr.js")).href
   )) as PackedPr;
   createPullRequest = mod.createPullRequest;
-});
+}, { timeout: 400_000 });
 
 after(() => {
   if (host) rmSync(host, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });

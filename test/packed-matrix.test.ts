@@ -15,7 +15,7 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { hermeticPmEnv, execPm, cmdShimSpawnOpts } from "../src/rewrite/lockfile.ts";
-import { npmPackTo } from "./helpers/llm-replace.ts";
+import { npmPackTo, installPackedTarball } from "./helpers/llm-replace.ts";
 import { packageImport, packageNodeModulesDir } from "../src/release/identity.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -69,9 +69,7 @@ function slimJs(cwd: string): string {
 }
 
 function installSlim(cwd: string, tarball: string, ignoreScripts = false): void {
-  const args = ["install", tarball];
-  if (ignoreScripts) args.push("--ignore-scripts");
-  execPm("npm", args, { cwd, encoding: "utf8", timeout: 120_000, env: hermeticPmEnv() });
+  installPackedTarball(cwd, tarball, ignoreScripts ? ["--ignore-scripts"] : []);
 }
 
 test("packed consumer: doctor scan inspect traced lodash replace check evidence", { timeout: 300_000 }, () => {

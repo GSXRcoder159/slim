@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { cmdShimSpawnOpts, execPm, hermeticPmEnv } from "../src/rewrite/lockfile.ts";
-import { npmPackTo } from "./helpers/llm-replace.ts";
+import { npmPackTo, installPackedTarball } from "./helpers/llm-replace.ts";
 import { packageNodeModulesDir } from "../src/release/identity.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -51,12 +51,7 @@ function slimJs(cwd: string): string {
 }
 
 function installSlim(cwd: string): void {
-  execPm("npm", ["install", tarball], {
-    cwd,
-    encoding: "utf8",
-    timeout: 120_000,
-    env: hermeticPmEnv(),
-  });
+  installPackedTarball(cwd, tarball);
 }
 
 function canonicalizeTraces(jsonl: string): unknown[] {

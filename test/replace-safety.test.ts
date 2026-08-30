@@ -20,7 +20,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { applyRevert, type RevertPlan } from "../src/rewrite/revert.ts";
 import { hermeticPmEnv, spawnPm } from "../src/rewrite/lockfile.ts";
-import { packSlim } from "./helpers/llm-replace.ts";
+import { packSlim, installPackedTarball } from "./helpers/llm-replace.ts";
 import { packageNodeModulesDir } from "../src/release/identity.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -384,17 +384,11 @@ test("internal symlinked src/slim is refused before any write", { timeout: 180_0
   assert.equal(readFileSync(join(dest, "elsewhere", "keep.txt"), "utf8"), "keep\n");
 });
 
-test("packed CLI refuses unowned output and an internal symlinked --out", { timeout: 180_000 }, () => {
+test("packed CLI refuses unowned output and an internal symlinked --out", { timeout: 400_000 }, () => {
   const { tarball } = packSlim();
   const host = mkdtempSync(join(tmpdir(), "slim-phase8-host-"));
   writeFileSync(join(host, "package.json"), JSON.stringify({ name: "host", private: true, type: "module" }));
-  const installed = spawnPm("npm", ["install", tarball, "--omit=dev"], {
-    cwd: host,
-    encoding: "utf8",
-    env: hermeticPmEnv(),
-    timeout: 120_000,
-  });
-  assert.equal(installed.status, 0, String(installed.stderr));
+  installPackedTarball(host, tarball, ["--omit=dev"]);
   const slimJs = join(packageNodeModulesDir(host), "dist", "main.js");
   const runPacked = (cwd: string) =>
     spawnSync(process.execPath, [slimJs, "replace", "ms", "--no-pr", "--no-trace", "--no-install"], {

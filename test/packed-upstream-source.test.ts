@@ -1,11 +1,10 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { hermeticPmEnv, execPm } from "../src/rewrite/lockfile.ts";
-import { packSlim } from "./helpers/llm-replace.ts";
+import { packSlim, installPackedTarball, rmPackedTemp } from "./helpers/llm-replace.ts";
 import { packageNodeModulesDir } from "../src/release/identity.ts";
 
 type SourceResult = { status: string; value?: unknown; detail: string };
@@ -32,22 +31,16 @@ before(async () => {
   packDir = packed.packDir;
   host = mkdtempSync(join(tmpdir(), "slim-up-pack-src-"));
   writeFileSync(join(host, "package.json"), JSON.stringify({ name: "host", private: true }));
-  execPm("npm", ["install", packed.tarball, "--omit=dev"], {
-    cwd: host,
-    encoding: "utf8",
-    timeout: 60_000,
-    env: hermeticPmEnv(),
-  });
+  installPackedTarball(host, packed.tarball, ["--omit=dev"]);
   const slimRoot = packageNodeModulesDir(host);
   const osvMod = (await import(pathToFileURL(join(slimRoot, "dist/upstream/osv.js")).href)) as PackedOsv;
   const npmMod = (await import(pathToFileURL(join(slimRoot, "dist/upstream/npm.js")).href)) as PackedNpm;
   queryOsv = osvMod.queryOsv;
   npmLatest = npmMod.npmLatest;
-});
+}, { timeout: 400_000 });
 
 after(() => {
-  if (host) rmSync(host, { recursive: true, force: true });
-  if (packDir) rmSync(packDir, { recursive: true, force: true });
+  rmPackedTemp(host, packDir);
 });
 
 test("packed queryOsv missing vulns is malformed", { timeout: 180_000 }, async () => {
