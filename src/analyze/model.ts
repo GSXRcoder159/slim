@@ -1,5 +1,6 @@
 import { realpathSync, existsSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep, dirname, join } from "node:path";
+import { isAbsolute, relative, resolve, dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type ts from "typescript";
 import type { ImportKind, ImportSite, SourceLoc, UnknownSite } from "../envelope/types.ts";
 import { resolvePackageFamily } from "./family.ts";
@@ -76,13 +77,21 @@ export function uid(prefix: string, sf: ts.SourceFile, node: ts.Node, root: stri
 }
 
 export function toProjectRel(file: string, root: string): string {
-  const posix = (p: string) => p.split(sep).join("/");
+  const posix = (p: string) => p.replace(/\\/g, "/");
+  let input = file;
+  if (input.startsWith("file:")) {
+    try {
+      input = fileURLToPath(input);
+    } catch {
+      /* keep */
+    }
+  }
   const relOf = (from: string, to: string): string | null => {
     const rel = relative(from, to);
     if (rel.startsWith("..") || isAbsolute(rel)) return null;
     return posix(rel);
   };
-  const absFile = isAbsolute(file) ? file : resolve(root, file);
+  const absFile = isAbsolute(input) ? resolve(input) : resolve(root, input);
   const absRoot = resolve(root);
   let hit = relOf(absRoot, absFile);
   if (hit) return hit;
@@ -94,7 +103,9 @@ export function toProjectRel(file: string, root: string): string {
   }
   const rootPosix = posix(absRoot).replace(/\/$/, "");
   const filePosix = posix(absFile);
-  if (filePosix.startsWith(rootPosix + "/")) return filePosix.slice(rootPosix.length + 1);
+  const rootFold = process.platform === "win32" ? rootPosix.toLowerCase() : rootPosix;
+  const fileFold = process.platform === "win32" ? filePosix.toLowerCase() : filePosix;
+  if (fileFold.startsWith(rootFold + "/")) return filePosix.slice(rootPosix.length + 1);
   return posix(absFile);
 }
 

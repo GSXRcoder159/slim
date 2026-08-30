@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { attributeTraces } from "../../src/trace/attribute.ts";
 import { mergeTraces } from "../../src/envelope/merge.ts";
 import { closeEnvelope } from "../../src/envelope/close.ts";
@@ -222,4 +223,22 @@ test("dynamic-member observations attach only to the matching unknown", () => {
   const merged = mergeTraces(base, traces, { root });
   assert.deepEqual(merged.unknowns[0]!.traceObservedMembers, ["pick"]);
   assert.equal(merged.unknowns[1]!.traceObservedMembers, null);
+});
+
+test("file URL and backslash trace paths attribute to posix envelope locs", () => {
+  const root = tmpRoot();
+  const a = site("call:src/a.ts:1", "src/a.ts", 1, "get");
+  const base = env(root, [a]);
+  const abs = join(root, "src", "a.ts");
+  const traces: TraceEvent[] = [
+    {
+      symbol: "get",
+      originId: "url",
+      args: [],
+      site: { file: pathToFileURL(abs).href, line: 1, column: 1 },
+    },
+  ];
+  const attributed = attributeTraces(base, traces, root);
+  assert.equal(attributed[0]!.unmatched, false);
+  assert.equal(attributed[0]!.callSiteId, a.id);
 });

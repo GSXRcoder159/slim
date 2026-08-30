@@ -84,6 +84,13 @@ function childTimedOut(r: { error?: NodeJS.ErrnoException | Error | null }): boo
   return err?.code === "ETIMEDOUT";
 }
 
+/** POSIX spawnSync sets `signal`; Windows abort/kill usually returns a status > 1 with `signal` null. */
+function childEndedAbnormally(r: { status: number | null; signal: NodeJS.Signals | null }): boolean {
+  if (r.signal) return true;
+  if (r.status == null) return false;
+  return r.status > 128;
+}
+
 function spawnChecked(
   spawn: CheckSpawn,
   command: string,
@@ -111,8 +118,11 @@ function spawnChecked(
   if (childTimedOut(r)) {
     throw new SlimExit(EXIT_FAIL, `${failMessage} timed out`);
   }
-  if (r.status == null && r.signal) {
-    throw new SlimExit(EXIT_FAIL, `${failMessage} terminated abnormally (${r.signal})`);
+  if (childEndedAbnormally(r)) {
+    throw new SlimExit(
+      EXIT_FAIL,
+      `${failMessage} terminated abnormally (${r.signal ?? r.status})`,
+    );
   }
   throw new SlimExit(EXIT_FAIL, failMessage);
 }

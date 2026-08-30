@@ -1,5 +1,6 @@
 import type { CallSite, Envelope, SourceLoc, TraceEvent } from "../envelope/types.ts";
 import { toProjectRel } from "../analyze/model.ts";
+import { fileURLToPath } from "node:url";
 
 export function attributeTraces(env: Envelope, traces: TraceEvent[], root: string): TraceEvent[] {
   const sites = env.symbols.flatMap((s) =>
@@ -76,14 +77,23 @@ export function locMatch(site: { file: string; line: number }, loc: SourceLoc, r
 }
 
 function normalizeTraceFile(file: string, root: string): string {
-  const stripped = file.replace(/\\/g, "/").replace(/\?.*$/, "");
+  let stripped = file;
+  if (stripped.startsWith("file:")) {
+    try {
+      stripped = fileURLToPath(stripped);
+    } catch {
+      /* keep */
+    }
+  }
+  stripped = stripped.replace(/\\/g, "/").replace(/\?.*$/, "");
   const rel = toProjectRel(stripped, root);
   return rel.replace(/\.js$/, ".ts").replace(/\.mjs$/, ".ts").replace(/\.cjs$/, ".ts");
 }
 
 function filesMatch(envelopeFile: string, traceFile: string): boolean {
-  if (envelopeFile === traceFile) return true;
-  const a = envelopeFile.replace(/\.js$/, ".ts");
-  const b = traceFile.replace(/\.js$/, ".ts");
-  return a === b;
+  const norm = (p: string) => p.replace(/\\/g, "/").replace(/\.js$/, ".ts");
+  const a = norm(envelopeFile);
+  const b = norm(traceFile);
+  if (a === b) return true;
+  return process.platform === "win32" && a.toLowerCase() === b.toLowerCase();
 }

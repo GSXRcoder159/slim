@@ -105,7 +105,7 @@ function writeCheckProject(
   writeFileSync(join(proj, "fail-standing.js"), "console.log('standing-fail-noise'); process.exit(1);\n");
   writeFileSync(join(proj, "fail-cmd.js"), "console.log('cmd-fail-noise'); process.exit(1);\n");
   writeFileSync(join(proj, "hang.js"), "setInterval(() => {}, 1e9);\n");
-  writeFileSync(join(proj, "die.js"), "process.kill(process.pid, 'SIGKILL');\n");
+  writeFileSync(join(proj, "die.js"), "process.abort();\n");
   const tsDir = dirname(require.resolve("typescript/package.json"));
   symlinkSync(tsDir, join(proj, "node_modules", "typescript"));
   if (over.evidence !== false && over.evidenceBody === undefined) {

@@ -692,4 +692,13 @@ test("child timeout and abnormal termination fail check without hanging", async 
   const kDoc = JSON.parse(kOut) as { ok: boolean };
   assert.equal(kDoc.ok, false);
   assert.match(kErr, /terminated abnormally/);
+
+  const winAbort: CheckSpawn = () => ({ status: 3221226505, signal: null });
+  const { code: wCode, stdout: wOut, stderr: wErr } = await capture(() =>
+    runCheck(parseCli(["check", "--json"]), { cwd: root, spawn: winAbort }),
+  );
+  assert.equal(wCode, EXIT_FAIL);
+  const wDoc = JSON.parse(wOut) as { ok: boolean };
+  assert.equal(wDoc.ok, false);
+  assert.match(wErr, /terminated abnormally/);
 });

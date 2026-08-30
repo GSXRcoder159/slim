@@ -136,7 +136,11 @@ test("replacementStateIssues does not fall back to a default envelope when confi
     envelope: "state/lodash/envelope.json",
   });
   assert.equal(state.kind, "missing");
-  assert.ok(state.drift.some((d) => /missing envelope/i.test(d.detail) && /state\/lodash\/envelope\.json/.test(d.detail)));
+  assert.ok(
+    state.drift.some(
+      (d) => /missing envelope/i.test(d.detail) && /state[/\\]lodash[/\\]envelope\.json/.test(d.detail),
+    ),
+  );
 });
 
 test("replacementStateIssues treats missing standing as missing-state", () => {

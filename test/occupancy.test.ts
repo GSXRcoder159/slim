@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { join } from "node:path";
 import { EXIT_ENV, EXIT_REFUSED, SlimExit } from "../src/exit.ts";
 import {
   EXPECTED_PACKAGE_NAME,
@@ -17,8 +18,8 @@ test("canonical package name is scoped and unpkg prefix matches it", () => {
   assert.equal(EXPECTED_PACKAGE_NAME, "@gsxrcoder159/slim");
   assert.equal(EXPECTED_UNPKG_PREFIX, "https://unpkg.com/@gsxrcoder159/slim/");
   assert.equal(
-    packageNodeModulesDir("/tmp/host"),
-    "/tmp/host/node_modules/@gsxrcoder159/slim",
+    packageNodeModulesDir(join("/tmp", "host")),
+    join("/tmp", "host", "node_modules", "@gsxrcoder159", "slim"),
   );
 });
 
