@@ -20,6 +20,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { npmPackTo, withRepoDistLock } from "./helpers/llm-replace.ts";
 import { extractNpmPack } from "../src/release/digest.ts";
+import { EXPECTED_PACKAGE_NAME, packageImport, packageNodeModulesDir } from "../src/release/identity.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -244,18 +245,18 @@ test("installed tarball CLI matches source for help, doctor, scan --json, inspec
       encoding: "utf8",
       timeout: 60_000,
     });
-    const slimJs = join(tmp, "node_modules", "slim", "dist", "main.js");
+    const slimJs = join(packageNodeModulesDir(tmp), "dist", "main.js");
     assert.ok(existsSync(slimJs), "installed package missing dist/main.js");
     assert.ok(
-      existsSync(join(tmp, "node_modules", "slim", "dist", "trace", "hook.js")),
+      existsSync(join(packageNodeModulesDir(tmp), "dist", "trace", "hook.js")),
       "installed package missing compiled hook",
     );
     assert.ok(
-      existsSync(join(tmp, "node_modules", "slim", "dist", "generate", "catalog", "lodash.get.ts")),
+      existsSync(join(packageNodeModulesDir(tmp), "dist", "generate", "catalog", "lodash.get.ts")),
       "installed package missing catalog TypeScript sources",
     );
     assert.equal(
-      existsSync(join(tmp, "node_modules", "slim", "node_modules", "typescript")),
+      existsSync(join(packageNodeModulesDir(tmp), "node_modules", "typescript")),
       false,
       "installed slim must not nest typescript as a runtime dependency",
     );
@@ -314,7 +315,7 @@ test("installed tarball CLI matches source for help, doctor, scan --json, inspec
       }
     }
 
-    const slimRoot = join(tmp, "node_modules", "slim");
+    const slimRoot = packageNodeModulesDir(tmp);
     const hookJs = join(slimRoot, "dist", "trace", "hook.js");
     const vitestJs = join(slimRoot, "dist", "trace", "vitest.js");
     const workersJs = join(slimRoot, "dist", "fuzz", "workers.js");
@@ -414,7 +415,7 @@ test("add", () => { assert.equal(add(2, 3), 5); });
         `import { createRequire } from "node:module";
          import { pathToFileURL } from "node:url";
          const req = createRequire(pathToFileURL(${JSON.stringify(join(tmp, "package.json"))}).href);
-         for (const spec of ["slim", "slim/hooks", "slim/vitest"]) {
+         for (const spec of [${JSON.stringify(EXPECTED_PACKAGE_NAME)}, ${JSON.stringify(packageImport("hooks"))}, ${JSON.stringify(packageImport("vitest"))}]) {
            const r = req.resolve(spec);
            if (!r) process.exit(1);
            console.log(spec, r);
@@ -423,9 +424,9 @@ test("add", () => { assert.equal(add(2, 3), 5); });
       tmp,
     );
     assert.equal(resolved.status, 0, resolved.stderr);
-    assert.match(resolved.stdout, /slim .*main\.js/);
-    assert.match(resolved.stdout, /slim\/hooks .*hook\.js/);
-    assert.match(resolved.stdout, /slim\/vitest .*vitest\.js/);
+    assert.match(resolved.stdout, /@gsxrcoder159\/slim .*main\.js/);
+    assert.match(resolved.stdout, /@gsxrcoder159\/slim\/hooks .*hook\.js/);
+    assert.match(resolved.stdout, /@gsxrcoder159\/slim\/vitest .*vitest\.js/);
 
     const binName = process.platform === "win32" ? "slim.cmd" : "slim";
     const binPath = join(tmp, "node_modules", ".bin", binName);

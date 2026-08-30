@@ -7,7 +7,7 @@ import { generatedHeader } from "../src/generate/header.ts";
 import { ENVELOPE_VERSION, emptyHyrum } from "../src/envelope/types.ts";
 import type { Envelope } from "../src/envelope/types.ts";
 import { MIN_NODE_ENGINES, MIN_NODE_LABEL } from "../src/node-min.ts";
-import { advertisedActionUses } from "../src/release/identity.ts";
+import { advertisedActionUses, EXPECTED_UNPKG_PREFIX } from "../src/release/identity.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -138,7 +138,8 @@ test("CI matrix is OS × Node 22.18 and 24", () => {
   assert.match(ci, /"24"/);
   assert.match(ci, /fail-fast:\s*false/);
   assert.match(ci, /emit-local-receipts\.ts --only osNode --pack --commit/);
-  assert.match(ci, /receipt-osNode-/);
+  assert.match(ci, /qualification-bundle/);
+  assert.match(ci, /pack-qualify-bundle\.ts/);
 });
 
 test("CI runs golden-refresh --check and measure:claims --check on ubuntu Node 22.18", () => {
@@ -198,28 +199,44 @@ test("LLM prompt does not claim not-derived", () => {
 });
 
 
-test("release qualifies identity and packed tarball before provenance publish", () => {
+test("release.yml downloads the qualification bundle and never packs after identity", () => {
   const rel = readFileSync(join(ROOT, ".github/workflows/release.yml"), "utf8");
   assert.match(rel, /release-gate/);
   assert.match(rel, /--mode identity/);
-  assert.match(rel, /npm test/);
-  assert.match(rel, /similarity-gate/);
-  assert.match(rel, /ignore-scripts/);
-  assert.match(rel, /pack-destination/);
+  assert.match(rel, /qualification-bundle/);
+  assert.match(rel, /download-artifact/);
+  assert.match(rel, /--bundle/);
   assert.match(rel, /id-token:\s*write/);
   assert.match(rel, /contents:\s*write/);
+  assert.match(rel, /actions:\s*read/);
   assert.match(rel, /registry-url:\s*https:\/\/registry\.npmjs\.org/);
-  const identity = rel.indexOf("--mode identity");
-  const pack = rel.indexOf("ignore-scripts");
-  const artifacts = rel.indexOf("--mode artifacts");
-  const publish = rel.indexOf('--mode "$MODE"');
-  assert.ok(identity >= 0 && pack >= 0 && artifacts >= 0 && publish >= 0);
-  assert.ok(
-    identity < pack && pack < artifacts && artifacts < publish,
-    "identity then pack then artifact gate then publish/rehearse",
-  );
+  assert.match(rel, /refs\/heads\/main/);
+  assert.doesNotMatch(rel, /npm run build/);
+  assert.doesNotMatch(rel, /npm test/);
+  assert.doesNotMatch(rel, /similarity-gate/);
+  assert.doesNotMatch(rel, /pack-destination/);
   assert.doesNotMatch(rel, /^\s+- run: npm publish --provenance\s*$/m);
-  assert.match(rel, /--tarball "\$TARBALL"/);
+  assert.match(rel, /--bundle "\$\{RUNNER_TEMP\}\/qualification-bundle"/);
+});
+
+test("schema $ids use the canonical scoped unpkg prefix", () => {
+  const files = [
+    join(ROOT, "slim.schema.json"),
+    ...readdirSync(join(ROOT, "docs"))
+      .filter((f) => f.endsWith(".schema.json"))
+      .map((f) => join(ROOT, "docs", f)),
+  ];
+  for (const f of files) {
+    const text = readFileSync(f, "utf8");
+    assert.ok(
+      text.includes(`"$id": "${EXPECTED_UNPKG_PREFIX}`) || text.includes(`"$id": "${EXPECTED_UNPKG_PREFIX.slice(0, -1)}`),
+      `${relative(ROOT, f)} $id must use ${EXPECTED_UNPKG_PREFIX}`,
+    );
+    assert.doesNotMatch(text, /https:\/\/unpkg\.com\/slim\//);
+  }
+  const repo = readFileSync(join(ROOT, "docs/repo.md"), "utf8");
+  assert.match(repo, /unpkg\.com\/@gsxrcoder159\/slim\//);
+  assert.doesNotMatch(repo, /https:\/\/unpkg\.com\/slim\//);
 });
 
 test("consumer Action examples include checkout, setup-node, and npm ci", () => {

@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 import { siblingModule } from "../runtime-path.ts";
+import { packageImport } from "../release/identity.ts";
 import { vitestTraceConfigSource } from "./vitest.ts";
 
 export { vitestTraceConfigSource };
@@ -16,7 +17,7 @@ export interface DetectedRunner {
 
 const JEST_SNIPPET = `// Slim v1 does not wrap Jest.
 // Jest has no first-class Slim tracing and no shipped setup file.
-// Use node:test with --import slim/hooks, or Vitest with the slim/vitest plugin.
+// Use node:test with --import @gsxrcoder159/slim/hooks, or Vitest with the @gsxrcoder159/slim/vitest plugin.
 // Otherwise run: slim replace <pkg> --no-trace
 // Static-only evidence cannot claim runtime/trace closure.`;
 
@@ -112,7 +113,7 @@ export function findVitestUserConfig(root: string): string | null {
 function userConfigHasSlimPlugin(configPath: string): boolean {
   try {
     const text = readFileSync(configPath, "utf8");
-    return /\bslimVitest\b/.test(text) || /["']slim\/vitest["']/.test(text);
+    return /\bslimVitest\b/.test(text) || /["'](?:@gsxrcoder159\/)?slim\/vitest["']/.test(text);
   } catch {
     return false;
   }
@@ -120,7 +121,7 @@ function userConfigHasSlimPlugin(configPath: string): boolean {
 
 function slimVitestSpecifier(): string {
   const abs = siblingModule(import.meta.url, "vitest");
-  if (abs.endsWith(".js")) return "slim/vitest";
+  if (abs.endsWith(".js")) return packageImport("vitest");
   return pathToFileURL(abs).href;
 }
 

@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { cmdShimSpawnOpts, execPm, hermeticPmEnv } from "../src/rewrite/lockfile.ts";
 import { npmPackTo } from "./helpers/llm-replace.ts";
+import { packageNodeModulesDir } from "../src/release/identity.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TMP = tmpdir();
@@ -46,7 +47,7 @@ function run(
 }
 
 function slimJs(cwd: string): string {
-  return join(cwd, "node_modules", "slim", "dist", "main.js");
+  return join(packageNodeModulesDir(cwd), "dist", "main.js");
 }
 
 function installSlim(cwd: string): void {
@@ -152,11 +153,11 @@ before(() => {
   slimHome = mkdtempSync(join(TMP, "slim-p4-home-"));
   writeFileSync(join(slimHome, "package.json"), JSON.stringify({ name: "slim-home", private: true }));
   installSlim(slimHome);
-  packedHook = join(slimHome, "node_modules", "slim", "dist", "trace", "hook.js");
-  packedVitest = join(slimHome, "node_modules", "slim", "dist", "trace", "vitest.js");
+  packedHook = join(packageNodeModulesDir(slimHome), "dist", "trace", "hook.js");
+  packedVitest = join(packageNodeModulesDir(slimHome), "dist", "trace", "vitest.js");
   assert.ok(existsSync(packedHook), "packed hook.js missing");
   assert.ok(existsSync(packedVitest), "packed vitest.js missing");
-  assert.ok(existsSync(join(slimHome, "node_modules", "slim", "dist", "trace", "match.js")));
+  assert.ok(existsSync(join(packageNodeModulesDir(slimHome), "dist", "trace", "match.js")));
 });
 
 after(() => {
@@ -496,7 +497,7 @@ test("hour", () => { assert.equal(hour(), 3600000); });
 `,
   );
   installSlim(dest);
-  unlinkSync(join(dest, "node_modules", "slim", "dist", "trace", "hook.js"));
+  unlinkSync(join(packageNodeModulesDir(dest), "dist", "trace", "hook.js"));
   const replaced = run(process.execPath, [slimJs(dest), "replace", "ms", "--no-pr"], dest);
   assert.equal(replaced.status, 4, replaced.stderr + replaced.stdout);
   assert.match(replaced.stderr + replaced.stdout, /trace hook missing/);

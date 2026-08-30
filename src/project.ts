@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
+import { EXPECTED_PACKAGE_NAME } from "./release/identity.ts";
 
 export interface Project {
   root: string;
@@ -76,7 +77,7 @@ export function loadTargetTypescript(projectRoot: string): typeof import("typesc
     } catch {
       name = undefined;
     }
-    if (name === "slim") {
+    if (name === EXPECTED_PACKAGE_NAME) {
       try {
         return createRequire(import.meta.url)("typescript") as typeof import("typescript");
       } catch {

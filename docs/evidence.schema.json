@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://unpkg.com/slim/docs/evidence.schema.json",
+  "$id": "https://unpkg.com/@gsxrcoder159/slim/docs/evidence.schema.json",
   "title": "Slim replacement evidence.json",
   "description": "Written by slim replace. schemaVersion 1. Binds envelopeHash plus artifacts (module, standing, hardening, oracle version, fixture revision). Never contains credentials, prompts, raw traces, or oracle source.",
   "type": "object",

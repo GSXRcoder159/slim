@@ -9,6 +9,8 @@ import { releaseReceipt, writeReceipt } from "../src/support/receipts.ts";
 import { npmContentDigest, extractNpmPack, actionDigestFromPack } from "../src/release/digest.ts";
 import { attachCompiledTree, rollbackAttach } from "../src/release/attach.ts";
 import { npmPublishTarball } from "../src/release/gate.ts";
+import { assertNpmOccupancy } from "../src/release/occupancy.ts";
+import { EXPECTED_PACKAGE_NAME } from "../src/release/identity.ts";
 import { packSlim, ROOT } from "./helpers/llm-replace.ts";
 import { hermeticPmEnv } from "../src/rewrite/lockfile.ts";
 
@@ -92,9 +94,10 @@ test("support inventory advertises npm-publish as a required live release entry"
   assert.equal(entry.name, "npm-publish");
   assert.equal(entry.receiptClass, "live");
   assert.equal(entry.checkId, "test/release-live.test.ts");
+  assert.ok(entry.docs.includes("docs/release-identity.md"));
 });
 
-test("live packed release rehearsal attaches the Action tree and dry-runs the tarball", { timeout: 300_000 }, () => {
+test("live packed release rehearsal attaches the Action tree and dry-runs the tarball", { timeout: 300_000 }, async () => {
   if (!LIVE) {
     assert.equal(
       process.env.SLIM_RELEASE_LIVE ?? "",
@@ -106,6 +109,7 @@ test("live packed release rehearsal attaches the Action tree and dry-runs the ta
   assert.ok(hasGh() || gitToken(), "gh or GITHUB_TOKEN is required when SLIM_RELEASE_LIVE=1");
   assert.ok(hasGh(), "gh is required to create and delete the disposable live repository");
   assert.ok(tarball && npmDigest && actionDigest && packRoot, "packed tarball is required when SLIM_RELEASE_LIVE=1");
+  await assertNpmOccupancy({ name: EXPECTED_PACKAGE_NAME, version: "0.1.0" });
 
   const stamp = Date.now().toString(36);
   const name = `slim-release-live-${stamp}`;
@@ -165,6 +169,9 @@ test("live packed release rehearsal attaches the Action tree and dry-runs the ta
           endedAt: new Date(),
           log: `rehearse:${name}:dry-run:${attached.commit}`,
           workflowRun: process.env.SLIM_WORKFLOW_RUN ?? null,
+          version: "0.1.0",
+          publication: "dry-run",
+          rollback: "restored",
         }),
       );
     }

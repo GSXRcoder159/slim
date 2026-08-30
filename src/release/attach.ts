@@ -108,16 +108,17 @@ export function attachCompiledTree(opts: AttachOpts, execFile: ExecFileFn = defa
       encoding: "utf8",
     });
     if (opts.push) {
-      const remote = opts.remote ?? "origin";
-      execFile(
-        "git",
-        [
-          "push",
-          remote,
-          `+refs/tags/${opts.versionTag}:refs/tags/${opts.versionTag}`,
-          `+refs/tags/${opts.floatingTag}:refs/tags/${opts.floatingTag}`,
-        ],
-        { cwd: gitRoot, encoding: "utf8" },
+      pushReleaseTags(
+        {
+          commit,
+          versionTag: opts.versionTag,
+          floatingTag: opts.floatingTag,
+          previousVersionSha,
+          previousFloatingSha,
+        },
+        gitRoot,
+        opts.remote ?? "origin",
+        execFile,
       );
     }
     return {
@@ -139,13 +140,52 @@ export function attachCompiledTree(opts: AttachOpts, execFile: ExecFileFn = defa
   }
 }
 
+export function pushReleaseTags(
+  attached: AttachResult,
+  gitRoot: string,
+  remote = "origin",
+  execFile: ExecFileFn = defaultExec,
+): void {
+  execFile(
+    "git",
+    [
+      "push",
+      remote,
+      `+refs/tags/${attached.versionTag}:refs/tags/${attached.versionTag}`,
+      `+refs/tags/${attached.floatingTag}:refs/tags/${attached.floatingTag}`,
+    ],
+    { cwd: gitRoot, encoding: "utf8" },
+  );
+}
+
 export function rollbackAttach(
   attached: AttachResult,
   gitRoot: string,
   execFile: ExecFileFn = defaultExec,
+  opts?: { push?: boolean; remote?: string },
 ): void {
   restoreTag(execFile, gitRoot, attached.versionTag, attached.previousVersionSha);
   restoreTag(execFile, gitRoot, attached.floatingTag, attached.previousFloatingSha);
+  if (opts?.push) {
+    const remote = opts.remote ?? "origin";
+    pushRestoredTag(execFile, gitRoot, remote, attached.versionTag, attached.previousVersionSha);
+    pushRestoredTag(execFile, gitRoot, remote, attached.floatingTag, attached.previousFloatingSha);
+  }
+}
+
+function pushRestoredTag(
+  execFile: ExecFileFn,
+  gitRoot: string,
+  remote: string,
+  tag: string,
+  previous: string | null,
+): void {
+  const spec = previous ? `+${previous}:refs/tags/${tag}` : `:refs/tags/${tag}`;
+  try {
+    execFile("git", ["push", remote, spec], { cwd: gitRoot, encoding: "utf8" });
+  } catch {
+    /* remote tag may already match */
+  }
 }
 
 function restoreTag(

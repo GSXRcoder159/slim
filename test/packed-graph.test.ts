@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { hermeticPmEnv, execPm, cmdShimSpawnOpts } from "../src/rewrite/lockfile.ts";
 import { npmPackTo } from "./helpers/llm-replace.ts";
+import { packageNodeModulesDir } from "../src/release/identity.ts";
 import { createParityCases, type ParityCase } from "./fuzz/parity-corpus.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -70,7 +71,7 @@ function installSlim(cwd: string, tarball: string): void {
 }
 
 function slimRootOf(cwd: string): string {
-  return join(cwd, "node_modules", "slim");
+  return packageNodeModulesDir(cwd);
 }
 
 function slimJs(cwd: string): string {

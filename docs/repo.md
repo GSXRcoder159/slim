@@ -8,7 +8,7 @@ Single npm package. Slim’s own `package.json` has **zero** `dependencies`. Lic
 
 ```
 slim/
-  package.json              # bin: slim → dist/main.js, engines.node >=22.18.0, dependencies: {}
+  package.json              # name @gsxrcoder159/slim, bin: slim → dist/main.js, engines.node >=22.18.0, dependencies: {}
   LICENSE                   # MIT
   CHANGELOG.md
   README.md
@@ -28,7 +28,7 @@ slim/
     lodash-dynamic-refuse/ native-addon-refuse/
   action/                   # check, bloat, upstream composites → action/run.mjs
   docs/                     # dx, packages, schemas, examples
-  scripts/                  # build.mjs, artifact-identity, similarity-gate, refresh-golden, measure-claims, qualify-receipts, emit-local-receipts, qualify-candidate, release-gate
+  scripts/                  # build.mjs, artifact-identity, similarity-gate, refresh-golden, measure-claims, qualify-receipts, emit-local-receipts, qualify-candidate, pack-qualify-bundle, release-gate
   .github/workflows/        # ci (OS × Node matrix + golden-refresh), release, slim-check, slim-bloat, slim-upstream
 ```
 
@@ -55,7 +55,7 @@ Allowed fields (unknown key = doctor/check warning; `replace` refuses unknown ke
 
 ```json
 {
-  "$schema": "https://unpkg.com/slim/slim.schema.json",
+  "$schema": "https://unpkg.com/@gsxrcoder159/slim/slim.schema.json",
   "outDir": "src/slim",
   "budgetMs": 30000,
   "testCommand": "npm test -- --run"
@@ -70,9 +70,9 @@ Slice identity is `.slim/<pkg>/envelope.json` plus the module under `src/slim/`.
 
 - **LICENSE:** MIT for the CLI. Generated slices are SPDX MIT. Do not copy upstream LICENSE files into user trees. n-gram similarity is a CI heuristic, not a legal opinion.
 - **CONTRIBUTING / SECURITY / CODE_OF_CONDUCT:** as in those files. Report Slim bugs privately; a slice mismatch is a Slim bug.
-- **CI:** Linux, macOS, Windows × Node 22.18 and 24, plus a required `golden-refresh` job (`refresh:golden -- --check` then `measure:claims -- --check` on ubuntu Node 22.18) and a `receipts` job that fail-closes unless all six `osNode` receipts uploaded. Each matrix cell packs once and runs `emit-local-receipts --only osNode` after tests. Node 26 Current is not in CI until LTS.
-- **Qualification:** `npm run qualify:emit` writes gitignored local receipts under `qualification/receipts/` for the candidate commit and packed content digest. Fixture identity is the `checkId` (local) or the documented live fixture name. Receipts older than 7 days, unknown fixtures, and omitted npm/Action digests fail closed. Live receipts require `workflowRun`. `npm run qualify:candidate` asserts a clean tree, version/tag/changelog identity, CHANGELOG revert/migration guidance, packs once, emits local receipts, optionally runs live tests when `SLIM_*_LIVE=1`, then fail-closes through `qualifyInventory`. `--mode collect` merges CI `os-node-receipts` artifacts and still requires the npm digest. Receipts stay gitignored because they bind a SHA; `npm publish` still requires that directory at publish time. `npm run qualify` is the inventory gate and requires both packed digests before comparing receipts.
-- **Release:** tag `vX.Y.Z` must equal `package.json` and the first CHANGELOG `##` heading. The workflow runs identity, test, similarity, then `npm pack --ignore-scripts` once. Dry-run, provenance, and `npm publish` all take that tarball path — never a bare `npm publish` that would rebuild. `workflow_dispatch` rehearses by default (no publish, no tag push). A successful publish attaches the extracted pack as a child commit and moves `vX.Y.Z` plus the advertised Action pin (`v1` during 0.x) onto it so `uses: GSXRcoder159/slim/action/check@v1` has compiled `dist/`. Publish mode passes `--receipts qualification/receipts` and fails closed if that SHA-bound set is missing or stale.
+- **CI:** Linux, macOS, Windows × Node 22.18 and 24, plus a required `golden-refresh` job (`refresh:golden -- --check` then `measure:claims -- --check` on ubuntu Node 22.18) and a `receipts` job that fail-closes unless all six `osNode` receipts uploaded, then packs once and uploads `qualification-bundle` (tarball + `artifact-identity.json` + receipts). Each matrix cell packs once and runs `emit-local-receipts --only osNode` after tests. Node 26 Current is not in CI until LTS.
+- **Qualification:** `npm run qualify:emit` writes gitignored local receipts under `qualification/receipts/` for the candidate commit and packed content digest. Fixture identity is the `checkId` (local) or the documented live fixture name. Receipts older than 7 days, unknown fixtures, and omitted npm/Action digests fail closed. Live receipts require `workflowRun`. `npm run qualify:candidate` asserts a clean tree, version/tag/changelog identity, CHANGELOG revert/migration guidance, packs once, emits local receipts, optionally runs live tests when `SLIM_*_LIVE=1`, then fail-closes through `qualifyInventory`. `--mode collect` merges CI `os-node-receipts` artifacts and still requires the npm digest. `npm run qualify:bundle` writes the qualification bundle used by release. Receipts stay gitignored because they bind a SHA.
+- **Release:** npm name is `@gsxrcoder159/slim`. Tag `vX.Y.Z` must equal `package.json` and the first CHANGELOG `##` heading. Occupied name/version on the registry is refused. The release workflow downloads `qualification-bundle` from an identified successful `ci.yml` run and does not build or pack. Identity, occupancy, commit binding, and receipts are checked against that tarball. Dry-run (with provenance on Actions), attach tags locally, `npm publish` that tarball, then push `vX.Y.Z` plus the advertised Action pin (`v1` during 0.x). Failure before confirmed publish restores local tags. Failure after npm publish does not unpublish; retry is tag push only (`rollback=tags-not-pushed`). `workflow_dispatch` rehearses by default; publish from dispatch is allowed only on `main`. An absent or stale bundle fails before tag or registry mutation.
 - **Actions:** published `uses: GSXRcoder159/slim/action/check@v1` (and bloat/upstream) run only compiled `dist/github/*-action.js`. Missing or stale distributable code exits 4. This repo gitignores `dist/`; dogfood workflows `npm run build` then `uses: ./action/*`. Published tags must include the compiled Action files.
 
 No `packages/` monorepo, no telemetry, no commander/chalk/ora, no hosted advisory proxy.

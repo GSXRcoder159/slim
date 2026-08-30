@@ -58,7 +58,7 @@ test("assertMigrationGuidance refuses a changelog without revert instructions", 
   const root = mkdtempSync(join(tmpdir(), "slim-mig-"));
   writeFileSync(
     join(root, "package.json"),
-    JSON.stringify({ name: "slim", version: "0.1.0" }) + "\n",
+    JSON.stringify({ name: "@gsxrcoder159/slim", version: "0.1.0" }) + "\n",
   );
   writeFileSync(join(root, "CHANGELOG.md"), "# Changelog\n\n## 0.1.0\n\nNotes.\n");
   assert.throws(
@@ -134,7 +134,7 @@ test("emit mode refuses a dirty tree", () => {
   writeFileSync(
     join(root, "package.json"),
     JSON.stringify({
-      name: "slim",
+      name: "@gsxrcoder159/slim",
       version: "0.1.0",
       repository: { type: "git", url: "git+https://github.com/GSXRcoder159/slim.git" },
     }) + "\n",

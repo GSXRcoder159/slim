@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://unpkg.com/slim/docs/support-inventory.schema.json",
+  "$id": "https://unpkg.com/@gsxrcoder159/slim/docs/support-inventory.schema.json",
   "title": "Slim support inventory",
   "description": "Authoritative advertised product surface. Documentation and help may name only these entries. schemaVersion 1.",
   "type": "object",

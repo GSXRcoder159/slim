@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../exit.ts";
 import { readStamp } from "../release/digest.ts";
+import { EXPECTED_PACKAGE_NAME } from "../release/identity.ts";
 import { sourceErr, sourceOk, type SourceResult } from "../upstream/status.ts";
 import {
   REPLACE_PR_LABELS,
@@ -142,7 +143,7 @@ export function slimPackageRoot(start = fileURLToPath(import.meta.url)): string 
     if (existsSync(pkgPath)) {
       try {
         const name = (JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string }).name;
-        if (name === "slim") return dir;
+        if (name === EXPECTED_PACKAGE_NAME) return dir;
       } catch {
         /* keep walking */
       }

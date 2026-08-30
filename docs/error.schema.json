@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://unpkg.com/slim/docs/error.schema.json",
+  "$id": "https://unpkg.com/@gsxrcoder159/slim/docs/error.schema.json",
   "title": "Slim --json error document",
   "description": "One JSON document on stdout when a command cannot emit its own result (usage, SlimExit before payload, unknown command). schemaVersion 1.",
   "type": "object",

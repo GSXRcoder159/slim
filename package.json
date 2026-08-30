@@ -1,5 +1,5 @@
 {
-  "name": "slim",
+  "name": "@gsxrcoder159/slim",
   "version": "0.1.0",
   "description": "Delete your dependencies. Replace a used slice with a verified, dependency-free implementation.",
   "type": "module",
@@ -47,6 +47,7 @@
     "qualify": "node --experimental-strip-types scripts/qualify-receipts.ts",
     "qualify:emit": "node --experimental-strip-types scripts/emit-local-receipts.ts",
     "qualify:candidate": "node --experimental-strip-types scripts/qualify-candidate.ts",
+    "qualify:bundle": "node --experimental-strip-types scripts/pack-qualify-bundle.ts",
     "release:gate": "node --experimental-strip-types scripts/release-gate.ts",
     "slim": "node --experimental-strip-types src/main.ts",
     "refresh:golden": "node --experimental-strip-types scripts/refresh-golden-fixture.ts",
@@ -68,6 +69,9 @@
     "url": "https://github.com/GSXRcoder159/slim/issues"
   },
   "homepage": "https://github.com/GSXRcoder159/slim#readme",
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
+  },
   "dependencies": {},
   "devDependencies": {
     "@types/lodash": "^4.17.20",

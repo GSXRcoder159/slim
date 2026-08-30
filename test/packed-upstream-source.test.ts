@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { hermeticPmEnv, execPm } from "../src/rewrite/lockfile.ts";
 import { packSlim } from "./helpers/llm-replace.ts";
+import { packageNodeModulesDir } from "../src/release/identity.ts";
 
 type SourceResult = { status: string; value?: unknown; detail: string };
 
@@ -37,7 +38,7 @@ before(async () => {
     timeout: 60_000,
     env: hermeticPmEnv(),
   });
-  const slimRoot = join(host, "node_modules", "slim");
+  const slimRoot = packageNodeModulesDir(host);
   const osvMod = (await import(pathToFileURL(join(slimRoot, "dist/upstream/osv.js")).href)) as PackedOsv;
   const npmMod = (await import(pathToFileURL(join(slimRoot, "dist/upstream/npm.js")).href)) as PackedNpm;
   queryOsv = osvMod.queryOsv;

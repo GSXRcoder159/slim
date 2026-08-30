@@ -9,14 +9,26 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { EXIT_ENV, EXIT_REFUSED, SlimExit } from "../exit.ts";
 
-export const EXPECTED_PACKAGE_NAME = "slim";
+export const EXPECTED_PACKAGE_NAME = "@gsxrcoder159/slim";
 export const EXPECTED_GITHUB_REPO = "GSXRcoder159/slim";
 export const EXPECTED_REPOSITORY = `git+https://github.com/${EXPECTED_GITHUB_REPO}.git`;
 export const EXPECTED_BUGS_URL = `https://github.com/${EXPECTED_GITHUB_REPO}/issues`;
 export const EXPECTED_HOMEPAGE = `https://github.com/${EXPECTED_GITHUB_REPO}#readme`;
 export const EXPECTED_REGISTRY = "https://registry.npmjs.org";
+export const EXPECTED_DEFAULT_BRANCH = "main";
+export const EXPECTED_UNPKG_PREFIX = `https://unpkg.com/${EXPECTED_PACKAGE_NAME}/`;
 /** Consumer Action pin in docs/examples. 0.x releases still update this floating tag. */
 export const ADVERTISED_ACTION_TAG = "v1";
+
+/** npm import of this package (`@gsxrcoder159/slim` or a subpath). */
+export function packageImport(subpath?: "hooks" | "vitest"): string {
+  return subpath ? `${EXPECTED_PACKAGE_NAME}/${subpath}` : EXPECTED_PACKAGE_NAME;
+}
+
+/** Host `node_modules` directory for this package after `npm install`. */
+export function packageNodeModulesDir(root: string): string {
+  return join(root, "node_modules", ...EXPECTED_PACKAGE_NAME.split("/"));
+}
 
 export function advertisedActionUses(name: "check" | "bloat" | "upstream"): string {
   return `${EXPECTED_GITHUB_REPO}/action/${name}@${ADVERTISED_ACTION_TAG}`;
@@ -105,6 +117,8 @@ type Pkg = {
   name?: unknown;
   version?: unknown;
   repository?: { url?: unknown } | unknown;
+  bugs?: { url?: unknown } | unknown;
+  homepage?: unknown;
   publishConfig?: { registry?: unknown };
 };
 
@@ -128,11 +142,57 @@ export function assertPackageIdentity(root: string): void {
   if (url !== EXPECTED_REPOSITORY) {
     throw new SlimExit(EXIT_REFUSED, `repository.url ${String(url)} is not ${EXPECTED_REPOSITORY}`);
   }
+  const bugs =
+    pkg.bugs && typeof pkg.bugs === "object" && "url" in pkg.bugs
+      ? (pkg.bugs as { url?: unknown }).url
+      : undefined;
+  if (bugs !== EXPECTED_BUGS_URL) {
+    throw new SlimExit(EXIT_REFUSED, `bugs.url ${String(bugs)} is not ${EXPECTED_BUGS_URL}`);
+  }
+  if (pkg.homepage !== EXPECTED_HOMEPAGE) {
+    throw new SlimExit(EXIT_REFUSED, `homepage ${String(pkg.homepage)} is not ${EXPECTED_HOMEPAGE}`);
+  }
   const published =
     pkg.publishConfig && typeof pkg.publishConfig === "object" && "registry" in pkg.publishConfig
       ? (pkg.publishConfig as { registry?: unknown }).registry
       : undefined;
-  if (typeof published === "string") assertRegistry(published);
+  if (published === undefined) {
+    throw new SlimExit(EXIT_REFUSED, "package.json publishConfig.registry is missing");
+  }
+  assertRegistry(String(published));
+}
+
+export function assertPublishRef(opts: {
+  mode: "identity" | "artifacts" | "rehearse" | "publish";
+  tag: string;
+  eventName?: string;
+  ref?: string;
+}): void {
+  if (opts.mode !== "publish") return;
+  const event = opts.eventName ?? process.env.GITHUB_EVENT_NAME ?? "";
+  const ref = opts.ref ?? process.env.GITHUB_REF ?? "";
+  if (event === "workflow_dispatch") {
+    if (ref !== `refs/heads/${EXPECTED_DEFAULT_BRANCH}`) {
+      throw new SlimExit(
+        EXIT_REFUSED,
+        `workflow_dispatch publish is only allowed from ${EXPECTED_DEFAULT_BRANCH} (got ${ref || "empty ref"})`,
+      );
+    }
+    return;
+  }
+  if (event === "push" || ref.startsWith("refs/tags/")) {
+    const want = `refs/tags/${opts.tag}`;
+    if (ref !== want) {
+      throw new SlimExit(EXIT_REFUSED, `publish tag ${ref || "empty ref"} does not match ${want}`);
+    }
+    return;
+  }
+  if (process.env.GITHUB_ACTIONS === "1") {
+    throw new SlimExit(
+      EXIT_REFUSED,
+      `publish is not allowed from ${ref || "unknown ref"} (event ${event || "unknown"})`,
+    );
+  }
 }
 
 export function assertRegistry(registryUrl: string): void {

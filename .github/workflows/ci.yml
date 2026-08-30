@@ -58,7 +58,7 @@ jobs:
   receipts:
     needs: [test, golden-refresh]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -77,6 +77,19 @@ jobs:
             --commit "${{ github.sha }}" \
             --receipts qualification/receipts \
             --from qualification/receipts
+      - run: npm ci
+      - run: npm run build
+      - name: pack qualification bundle
+        run: |
+          node --experimental-strip-types scripts/pack-qualify-bundle.ts \
+            --out "${{ runner.temp }}/qualification-bundle" \
+            --receipts qualification/receipts \
+            --commit "${{ github.sha }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qualification-bundle
+          path: ${{ runner.temp }}/qualification-bundle
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: os-node-receipts

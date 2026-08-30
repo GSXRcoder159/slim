@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://unpkg.com/slim/docs/scan.schema.json",
+  "$id": "https://unpkg.com/@gsxrcoder159/slim/docs/scan.schema.json",
   "title": "Slim scan --json report",
   "description": "One JSON document on stdout. Scan is an inventory and ranking heuristic, not a closed envelope. schemaVersion 2. importSites are runtime-only; typeOnlySites are type-only import/export declarations. sizeProvenance describes unpacked minBytes: estimated is the known min table after a complete install walk; measured is a complete walk of a package not in that table; partial is an incomplete walk (cap, unreadable, omitted, broken or escaping link), including known-size packages, and then sizeState is review; unknown is a missing install tree, including known-size packages (table minBytes may still be present). gzipBytes is always 0.36 × minBytes (a guess of the displayed min, not a second measurement). sizeState review is measurement quality, not ranking verdict review.",
   "type": "object",

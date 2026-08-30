@@ -65,7 +65,7 @@ export function runTraces(
     if (runner.jestSnippet) process.stderr.write(runner.jestSnippet + "\n");
     throw new SlimExit(
       EXIT_ENV,
-      "Jest is detect-only; Slim does not wrap Jest. Use node:test (--import slim/hooks) or Vitest (slim/vitest), or pass --no-trace for static-only evidence (cannot claim trace closure).",
+      "Jest is detect-only; Slim does not wrap Jest. Use node:test (--import @gsxrcoder159/slim/hooks) or Vitest (@gsxrcoder159/slim/vitest), or pass --no-trace for static-only evidence (cannot claim trace closure).",
     );
   }
   if (runner.kind === "none" || !runner.command) {
@@ -135,7 +135,7 @@ export function runTraces(
     const detail = [(r.stderr ?? "").trim(), (r.stdout ?? "").trim()].filter(Boolean).join("\n").slice(0, 800);
     throw new SlimExit(
       EXIT_ENV,
-      `trace hook did not load (missing session header). Check slim/hooks or slim/vitest resolution.${detail ? `\n${detail}` : ""}`,
+      `trace hook did not load (missing session header). Check @gsxrcoder159/slim/hooks or @gsxrcoder159/slim/vitest resolution.${detail ? `\n${detail}` : ""}`,
     );
   }
   if (parsed.errors.length) {

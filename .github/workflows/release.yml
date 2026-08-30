@@ -10,10 +10,15 @@ on:
         description: Rehearse without publishing or pushing tags
         type: boolean
         default: true
+      qualify_run_id:
+        description: Successful ci.yml run that uploaded qualification-bundle
+        type: string
+        required: false
 
 permissions:
   id-token: write
   contents: write
+  actions: read
 
 jobs:
   publish:
@@ -26,40 +31,47 @@ jobs:
         with:
           node-version: "22.18"
           registry-url: https://registry.npmjs.org
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
       - run: corepack enable
       - run: npm ci
       - name: identity gate
         run: node --experimental-strip-types scripts/release-gate.ts --mode identity --registry https://registry.npmjs.org
-      - run: npm run build
-      - run: npm test
-      - name: n-gram similarity gate
-        run: node --experimental-strip-types scripts/similarity-gate.ts
-      - name: pack once
+      - name: resolve qualification bundle
+        id: bundle
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          PACK_DIR="${RUNNER_TEMP:-$(mktemp -d)}"
-          npm pack --ignore-scripts --pack-destination "$PACK_DIR"
-          TAR="$(ls "$PACK_DIR"/*.tgz)"
-          test -n "$TAR"
-          echo "TARBALL=$TAR" >> "$GITHUB_ENV"
-      - name: artifact gate
-        run: node --experimental-strip-types scripts/release-gate.ts --mode artifacts --tarball "$TARBALL" --registry https://registry.npmjs.org --commit "$GITHUB_SHA"
-      - name: rehearse or publish the packed tarball
+          set -euo pipefail
+          RUN_ID="${{ github.event.inputs.qualify_run_id }}"
+          if [ -z "$RUN_ID" ]; then
+            RUN_ID="$(gh run list --workflow=ci.yml --commit "$GITHUB_SHA" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+          fi
+          if [ -z "$RUN_ID" ]; then
+            echo "release-gate: missing qualification workflow run for $GITHUB_SHA" >&2
+            exit 1
+          fi
+          echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          name: qualification-bundle
+          run-id: ${{ steps.bundle.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/qualification-bundle
+      - name: rehearse or publish the bundled tarball
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          set -euo pipefail
           MODE=rehearse
           if [ "${GITHUB_EVENT_NAME}" = "push" ]; then MODE=publish; fi
           if [ "${{ github.event.inputs.rehearse }}" = "false" ]; then MODE=publish; fi
-          EXTRA=()
-          if [ "$MODE" = "publish" ]; then EXTRA+=(--receipts qualification/receipts); fi
+          if [ "$MODE" = "publish" ] && [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ "${GITHUB_REF}" != "refs/heads/main" ]; then
+            echo "release-gate: workflow_dispatch publish is only allowed from main" >&2
+            exit 1
+          fi
           node --experimental-strip-types scripts/release-gate.ts \
             --mode "$MODE" \
-            --tarball "$TARBALL" \
+            --bundle "${RUNNER_TEMP}/qualification-bundle" \
             --registry https://registry.npmjs.org \
             --commit "$GITHUB_SHA" \
             --parent-sha "$GITHUB_SHA" \
-            --delete-tarball \
-            "${EXTRA[@]}"
+            --workflow-run "${{ steps.bundle.outputs.run_id }}"

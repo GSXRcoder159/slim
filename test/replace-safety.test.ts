@@ -21,6 +21,7 @@ import { fileURLToPath } from "node:url";
 import { applyRevert, type RevertPlan } from "../src/rewrite/revert.ts";
 import { hermeticPmEnv, spawnPm } from "../src/rewrite/lockfile.ts";
 import { packSlim } from "./helpers/llm-replace.ts";
+import { packageNodeModulesDir } from "../src/release/identity.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -394,7 +395,7 @@ test("packed CLI refuses unowned output and an internal symlinked --out", { time
     timeout: 120_000,
   });
   assert.equal(installed.status, 0, String(installed.stderr));
-  const slimJs = join(host, "node_modules", "slim", "dist", "main.js");
+  const slimJs = join(packageNodeModulesDir(host), "dist", "main.js");
   const runPacked = (cwd: string) =>
     spawnSync(process.execPath, [slimJs, "replace", "ms", "--no-pr", "--no-trace", "--no-install"], {
       cwd,

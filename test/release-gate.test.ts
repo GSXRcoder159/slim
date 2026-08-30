@@ -37,8 +37,11 @@ import {
   isDryRunVersionConflict,
   npmPublishArgs,
   npmPublishTarball,
+  resolveCommit,
   runReleaseGate,
 } from "../src/release/gate.ts";
+import { assertPublishRef } from "../src/release/identity.ts";
+import { writeQualifyBundle, assertQualifyBundle } from "../src/release/bundle.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TMP = join(ROOT, ".tmp");
@@ -52,6 +55,9 @@ function initReleaseFixture(opts?: {
   changelog?: string;
   name?: string;
   repository?: string;
+  bugs?: string;
+  homepage?: string;
+  publishConfig?: string | null;
   tag?: string | null;
 }): string {
   mkdirSync(TMP, { recursive: true });
@@ -60,18 +66,17 @@ function initReleaseFixture(opts?: {
   git(root, ["init", "--template=", "-b", "main"]);
   git(root, ["config", "user.email", "slim@test"]);
   git(root, ["config", "user.name", "slim"]);
-  writeFileSync(
-    join(root, "package.json"),
-    JSON.stringify(
-      {
-        name: opts?.name ?? "slim",
-        version,
-        repository: { type: "git", url: opts?.repository ?? "git+https://github.com/GSXRcoder159/slim.git" },
-      },
-      null,
-      2,
-    ) + "\n",
-  );
+  const pkg: Record<string, unknown> = {
+    name: opts?.name ?? "@gsxrcoder159/slim",
+    version,
+    repository: { type: "git", url: opts?.repository ?? "git+https://github.com/GSXRcoder159/slim.git" },
+    bugs: { url: opts?.bugs ?? "https://github.com/GSXRcoder159/slim/issues" },
+    homepage: opts?.homepage ?? "https://github.com/GSXRcoder159/slim#readme",
+  };
+  if (opts?.publishConfig !== null) {
+    pkg.publishConfig = { registry: opts?.publishConfig ?? "https://registry.npmjs.org" };
+  }
+  writeFileSync(join(root, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
   writeFileSync(join(root, "CHANGELOG.md"), opts?.changelog ?? `# Changelog\n\n## ${version}\n\nNotes.\n`);
   mkdirSync(join(root, ".github", "workflows"), { recursive: true });
   writeFileSync(
@@ -111,6 +116,10 @@ function tarCreate(work: string, tarball: string): void {
     encoding: "utf8",
     env: { ...process.env, COPYFILE_DISABLE: "1" },
   });
+}
+
+function freeOccupancy(): Promise<Response> {
+  return Promise.resolve(new Response(null, { status: 404 }));
 }
 
 function isSlimExit(err: unknown, code: number, re: RegExp): boolean {
@@ -201,6 +210,24 @@ test("wrong package name or repository identity is refused", () => {
   } finally {
     rmSync(ok, { recursive: true, force: true });
   }
+  const missingHome = initReleaseFixture({ homepage: "https://example.com" });
+  try {
+    assert.throws(
+      () => assertPackageIdentity(missingHome),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /homepage/i),
+    );
+  } finally {
+    rmSync(missingHome, { recursive: true, force: true });
+  }
+  const missingPub = initReleaseFixture({ publishConfig: null });
+  try {
+    assert.throws(
+      () => assertPackageIdentity(missingPub),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /publishConfig/i),
+    );
+  } finally {
+    rmSync(missingPub, { recursive: true, force: true });
+  }
 });
 
 test("non-npmjs registry is refused", () => {
@@ -241,7 +268,7 @@ test("npm content digest is stable across tar mtimes and independent of wrapper 
   const work = mkdtempSync(join(tmpdir(), "slim-rel-tar-"));
   try {
     writePackTree(join(work, "package"), {
-      "package.json": '{"name":"slim","version":"0.1.0"}\n',
+      "package.json": '{"name":"@gsxrcoder159/slim","version":"0.1.0"}\n',
       "dist/main.js": "export const n = 1;\n",
       "README.md": "hi\n",
     });
@@ -266,7 +293,7 @@ test("npm content digest is stable across tar mtimes and independent of wrapper 
   }
 });
 
-test("this repository package.json and CHANGELOG agree on 0.1.0", () => {
+test("canonical package identity is the scoped name and this repository matches it", () => {
   assert.equal(packageVersion(ROOT), "0.1.0");
   assert.equal(changelogVersion(ROOT), "0.1.0");
   assert.equal(versionTag(packageVersion(ROOT)), "v0.1.0");
@@ -288,7 +315,7 @@ test("npm publish args always include the tarball path and never a bare publish"
   ]);
 });
 
-test("npm publish dry-run treats an already-published version as packed, not failed", () => {
+test("npm publish dry-run refuses an already-published version as occupied", () => {
   mkdirSync(TMP, { recursive: true });
   const tarball = join(TMP, "slim-dry-conflict.tgz");
   writeFileSync(tarball, "tarball");
@@ -297,12 +324,16 @@ test("npm publish dry-run treats an already-published version as packed, not fai
       isDryRunVersionConflict("You cannot publish over the previously published versions: 0.1.0."),
       true,
     );
-    npmPublishTarball(
-      tarball,
-      { dryRun: true, provenance: false, cwd: ROOT },
-      () => {
-        throw new Error("npm error You cannot publish over the previously published versions: 0.1.0.");
-      },
+    assert.throws(
+      () =>
+        npmPublishTarball(
+          tarball,
+          { dryRun: true, provenance: false, cwd: ROOT },
+          () => {
+            throw new Error("npm error You cannot publish over the previously published versions: 0.1.0.");
+          },
+        ),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /occupied|already published/i),
     );
   } finally {
     rmSync(tarball, { force: true });
@@ -335,7 +366,7 @@ function writeActionPack(dir: string): string {
   }
   mkdirSync(join(dir, "dist"), { recursive: true });
   writeFileSync(join(dir, "dist/main.js"), "export const n = 1;\n");
-  writeFileSync(join(dir, "package.json"), '{"name":"slim","version":"0.1.0"}\n');
+  writeFileSync(join(dir, "package.json"), '{"name":"@gsxrcoder159/slim","version":"0.1.0"}\n');
   const sha = actionManifest(dir).sha256;
   writeFileSync(
     join(dir, "dist/.slim-build.json"),
@@ -369,26 +400,28 @@ test("packed Action digest matches stamp and current tree; a post-pack rewrite f
   }
 });
 
-test("identity gate passes a clean matching fixture and refuses a dirty one", () => {
+test("identity gate passes a clean matching fixture and refuses a dirty one", async () => {
   const root = initReleaseFixture();
   try {
     assertIdentity(root, "v0.1.0", "https://registry.npmjs.org");
-    const out = runReleaseGate({
+    const out = await runReleaseGate({
       root,
       mode: "identity",
       tag: "v0.1.0",
       registryUrl: "https://registry.npmjs.org",
+      occupancyFetch: freeOccupancy,
     });
     assert.equal(out.tag, "v0.1.0");
     assert.equal(out.floatingTag, "v1");
     writeFileSync(join(root, "extra.txt"), "nope\n");
-    assert.throws(
+    await assert.rejects(
       () =>
         runReleaseGate({
           root,
           mode: "identity",
           tag: "v0.1.0",
           registryUrl: "https://registry.npmjs.org",
+          occupancyFetch: freeOccupancy,
         }),
       (err: unknown) => isSlimExit(err, EXIT_REFUSED, /dirty|untracked/i),
     );
@@ -426,6 +459,222 @@ test("attachCompiledTree moves version and floating tags onto the pack tree and 
     rollbackAttach(attached, root);
     assert.equal(git(root, ["rev-parse", "refs/tags/v0.1.0"]), parent);
     assert.throws(() => git(root, ["rev-parse", "--verify", "refs/tags/v1"]));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(packWork, { recursive: true, force: true });
+  }
+});
+
+test("supplied commit that does not match HEAD is refused", () => {
+  const root = initReleaseFixture();
+  try {
+    assert.throws(
+      () => resolveCommit(root, "a".repeat(40), execFileSync),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /does not match HEAD/),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("workflow_dispatch publish from a non-default branch is refused", () => {
+  assert.throws(
+    () =>
+      assertPublishRef({
+        mode: "publish",
+        tag: "v0.1.0",
+        eventName: "workflow_dispatch",
+        ref: "refs/heads/gap-closure",
+      }),
+    (err: unknown) => isSlimExit(err, EXIT_REFUSED, /main/),
+  );
+  assertPublishRef({
+    mode: "publish",
+    tag: "v0.1.0",
+    eventName: "workflow_dispatch",
+    ref: "refs/heads/main",
+  });
+  assertPublishRef({
+    mode: "publish",
+    tag: "v0.1.0",
+    eventName: "push",
+    ref: "refs/tags/v0.1.0",
+  });
+  assertPublishRef({ mode: "rehearse", tag: "v0.1.0", eventName: "workflow_dispatch", ref: "refs/heads/feat" });
+});
+
+test("publish without a qualification bundle is refused before attach", async () => {
+  const root = initReleaseFixture();
+  try {
+    await assert.rejects(
+      () =>
+        runReleaseGate({
+          root,
+          mode: "publish",
+          tag: "v0.1.0",
+          registryUrl: "https://registry.npmjs.org",
+          occupancyFetch: freeOccupancy,
+        }),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /bundle/),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("qualification bundle commit mismatch is refused before attach", async () => {
+  const root = initReleaseFixture();
+  mkdirSync(TMP, { recursive: true });
+  const packWork = mkdtempSync(join(TMP, "slim-rel-bundle-"));
+  try {
+    const packRoot = join(packWork, "package");
+    const sha = writeActionPack(packRoot);
+    const tarball = join(packWork, "slim.tgz");
+    tarCreate(packWork, tarball);
+    const bundleDir = join(packWork, "bundle");
+    writeQualifyBundle({
+      dir: bundleDir,
+      tarball,
+      receiptsDir: join(packWork, "empty-receipts"),
+      commit: "b".repeat(40),
+      npmDigest: "c".repeat(64),
+      actionDigest: sha,
+      distSha256: "d".repeat(64),
+    });
+    mkdirSync(join(root, "dist"), { recursive: true });
+    await assert.rejects(
+      () =>
+        runReleaseGate({
+          root,
+          mode: "publish",
+          tag: "v0.1.0",
+          bundleDir,
+          registryUrl: "https://registry.npmjs.org",
+          occupancyFetch: freeOccupancy,
+        }),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /bundle commit|does not match/),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(packWork, { recursive: true, force: true });
+  }
+});
+
+test("stale qualification bundle is refused", () => {
+  mkdirSync(TMP, { recursive: true });
+  const packWork = mkdtempSync(join(TMP, "slim-rel-stale-"));
+  try {
+    const packRoot = join(packWork, "package");
+    writeActionPack(packRoot);
+    const tarball = join(packWork, "slim.tgz");
+    tarCreate(packWork, tarball);
+    const bundleDir = join(packWork, "bundle");
+    writeQualifyBundle({
+      dir: bundleDir,
+      tarball,
+      receiptsDir: join(packWork, "empty-receipts"),
+      commit: "a".repeat(40),
+      npmDigest: "c".repeat(64),
+      actionDigest: "d".repeat(64),
+      distSha256: "e".repeat(64),
+      packedAt: "2020-01-01T00:00:00.000Z",
+    });
+    assert.throws(
+      () =>
+        assertQualifyBundle({
+          dir: bundleDir,
+          commit: "a".repeat(40),
+          now: new Date("2026-08-30T00:00:00.000Z"),
+        }),
+      (err: unknown) => isSlimExit(err, EXIT_FAIL, /stale/),
+    );
+  } finally {
+    rmSync(packWork, { recursive: true, force: true });
+  }
+});
+
+test("identity gate refuses an occupied packument before attach", async () => {
+  const root = initReleaseFixture();
+  try {
+    await assert.rejects(
+      () =>
+        runReleaseGate({
+          root,
+          mode: "identity",
+          tag: "v0.1.0",
+          registryUrl: "https://registry.npmjs.org",
+          occupancyFetch: async () =>
+            new Response(JSON.stringify({ versions: { "0.1.0": {} } }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+        }),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /occupied|already published/i),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("source-only checkout binds Action wrappers without requiring dist", () => {
+  mkdirSync(TMP, { recursive: true });
+  const work = mkdtempSync(join(TMP, "slim-rel-src-"));
+  try {
+    const packDir = join(work, "package");
+    const sha = writeActionPack(packDir);
+    const tarball = join(work, "slim.tgz");
+    tarCreate(work, tarball);
+    const source = join(work, "source");
+    for (const f of ACTION_WRAPPERS) {
+      const dest = join(source, f);
+      mkdirSync(dirname(dest), { recursive: true });
+      cpSync(join(packDir, f), dest);
+    }
+    const id = assertTarballMatchesRoot(tarball, source);
+    assert.equal(id.actionDigest, sha);
+    writeFileSync(join(source, ACTION_WRAPPERS[0]!), `${readFileSync(join(source, ACTION_WRAPPERS[0]!))}\n`);
+    assert.throws(
+      () => assertTarballMatchesRoot(tarball, source),
+      (err: unknown) => isSlimExit(err, EXIT_FAIL, /Action wrapper/),
+    );
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test("rollbackAttach with push restores or deletes remote tags", () => {
+  const root = initReleaseFixture();
+  mkdirSync(TMP, { recursive: true });
+  const packWork = mkdtempSync(join(TMP, "slim-rel-rb-"));
+  try {
+    const packRoot = join(packWork, "package");
+    writeActionPack(packRoot);
+    const parent = git(root, ["rev-parse", "HEAD"]);
+    const attached = attachCompiledTree({
+      gitRoot: root,
+      packRoot,
+      parentSha: parent,
+      versionTag: "v0.1.0",
+      floatingTag: "v1",
+      push: false,
+    });
+    const pushes: string[][] = [];
+    const exec: typeof execFileSync = ((file, args, options) => {
+      if (file === "git" && args?.[0] === "push") {
+        pushes.push([...args]);
+        return "";
+      }
+      return execFileSync(file, args ?? [], options);
+    }) as typeof execFileSync;
+    rollbackAttach(attached, root, exec, { push: true, remote: "origin" });
+    assert.ok(
+      pushes.some((a) => a.includes(`+${parent}:refs/tags/v0.1.0`)),
+      String(pushes),
+    );
+    assert.ok(
+      pushes.some((a) => a.includes(":refs/tags/v1")),
+      String(pushes),
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
     rmSync(packWork, { recursive: true, force: true });

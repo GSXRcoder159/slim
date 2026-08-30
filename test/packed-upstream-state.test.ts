@@ -8,6 +8,7 @@ import { hermeticPmEnv, execPm } from "../src/rewrite/lockfile.ts";
 import { validateNamed } from "../src/schema/documents.ts";
 import { minimalEnvelope, minimalEvidence, minimalManifest, rebindEvidenceArtifacts } from "./helpers/documents.ts";
 import { packSlim } from "./helpers/llm-replace.ts";
+import { packageNodeModulesDir } from "../src/release/identity.ts";
 
 function run(
   slimJs: string,
@@ -65,7 +66,7 @@ test("packed upstream --json refuses an escaping module before not-exposed", { t
       timeout: 60_000,
       env: hermeticPmEnv(),
     });
-    const slimJs = join(host, "node_modules", "slim", "dist", "main.js");
+    const slimJs = join(packageNodeModulesDir(host), "dist", "main.js");
     mkdirSync(proj, { recursive: true });
     plantPackedProject(proj);
     const manPath = join(proj, ".slim", "manifest.json");
@@ -99,7 +100,7 @@ test("packed upstream --json missing configured envelope is missing-state", { ti
       timeout: 60_000,
       env: hermeticPmEnv(),
     });
-    const slimJs = join(host, "node_modules", "slim", "dist", "main.js");
+    const slimJs = join(packageNodeModulesDir(host), "dist", "main.js");
     mkdirSync(proj, { recursive: true });
     plantPackedProject(proj);
     writeFileSync(

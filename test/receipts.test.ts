@@ -290,6 +290,11 @@ test("releaseReceipt is schema-valid with npm-publish service and both digests",
   assert.equal(parsed.npmDigest, NPM);
   assert.equal(parsed.actionDigest, ACTION);
   assert.equal(parsed.outcome, "pass");
+  assert.match(parsed.environment ?? "", /version=0\.1\.0/);
+  assert.match(parsed.environment ?? "", /publication=dry-run/);
+  assert.match(parsed.environment ?? "", /rollback=restored/);
+  assert.match(parsed.environment ?? "", new RegExp(`npmDigest=${NPM}`));
+  assert.match(parsed.environment ?? "", new RegExp(`actionDigest=${ACTION}`));
 });
 
 const actionEntry: InventoryEntry = {

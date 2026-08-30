@@ -9,6 +9,7 @@ import { EXIT_FAIL } from "../src/exit.ts";
 import { hermeticPmEnv, execPm } from "../src/rewrite/lockfile.ts";
 import { plantReplaceTxn } from "./helpers/pr-txn.ts";
 import { packSlim } from "./helpers/llm-replace.ts";
+import { packageNodeModulesDir } from "../src/release/identity.ts";
 
 type CreatePrOpts = {
   root: string;
@@ -143,7 +144,7 @@ before(async () => {
     env: hermeticPmEnv(),
   });
   const mod = (await import(
-    pathToFileURL(join(host, "node_modules", "slim", "dist", "github", "pr.js")).href
+    pathToFileURL(join(packageNodeModulesDir(host), "dist", "github", "pr.js")).href
   )) as PackedPr;
   createPullRequest = mod.createPullRequest;
 });

@@ -11,6 +11,7 @@ import { validateNamed } from "../src/schema/documents.ts";
 import { hashEnvelope } from "../src/envelope/types.ts";
 import { minimalEnvelope, minimalEvidence, minimalManifest, rebindEvidenceArtifacts } from "./helpers/documents.ts";
 import { npmPackTo } from "./helpers/llm-replace.ts";
+import { packageNodeModulesDir } from "../src/release/identity.ts";
 import type { EvidenceJson } from "../src/evidence/report.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,7 +45,7 @@ function packSlim(): { tmp: string; packDir: string; slimJs: string } {
     timeout: 60_000,
     env: hermeticPmEnv(),
   });
-  return { tmp, packDir, slimJs: join(tmp, "node_modules", "slim", "dist", "main.js") };
+  return { tmp, packDir, slimJs: join(packageNodeModulesDir(tmp), "dist", "main.js") };
 }
 
 function writeCheckProject(

@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { hermeticPmEnv, execPm, cmdShimSpawnOpts } from "../../src/rewrite/lockfile.ts";
 import { applyRevert, type RevertPlan } from "../../src/rewrite/revert.ts";
 import { npmPackTo } from "../helpers/llm-replace.ts";
+import { packageNodeModulesDir } from "../../src/release/identity.ts";
 import {
   allCatalogEntries,
   CATALOG_PKG_ALIAS,
@@ -386,7 +387,7 @@ test("packed CLI replace → standing tests → slim check → revert for every 
       const dest = join(tmp, c.dir);
       copyFixture(c.dir, dest, c.lodashInput);
       npmInstall(dest, tarball);
-      const slimJs = join(dest, "node_modules", "slim", "dist", "main.js");
+      const slimJs = join(packageNodeModulesDir(dest), "dist", "main.js");
       assert.ok(existsSync(slimJs), `${c.pkg}: installed slim CLI`);
       assertReplaceLoop(dest, c.pkg, slimJs, c.pkg === "lodash" ? 1200 : 800);
     }
@@ -399,7 +400,7 @@ test("packed CLI replace → standing tests → slim check → revert for every 
     assertReplaceLoop(
       allLodash,
       "lodash",
-      join(allLodash, "node_modules", "slim", "dist", "main.js"),
+      join(packageNodeModulesDir(allLodash), "dist", "main.js"),
       1600,
     );
 
@@ -418,7 +419,7 @@ test("packed CLI replace → standing tests → slim check → revert for every 
       }
       setDeps(dest, a.deps, a.drop);
       npmInstall(dest, tarball);
-      assertReplaceLoop(dest, a.alias, join(dest, "node_modules", "slim", "dist", "main.js"));
+      assertReplaceLoop(dest, a.alias, join(packageNodeModulesDir(dest), "dist", "main.js"));
     }
 
     for (const pkg of PACKED_LODASH_NPM) {
@@ -432,7 +433,7 @@ test("packed CLI replace → standing tests → slim check → revert for every 
       writeGenerated(dest, consumer.index, consumer.test, { [pkg]: pin }, ["lodash"]);
       npmInstall(dest, tarball);
       const budget = symbol === "debounce" || symbol === "throttle" ? 800 : 400;
-      assertReplaceLoop(dest, pkg, join(dest, "node_modules", "slim", "dist", "main.js"), budget);
+      assertReplaceLoop(dest, pkg, join(packageNodeModulesDir(dest), "dist", "main.js"), budget);
     }
 
     const refuseLodashEs = join(tmp, "refuse-lodash-es-template");
@@ -455,7 +456,7 @@ test("template compiles", () => {
     );
     setDeps(refuseLodashEs, { "lodash-es": "4.17.21" }, ["lodash"]);
     npmInstall(refuseLodashEs, tarball);
-    const slimRefuse = join(refuseLodashEs, "node_modules", "slim", "dist", "main.js");
+    const slimRefuse = join(packageNodeModulesDir(refuseLodashEs), "dist", "main.js");
     const beforeLodashEs = readFileSync(join(refuseLodashEs, "package.json"), "utf8");
     const refused = run(
       process.execPath,
@@ -490,7 +491,7 @@ test("contentType runs", () => {
     const beforeMime = readFileSync(join(refuseMime, "package.json"), "utf8");
     const mimeRefused = run(
       process.execPath,
-      [join(refuseMime, "node_modules", "slim", "dist", "main.js"), "replace", "mime", "--no-pr", "--budget-ms", "400", "--workers", "1"],
+      [join(packageNodeModulesDir(refuseMime), "dist", "main.js"), "replace", "mime", "--no-pr", "--budget-ms", "400", "--workers", "1"],
       refuseMime,
     );
     assert.equal(mimeRefused.status, 3, `mime contentType\n${mimeRefused.stdout}\n${mimeRefused.stderr}`);
@@ -521,7 +522,7 @@ test("parseURL runs", () => {
     const beforeUrl = readFileSync(join(refuseUrl, "package.json"), "utf8");
     const urlRefused = run(
       process.execPath,
-      [join(refuseUrl, "node_modules", "slim", "dist", "main.js"), "replace", "url-parse", "--no-pr", "--budget-ms", "400", "--workers", "1"],
+      [join(packageNodeModulesDir(refuseUrl), "dist", "main.js"), "replace", "url-parse", "--no-pr", "--budget-ms", "400", "--workers", "1"],
       refuseUrl,
     );
     assert.equal(urlRefused.status, 3, `url-parse parseURL\n${urlRefused.stdout}\n${urlRefused.stderr}`);
@@ -553,7 +554,7 @@ test("locale", () => {
     const beforeLoc = readFileSync(join(refuseLocale, "package.json"), "utf8");
     const locRefused = run(
       process.execPath,
-      [join(refuseLocale, "node_modules", "slim", "dist", "main.js"), "replace", "moment", "--no-pr", "--budget-ms", "400", "--workers", "1"],
+      [join(packageNodeModulesDir(refuseLocale), "dist", "main.js"), "replace", "moment", "--no-pr", "--budget-ms", "400", "--workers", "1"],
       refuseLocale,
     );
     assert.equal(locRefused.status, 3, `moment locale\n${locRefused.stdout}\n${locRefused.stderr}`);
@@ -585,7 +586,7 @@ test("v7", () => {
     const beforeUuid = readFileSync(join(refuseUuid, "package.json"), "utf8");
     const uuidRefused = run(
       process.execPath,
-      [join(refuseUuid, "node_modules", "slim", "dist", "main.js"), "replace", "uuid", "--no-pr", "--budget-ms", "400", "--workers", "1"],
+      [join(packageNodeModulesDir(refuseUuid), "dist", "main.js"), "replace", "uuid", "--no-pr", "--budget-ms", "400", "--workers", "1"],
       refuseUuid,
     );
     assert.equal(uuidRefused.status, 3, `uuid v7\n${uuidRefused.stdout}\n${uuidRefused.stderr}`);
@@ -616,7 +617,7 @@ test("template", () => {
     const beforeTpl = readFileSync(join(refuseTemplate, "package.json"), "utf8");
     const tplRefused = run(
       process.execPath,
-      [join(refuseTemplate, "node_modules", "slim", "dist", "main.js"), "replace", "lodash.template", "--no-pr", "--budget-ms", "400", "--workers", "1"],
+      [join(packageNodeModulesDir(refuseTemplate), "dist", "main.js"), "replace", "lodash.template", "--no-pr", "--budget-ms", "400", "--workers", "1"],
       refuseTemplate,
     );
     assert.equal(tplRefused.status, 3, `lodash.template\n${tplRefused.stdout}\n${tplRefused.stderr}`);

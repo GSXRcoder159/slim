@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://unpkg.com/slim/slim.schema.json",
+  "$id": "https://unpkg.com/@gsxrcoder159/slim/slim.schema.json",
   "title": "slim.json",
   "description": "Optional. Zero-config default is src/slim + gitignore-aware scan.",
   "type": "object",

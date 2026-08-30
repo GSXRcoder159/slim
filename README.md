@@ -11,7 +11,7 @@ Slim is not affiliated with lodash, Underscore, OpenJS, Moment.js, or any target
 CVE on a library you use for two functions. Before standup:
 
 ```bash
-npm i -g slim   # or npx slim
+npm i -g @gsxrcoder159/slim   # or npx @gsxrcoder159/slim
 cd your-worker
 slim doctor
 slim scan
@@ -54,7 +54,7 @@ Every consumer workflow needs checkout, Node `>=22.18`, and `npm ci` before `use
 ## How it works
 
 1. **Envelope** — the target repo's `typescript` walks imports and call sites. Unknowns (`_[k]()`, `eval`, `arr.map(get)`) are recorded, never guessed.
-2. **Traces** — fail-closed. `node --import slim/hooks` for node:test; `slim/vitest` plugin for Vitest (named exports included). Jest is detect-only (no setup file). `--no-trace` is the only intentional static-only path and cannot claim trace closure.
+2. **Traces** — fail-closed. `node --import @gsxrcoder159/slim/hooks` for node:test; `@gsxrcoder159/slim/vitest` plugin for Vitest (named exports included). Jest is detect-only (no setup file). `--no-trace` is the only intentional static-only path and cannot claim trace closure.
 3. **Generate** — verified catalog (lodash slice, moment format, uuid v4, ms, nanoid, clsx, …) or LLM from public `.d.ts`/README only. Catalog disagreements are Slim bugs; they are not LLM-patched.
 4. **Fuzz** — original vs replacement, fake clock for debounce, in-house generators (no fast-check).
 5. **Rewrite** — position splice of import specifiers. Untouched files stay byte-identical.
@@ -66,7 +66,7 @@ Node `>=22.18` (`module.registerHooks`). CI tests 22.18 and Active LTS 24 on Ubu
 
 ```bash
 npm i -D typescript
-npx slim doctor
+npx @gsxrcoder159/slim doctor
 ```
 
 Zero runtime dependencies. Slim's own `package.json` `dependencies` is `{}`.
@@ -94,7 +94,7 @@ Live packed `replace --llm` proof for advertised providers is `SLIM_LLM_LIVE=1` 
 
 ```ts
 // vitest.config.ts
-import slimVitest from "slim/vitest";
+import slimVitest from "@gsxrcoder159/slim/vitest";
 export default { plugins: [slimVitest({ packages: ["lodash"] })] };
 ```
 

@@ -6,7 +6,7 @@
 | [help.txt](./help.txt) | Snapshot of shipped `slim --help` (`src/cli.ts` HELP) |
 | [packages.md](./packages.md) | Catalog in v1 vs not-in-v1, hardness, refuse errors |
 | [repo.md](./repo.md) | Current TS layout, MIT, GSXRcoder159/slim, CI matrix, slim.json |
-| [release-identity.md](./release-identity.md) | Approved GitHub/Action identity; npm publication is Phase 17 |
+| [release-identity.md](./release-identity.md) | Approved GitHub/Action/npm identity (`@gsxrcoder159/slim`) |
 | [evidence.lodash.sample.md](./evidence.lodash.sample.md) | Copy of the golden fixture evidence report |
 | [measurements.json](./measurements.json) | Versioned Node parse/size receipts (`measured` / `estimated` / `unavailable`) |
 | [measurements.schema.json](./measurements.schema.json) | Schema for `measurements.json` |

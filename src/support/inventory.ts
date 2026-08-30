@@ -244,7 +244,7 @@ export function canonicalInventory(): SupportInventory {
       id: "externalService.npm-publish",
       kind: "externalService",
       name: "npm-publish",
-      docs: ["docs/repo.md", ".github/workflows/release.yml"],
+      docs: ["docs/repo.md", "docs/release-identity.md", ".github/workflows/release.yml"],
       checkId: "test/release-live.test.ts",
       receiptClass: "live",
     }),

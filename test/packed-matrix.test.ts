@@ -16,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { hermeticPmEnv, execPm, cmdShimSpawnOpts } from "../src/rewrite/lockfile.ts";
 import { npmPackTo } from "./helpers/llm-replace.ts";
+import { packageImport, packageNodeModulesDir } from "../src/release/identity.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TMP = tmpdir();
@@ -64,7 +65,7 @@ function copyFixture(name: string, dest: string, stripSlim = false): void {
 }
 
 function slimJs(cwd: string): string {
-  return join(cwd, "node_modules", "slim", "dist", "main.js");
+  return join(packageNodeModulesDir(cwd), "dist", "main.js");
 }
 
 function installSlim(cwd: string, tarball: string, ignoreScripts = false): void {
@@ -234,7 +235,7 @@ test("packed CJS replace produces requireable companion; vitest export loads", {
     const ran = run(process.execPath, ["--test", "src/index.test.cjs"], dest);
     assert.equal(ran.status, 0, ran.stderr + ran.stdout);
 
-    const vitestJs = join(dest, "node_modules", "slim", "dist", "trace", "vitest.js");
+    const vitestJs = join(packageNodeModulesDir(dest), "dist", "trace", "vitest.js");
     const vitestLoad = run(
       process.execPath,
       [
@@ -280,7 +281,7 @@ test("packed vitest plugin runs a tiny ESM consumer test", { timeout: 180_000 },
     );
     writeFileSync(
       join(dest, "vitest.config.mjs"),
-      `import slimVitest from "slim/vitest";\nexport default { plugins: [slimVitest({ packages: ["ms"] })] };\n`,
+      `import slimVitest from "${packageImport("vitest")}";\nexport default { plugins: [slimVitest({ packages: ["ms"] })] };\n`,
     );
     installSlim(dest, tarball);
     execPm("npm", ["install", "vitest@3.2.4", "--save-dev", "--no-audit", "--no-fund"], {

@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { packageNodeModulesDir } from "../../src/release/identity.ts";
 import { hermeticPmEnv, execPm } from "../../src/rewrite/lockfile.ts";
 import { build, withDistLock } from "../../scripts/build.mjs";
 
@@ -186,7 +187,7 @@ export function installFixture(dest: string, tarball: string): string {
     timeout: 120_000,
     env: npmEnv(),
   });
-  const slimJs = join(dest, "node_modules", "slim", "dist", "main.js");
+  const slimJs = join(packageNodeModulesDir(dest), "dist", "main.js");
   if (!existsSync(slimJs)) throw new Error("packed slim CLI missing after npm install");
   return slimJs;
 }

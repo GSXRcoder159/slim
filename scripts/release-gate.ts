@@ -15,6 +15,7 @@ const { values } = parseArgs({
     tag: { type: "string" },
     tarball: { type: "string" },
     receipts: { type: "string" },
+    bundle: { type: "string" },
     commit: { type: "string" },
     "workflow-run": { type: "string" },
     registry: { type: "string" },
@@ -34,12 +35,13 @@ if (!MODES.has(mode as GateMode)) {
 const root = values.root ?? repoRootFromScript();
 
 try {
-  const result = runReleaseGate({
+  const result = await runReleaseGate({
     root,
     mode: mode as GateMode,
     tag: values.tag,
     tarball: values.tarball,
     receiptsDir: values.receipts,
+    bundleDir: values.bundle,
     commit: values.commit,
     workflowRun: values["workflow-run"] ?? null,
     registryUrl: values.registry,
@@ -48,7 +50,7 @@ try {
     deleteTarball: values["delete-tarball"] === true,
   });
   process.stdout.write(
-    `release-gate: ${result.tag} npm=${result.npmDigest ?? "-"} action=${result.actionDigest ?? "-"}\n`,
+    `release-gate: ${result.tag} npm=${result.npmDigest ?? "-"} action=${result.actionDigest ?? "-"} publication=${result.publication} rollback=${result.rollback}\n`,
   );
 } catch (err) {
   const code = err instanceof SlimExit ? err.code : 1;

@@ -199,13 +199,19 @@ export function releaseReceipt(opts: {
   endedAt: Date;
   log: string;
   workflowRun?: string | null;
+  version?: string;
+  publication?: "dry-run" | "published";
+  rollback?: "none" | "restored" | "tags-not-pushed";
 }): QualificationReceipt {
+  const version = opts.version ?? "0.1.0";
+  const publication = opts.publication ?? "dry-run";
+  const rollback = opts.rollback ?? "restored";
   return {
     schemaVersion: 1,
     checkId: "test/release-live.test.ts",
     command: null,
     fixture: opts.fixture,
-    environment: `${process.platform} node-${process.version}`,
+    environment: `${process.platform} node-${process.version} version=${version} publication=${publication} rollback=${rollback} npmDigest=${opts.npmDigest} actionDigest=${opts.actionDigest}`,
     provider: null,
     service: "npm-publish",
     startedAt: opts.startedAt.toISOString(),

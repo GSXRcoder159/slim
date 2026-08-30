@@ -9,6 +9,7 @@ import { createRequire } from "node:module";
 import { hermeticPmEnv, execPm } from "../src/rewrite/lockfile.ts";
 import { validateNamed } from "../src/schema/documents.ts";
 import { npmPackTo } from "./helpers/llm-replace.ts";
+import { packageNodeModulesDir } from "../src/release/identity.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
@@ -37,7 +38,7 @@ function packAndInstall(): { tmp: string; packDir: string; slimJs: string; proj:
     timeout: 60_000,
     env: hermeticPmEnv(),
   });
-  const slimJs = join(tmp, "node_modules", "slim", "dist", "main.js");
+  const slimJs = join(packageNodeModulesDir(tmp), "dist", "main.js");
   const proj = join(tmp, "app");
   mkdirSync(join(proj, "src"), { recursive: true });
   mkdirSync(join(proj, "node_modules"), { recursive: true });

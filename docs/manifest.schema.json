@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://unpkg.com/slim/docs/manifest.schema.json",
+  "$id": "https://unpkg.com/@gsxrcoder159/slim/docs/manifest.schema.json",
   "title": ".slim/manifest.json",
   "description": "Replacement index written by slim replace. Distinct from slim.json. schemaVersion 1.",
   "type": "object",

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://unpkg.com/slim/docs/measurements.schema.json",
+  "$id": "https://unpkg.com/@gsxrcoder159/slim/docs/measurements.schema.json",
   "title": "Slim public measurement claims",
   "description": "Regenerable size, gzip, and Node parse receipts. schemaVersion 1. Provenance is measured, estimated, or unavailable. parseNs is env-local and freshness-gated; it is not a portable SLO.",
   "type": "object",

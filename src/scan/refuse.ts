@@ -49,7 +49,7 @@ const EXACT: Record<string, Omit<RefuseReason, "pkg">> = {
   vite: {
     why: "bundler / dev server",
     evidence: "plugin graph",
-    whatToDo: "Keep vite. Use slim/vitest as a plugin, do not replace Vite.",
+    whatToDo: "Keep vite. Use @gsxrcoder159/slim/vitest as a plugin, do not replace Vite.",
   },
   firebase: {
     why: "network SDK surface",
