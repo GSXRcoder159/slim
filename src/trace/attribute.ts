@@ -85,15 +85,20 @@ function normalizeTraceFile(file: string, root: string): string {
       /* keep */
     }
   }
-  stripped = stripped.replace(/\\/g, "/").replace(/\?.*$/, "");
+  stripped = stripped
+    .replace(/\\/g, "/")
+    .replace(/\?.*$/, "")
+    .replace(/^\/@fs\//, "");
   const rel = toProjectRel(stripped, root);
   return rel.replace(/\.js$/, ".ts").replace(/\.mjs$/, ".ts").replace(/\.cjs$/, ".ts");
 }
 
 function filesMatch(envelopeFile: string, traceFile: string): boolean {
   const norm = (p: string) => p.replace(/\\/g, "/").replace(/\.js$/, ".ts");
-  const a = norm(envelopeFile);
-  const b = norm(traceFile);
+  const fold = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+  const a = fold(norm(envelopeFile));
+  const b = fold(norm(traceFile));
   if (a === b) return true;
-  return process.platform === "win32" && a.toLowerCase() === b.toLowerCase();
+  if (!a || !b) return false;
+  return b.endsWith("/" + a) || a.endsWith("/" + b);
 }

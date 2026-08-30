@@ -242,3 +242,20 @@ test("file URL and backslash trace paths attribute to posix envelope locs", () =
   assert.equal(attributed[0]!.unmatched, false);
   assert.equal(attributed[0]!.callSiteId, a.id);
 });
+
+test("trace paths outside the project still match envelope locs by suffix", () => {
+  const root = tmpRoot();
+  const a = site("call:src/a.ts:1", "src/a.ts", 1, "get");
+  const base = env(root, [a]);
+  const traces: TraceEvent[] = [
+    {
+      symbol: "get",
+      originId: "cache",
+      args: [],
+      site: { file: "/unrelated/vite-cache/src/a.ts", line: 1, column: 1 },
+    },
+  ];
+  const attributed = attributeTraces(base, traces, root);
+  assert.equal(attributed[0]!.unmatched, false);
+  assert.equal(attributed[0]!.callSiteId, a.id);
+});
