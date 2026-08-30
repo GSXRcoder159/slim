@@ -163,9 +163,12 @@ export function runQualifyCandidate(opts: QualifyCandidateOpts): QualifyCandidat
     });
     written.push(...emitted.written);
     if (emitted.failed.length) {
+      const logs = Object.entries(emitted.failedLogs)
+        .map(([checkId, log]) => `${checkId}\n${log}`)
+        .join("\n");
       throw new SlimExit(
         EXIT_FAIL,
-        `local checks failed: ${emitted.failed.join(", ")}`,
+        `local checks failed: ${emitted.failed.join(", ")}${logs ? `\n${logs}` : ""}`,
       );
     }
 

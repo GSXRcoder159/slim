@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 
 import { hermeticPmEnv, execPm, cmdShimSpawnOpts } from "../../src/rewrite/lockfile.ts";
 import { applyRevert, type RevertPlan } from "../../src/rewrite/revert.ts";
-import { npmPackTo } from "../helpers/llm-replace.ts";
+import { npmPackTo, withRepoDistLock } from "../helpers/llm-replace.ts";
 import { packageNodeModulesDir } from "../../src/release/identity.ts";
 import {
   allCatalogEntries,
@@ -377,7 +377,14 @@ test("packed case table covers every advertised alias and catalog symbol", () =>
 });
 
 test("packed CLI replace → standing tests → slim check → revert for every registered catalog package and alias", { timeout: 3_600_000 }, () => {
-  execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: npmEnv() });
+  withRepoDistLock(() => {
+    execPm("npm", ["run", "build"], {
+      cwd: ROOT,
+      encoding: "utf8",
+      timeout: 60_000,
+      env: { ...process.env, COPYFILE_DISABLE: "1" },
+    });
+  });
   mkdirSync(TMP, { recursive: true });
   const packDir = mkdtempSync(join(TMP, "slim-catalog-pack-"));
   const tarball = npmPackTo(packDir);

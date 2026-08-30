@@ -5,9 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { InventoryEntry, SupportInventory } from "../src/support/inventory.ts";
 import {
+  checkResultFromSpawn,
   collectOsNodeReceipts,
   currentOsNodeCell,
   emitLocalReceipts,
+  LOCAL_CHECK_TIMEOUT_MS,
   runnerNode,
   runnerOs,
 } from "../src/support/emit-local.ts";
@@ -154,7 +156,23 @@ test("emit does not write when the named check fails", () => {
   });
   assert.deepEqual(result.written, []);
   assert.deepEqual(result.failed, ["command.scan"]);
+  assert.equal(result.failedLogs["test/cli.test.ts"], "not ok");
   assert.equal(existsSync(join(dir, "command.scan.json")), false);
+});
+
+test("spawn check result records timeout and signal on stderr", () => {
+  const cr = checkResultFromSpawn({
+    status: null,
+    signal: "SIGTERM",
+    error: Object.assign(new Error("spawnSync ETIMEDOUT"), { code: "ETIMEDOUT" }),
+    stdout: "ok 1 unit",
+    stderr: "still running",
+  });
+  assert.equal(cr.ok, false);
+  assert.match(cr.log, /ok 1 unit/);
+  assert.match(cr.log, /still running/);
+  assert.match(cr.log, /ETIMEDOUT|spawnSync ETIMEDOUT/);
+  assert.match(cr.log, /SIGTERM/);
 });
 
 test("only osNode writes the matching cell after its check passes", () => {
@@ -177,6 +195,10 @@ test("only osNode writes the matching cell after its check passes", () => {
   });
   assert.deepEqual(result.written, ["osNode.ubuntu-latest.22.18"]);
   assert.equal(existsSync(join(dir, "command.scan.json")), false);
+});
+
+test("inventory check spawn timeout covers multiple lockfile-pm tests", () => {
+  assert.ok(LOCAL_CHECK_TIMEOUT_MS >= 600_000);
 });
 
 test("collectOsNodeReceipts copies nested artifact files", () => {
@@ -214,4 +236,16 @@ test("emit-local does not write a gitignored measurement receipt", () => {
   assert.equal(result.written.includes("measurement.claims"), false);
   assert.equal(existsSync(join(dir, "measurement.claims.json")), false);
   assert.deepEqual(result.written, ["command.scan"]);
+});
+
+test("defaultRunCheck rebuilds dist before the named checkId", () => {
+  const src = readFileSync(new URL("../src/support/emit-local.ts", import.meta.url), "utf8");
+  assert.match(src, /export function ensureRepoDist/);
+  assert.match(src, /scripts\/build\.mjs/);
+  assert.match(src, /ensureRepoDist\(root\)/);
+});
+
+test("packed catalog e2e does not compile slim through the installer cache env", () => {
+  const src = readFileSync(new URL("./catalog/packed-e2e.test.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(src, /"build"[\s\S]{0,200}npmEnv\(\)/);
 });

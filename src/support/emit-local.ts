@@ -4,7 +4,7 @@
  * Emit local qualification receipts after named checkIds pass.
  */
 
-import { spawnSync } from "node:child_process";
+import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import { execPm, hermeticPmEnv } from "../rewrite/lockfile.ts";
 import {
   cpSync,
@@ -65,6 +65,26 @@ export interface EmitLocalResult {
   written: string[];
   skipped: string[];
   failed: string[];
+  failedLogs: Record<string, string>;
+}
+
+/** One inventory checkId file. `replace-lockfile-pm` is eight 180s tests. */
+export const LOCAL_CHECK_TIMEOUT_MS = 900_000;
+
+export function checkResultFromSpawn(
+  r: Pick<SpawnSyncReturns<string>, "status" | "signal" | "error" | "stdout" | "stderr">,
+): CheckResult {
+  const meta = [
+    r.error ? `error: ${r.error.message}` : "",
+    `status: ${r.status ?? "null"}`,
+    r.signal ? `signal: ${r.signal}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+  return {
+    ok: r.status === 0,
+    log: `${r.stdout ?? ""}\n${r.stderr ?? ""}\n${meta}`,
+  };
 }
 
 export function runnerOs(
@@ -104,19 +124,32 @@ export function currentOsNodeCell(
   return { os, node };
 }
 
+export function ensureRepoDist(root: string): CheckResult {
+  const r = spawnSync(process.execPath, [join(root, "scripts/build.mjs")], {
+    cwd: root,
+    encoding: "utf8",
+    timeout: 120_000,
+    env: { ...process.env, COPYFILE_DISABLE: "1" },
+  });
+  return checkResultFromSpawn(r);
+}
+
 export function defaultRunCheck(root: string, checkId: string): CheckResult {
+  const built = ensureRepoDist(root);
+  if (!built.ok) {
+    return { ok: false, log: `emit-local-receipts: build failed\n${built.log}` };
+  }
   const r = spawnSync(
     process.execPath,
     ["--experimental-strip-types", "--test", checkId],
     {
       cwd: root,
       encoding: "utf8",
-      timeout: 300_000,
+      timeout: LOCAL_CHECK_TIMEOUT_MS,
       env: { ...process.env, COPYFILE_DISABLE: "1" },
     },
   );
-  const log = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
-  return { ok: r.status === 0, log };
+  return checkResultFromSpawn(r);
 }
 
 function environmentFor(entry: InventoryEntry, platform: string, nodeVersion: string): string {
@@ -170,6 +203,7 @@ export function emitLocalReceipts(opts: EmitLocalOpts): EmitLocalResult {
   const written: string[] = [];
   const skipped: string[] = [];
   const failed: string[] = [];
+  const failedLogs: Record<string, string> = {};
 
   for (const e of entries) {
     if (e.kind === "osNode") {
@@ -181,6 +215,7 @@ export function emitLocalReceipts(opts: EmitLocalOpts): EmitLocalResult {
     const cr = checkResults.get(e.checkId);
     if (!cr || !cr.ok) {
       failed.push(e.id);
+      if (cr) failedLogs[e.checkId] = cr.log;
       continue;
     }
     const startedAt = now;
@@ -203,7 +238,7 @@ export function emitLocalReceipts(opts: EmitLocalOpts): EmitLocalResult {
     written.push(e.id);
   }
 
-  return { written, skipped, failed };
+  return { written, skipped, failed, failedLogs };
 }
 
 export function collectOsNodeReceipts(fromDir: string, receiptsDir: string): string[] {

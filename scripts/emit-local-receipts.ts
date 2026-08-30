@@ -58,6 +58,9 @@ try {
     `emit-local-receipts: wrote ${result.written.length} skipped ${result.skipped.length} failed ${result.failed.length}\n`,
   );
   if (result.failed.length) {
+    for (const [checkId, log] of Object.entries(result.failedLogs)) {
+      process.stderr.write(`emit-local-receipts: check ${checkId} failed\n${log}\n`);
+    }
     process.stderr.write(`emit-local-receipts: failed ${result.failed.join(", ")}\n`);
     process.exit(1);
   }
