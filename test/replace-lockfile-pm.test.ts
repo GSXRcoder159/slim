@@ -99,17 +99,16 @@ function which(bin: string): boolean {
 }
 
 function runSlim(cwd: string, args: string[], extra: NodeJS.ProcessEnv = {}) {
-  const dist = join(ROOT, "dist", "main.js");
-  const argv =
-    existsSync(dist) && !extra.SLIM_INJECT_FAIL
-      ? [dist, ...args]
-      : ["--experimental-strip-types", join(ROOT, "src/main.ts"), ...args];
-  return spawnSync(process.execPath, argv, {
-    cwd,
-    encoding: "utf8",
-    env: pmEnv(extra),
-    timeout: 180_000,
-  });
+  return spawnSync(
+    process.execPath,
+    ["--experimental-strip-types", join(ROOT, "src/main.ts"), ...args],
+    {
+      cwd,
+      encoding: "utf8",
+      env: pmEnv(extra),
+      timeout: 180_000,
+    },
+  );
 }
 
 function prepareCorepack(pkg: string): void {
@@ -278,6 +277,12 @@ function runReplaceRollback(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"):
   assert.equal(existsSync(join(dir, "src", "slim", "ms.ts")), false, `${kind} leftover slice`);
   assert.equal(existsSync(join(dir, ".slim", "ms", "evidence.json")), false, `${kind} leftover evidence`);
 }
+
+test("lockfile-pm replace CLI does not bind a half-written dist", () => {
+  const src = readFileSync(new URL(import.meta.url), "utf8");
+  assert.match(src, /src\/main\.ts/);
+  assert.doesNotMatch(src, /existsSync\(dist\) && !extra\.SLIM_INJECT_FAIL/);
+});
 
 test("npm lockfile replace removes ms from package-lock.json", { timeout: 180_000 }, () => {
   const dir = mkdtempSync(join(tmpdir(), "slim-pm-npm-"));

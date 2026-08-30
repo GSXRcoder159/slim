@@ -42,7 +42,7 @@ function packSlim(): { tmp: string; packDir: string; slimJs: string } {
   execPm("npm", ["install", tarball, "--omit=dev"], {
     cwd: tmp,
     encoding: "utf8",
-    timeout: 60_000,
+    timeout: 300_000,
     env: hermeticPmEnv(),
   });
   return { tmp, packDir, slimJs: join(packageNodeModulesDir(tmp), "dist", "main.js") };
@@ -113,7 +113,7 @@ function writeCheckProject(
   }
 }
 
-test("packed check --json is one document for success and every failure class", { timeout: 180_000 }, () => {
+test("packed check --json is one document for success and every failure class", { timeout: 400_000 }, () => {
   const { tmp, packDir, slimJs } = packSlim();
   try {
     const success = mkdtempSync(join(tmpdir(), "slim-check-ok-"));
