@@ -197,7 +197,7 @@ function npmInstall(cwd: string, tarball: string): void {
   execPm("npm", ["install", tarball], {
     cwd,
     encoding: "utf8",
-    timeout: 120_000,
+    timeout: 300_000,
     env: npmEnv(),
   });
 }

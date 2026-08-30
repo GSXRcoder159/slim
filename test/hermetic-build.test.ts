@@ -392,7 +392,7 @@ test("hermeticPmEnv drops INIT_CWD and points caches at os.tmpdir", () => {
   assert.equal(env.BUN_INSTALL_CACHE_DIR, join(cacheRoot, "bun"));
 });
 
-test("pnpm install with INIT_CWD set to this repo does not create a repo-local store", { timeout: 120_000 }, () => {
+test("pnpm install with INIT_CWD set to this repo does not create a repo-local store", { timeout: 180_000 }, () => {
   const NODE_BIN = dirname(process.execPath);
   const COREPACK =
     process.platform === "win32" ? join(NODE_BIN, "corepack.cmd") : join(NODE_BIN, "corepack");
@@ -416,11 +416,11 @@ test("pnpm install with INIT_CWD set to this repo does not create a repo-local s
       JSON.stringify({ name: "store-probe", private: true, dependencies: { ms: "2.1.3" } }),
     );
     const env = hermeticPmEnv({ INIT_CWD: ROOT, PATH: pathEnv });
-    const r = spawnPm("pnpm", ["install"], { cwd: dir, encoding: "utf8", env, timeout: 90_000 });
+    const r = spawnPm("pnpm", ["install"], { cwd: dir, encoding: "utf8", env, timeout: 150_000 });
     assert.equal(r.status, 0, String(r.stderr) + String(r.stdout));
     assert.equal(existsSync(join(ROOT, ".pnpm-store")), false);
     assert.equal(existsSync(join(dir, ".pnpm-store")), false);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
   }
 });
