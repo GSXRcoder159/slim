@@ -11,7 +11,7 @@ on:
         type: boolean
         default: true
       qualify_run_id:
-        description: Successful ci.yml run that uploaded qualification-bundle
+        description: Successful qualify.yml run that uploaded the complete qualification-bundle
         type: string
         required: false
 
@@ -43,7 +43,7 @@ jobs:
           set -euo pipefail
           RUN_ID="${{ github.event.inputs.qualify_run_id }}"
           if [ -z "$RUN_ID" ]; then
-            RUN_ID="$(gh run list --workflow=ci.yml --commit "$GITHUB_SHA" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            RUN_ID="$(gh run list --workflow=qualify.yml --commit "$GITHUB_SHA" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
           fi
           if [ -z "$RUN_ID" ]; then
             echo "release-gate: missing qualification workflow run for $GITHUB_SHA" >&2
@@ -56,6 +56,21 @@ jobs:
           run-id: ${{ steps.bundle.outputs.run_id }}
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/qualification-bundle
+      - name: bind workflow run from the bundled report
+        id: report
+        run: |
+          set -euo pipefail
+          REPORT="${RUNNER_TEMP}/qualification-bundle/qualify-report.json"
+          if [ ! -f "$REPORT" ]; then
+            echo "release-gate: qualification bundle missing qualify-report.json" >&2
+            exit 1
+          fi
+          CI_RUN="$(jq -r .workflowRun "$REPORT")"
+          if [ -z "$CI_RUN" ] || [ "$CI_RUN" = "null" ]; then
+            echo "release-gate: qualify-report.json missing workflowRun" >&2
+            exit 1
+          fi
+          echo "workflow_run=$CI_RUN" >> "$GITHUB_OUTPUT"
       - name: rehearse or publish the bundled tarball
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -74,4 +89,4 @@ jobs:
             --registry https://registry.npmjs.org \
             --commit "$GITHUB_SHA" \
             --parent-sha "$GITHUB_SHA" \
-            --workflow-run "${{ steps.bundle.outputs.run_id }}"
+            --workflow-run "${{ steps.report.outputs.workflow_run }}"

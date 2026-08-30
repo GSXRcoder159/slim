@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://unpkg.com/@gsxrcoder159/slim/docs/qualify-report.schema.json",
+  "title": "Slim qualification handoff report",
+  "description": "Machine-valid full-inventory qualification result for one candidate commit. schemaVersion 1. Never contains credentials, prompts, raw traces, or oracle source.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "commit",
+    "npmDigest",
+    "actionDigest",
+    "workflowRun",
+    "branch",
+    "repository",
+    "generatedAt",
+    "entryCount",
+    "failures",
+    "outcome",
+    "summary"
+  ],
+  "properties": {
+    "schemaVersion": { "type": "integer", "const": 1 },
+    "commit": { "type": "string", "minLength": 40, "maxLength": 40 },
+    "npmDigest": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "actionDigest": { "type": "string", "minLength": 64, "maxLength": 64 },
+    "workflowRun": { "type": "string", "minLength": 1 },
+    "branch": { "type": "string", "minLength": 1 },
+    "repository": { "type": "string", "minLength": 1 },
+    "generatedAt": { "type": "string", "minLength": 20 },
+    "entryCount": { "type": "integer", "minimum": 0 },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entryId", "reason"],
+        "properties": {
+          "entryId": { "type": "string", "minLength": 1 },
+          "reason": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "outcome": { "type": "string", "enum": ["pass", "fail"] },
+    "summary": { "type": "string", "minLength": 1 }
+  }
+}

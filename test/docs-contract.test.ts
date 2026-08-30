@@ -199,6 +199,19 @@ test("LLM prompt does not claim not-derived", () => {
 });
 
 
+test("qualify.yml is main-only dispatch and reuses the CI tarball", () => {
+  const q = readFileSync(join(ROOT, ".github/workflows/qualify.yml"), "utf8");
+  assert.match(q, /workflow_dispatch/);
+  assert.match(q, /refs\/heads\/main/);
+  assert.match(q, /--from-bundle/);
+  assert.match(q, /--verify/);
+  assert.match(q, /qualify-handoff\.ts/);
+  assert.match(q, /SLIM_LLM_LIVE/);
+  assert.match(q, /SLIM_WORKFLOW_RUN/);
+  assert.doesNotMatch(q, /^\s+push:/m);
+  assert.match(q, /--workflow=ci\.yml/);
+});
+
 test("release.yml downloads the qualification bundle and never packs after identity", () => {
   const rel = readFileSync(join(ROOT, ".github/workflows/release.yml"), "utf8");
   assert.match(rel, /release-gate/);
@@ -217,6 +230,9 @@ test("release.yml downloads the qualification bundle and never packs after ident
   assert.doesNotMatch(rel, /pack-destination/);
   assert.doesNotMatch(rel, /^\s+- run: npm publish --provenance\s*$/m);
   assert.match(rel, /--bundle "\$\{RUNNER_TEMP\}\/qualification-bundle"/);
+  assert.match(rel, /qualify\.yml/);
+  assert.match(rel, /qualify-report\.json/);
+  assert.doesNotMatch(rel, /--workflow=ci\.yml/);
 });
 
 test("schema $ids use the canonical scoped unpkg prefix", () => {

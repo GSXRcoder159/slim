@@ -48,6 +48,7 @@
     "qualify:emit": "node --experimental-strip-types scripts/emit-local-receipts.ts",
     "qualify:candidate": "node --experimental-strip-types scripts/qualify-candidate.ts",
     "qualify:bundle": "node --experimental-strip-types scripts/pack-qualify-bundle.ts",
+    "qualify:handoff": "node --experimental-strip-types scripts/qualify-handoff.ts",
     "release:gate": "node --experimental-strip-types scripts/release-gate.ts",
     "slim": "node --experimental-strip-types src/main.ts",
     "refresh:golden": "node --experimental-strip-types scripts/refresh-golden-fixture.ts",

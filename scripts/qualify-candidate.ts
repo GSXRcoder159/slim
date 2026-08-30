@@ -23,6 +23,7 @@ const { values } = parseArgs({
     "action-digest": { type: "string" },
     from: { type: "string" },
     "os-node-only": { type: "boolean", default: false },
+    "workflow-run": { type: "string" },
     root: { type: "string" },
     registry: { type: "string" },
   },
@@ -36,6 +37,12 @@ if (!MODES.has(mode)) {
 
 try {
   const commit = requireCommit(values.commit ?? process.env.SLIM_CANDIDATE_COMMIT);
+  const osNodeOnly = values["os-node-only"] === true;
+  const workflowRun =
+    values["workflow-run"] ?? process.env.SLIM_WORKFLOW_RUN ?? process.env.GITHUB_RUN_ID ?? null;
+  if (mode === "collect" && !osNodeOnly && !workflowRun) {
+    throw new SlimExit(EXIT_USAGE, "qualify-candidate: --workflow-run is required");
+  }
   const result = runQualifyCandidate({
     root: values.root ?? repoRootFromScript(),
     mode,
@@ -43,8 +50,9 @@ try {
     commit,
     npmDigest: values["npm-digest"] ?? process.env.SLIM_NPM_DIGEST ?? null,
     actionDigest: values["action-digest"] ?? process.env.SLIM_ACTION_DIGEST ?? null,
+    workflowRun,
     fromDir: values.from,
-    osNodeOnly: values["os-node-only"] === true,
+    osNodeOnly,
     registryUrl: values.registry,
   });
   process.stdout.write(

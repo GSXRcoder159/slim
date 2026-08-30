@@ -54,6 +54,7 @@ export interface QualifyCandidateOpts {
   commit: string;
   npmDigest?: string | null;
   actionDigest?: string | null;
+  workflowRun?: string | null;
   fromDir?: string;
   osNodeOnly?: boolean;
   registryUrl?: string;
@@ -67,7 +68,17 @@ export interface QualifyCandidateResult {
   failures: QualifyFailure[];
   npmDigest: string | null;
   actionDigest: string | null;
+  workflowRun: string | null;
   written: string[];
+}
+
+export function resolveWorkflowRun(
+  opts: { workflowRun?: string | null },
+  env: NodeJS.ProcessEnv,
+): string | null {
+  const raw = opts.workflowRun ?? env.SLIM_WORKFLOW_RUN ?? env.GITHUB_RUN_ID ?? null;
+  if (raw == null || raw === "") return null;
+  return raw;
 }
 
 function defaultRunLive(root: string, files: string[], env: NodeJS.ProcessEnv): void {
@@ -94,6 +105,7 @@ export function runQualifyCandidate(opts: QualifyCandidateOpts): QualifyCandidat
   const env = opts.env ?? process.env;
   const inventory = loadInventory();
   const written: string[] = [];
+  const workflowRun = resolveWorkflowRun(opts, env);
 
   if (opts.mode === "collect") {
     const fromDir = opts.fromDir ?? opts.receiptsDir;
@@ -102,6 +114,7 @@ export function runQualifyCandidate(opts: QualifyCandidateOpts): QualifyCandidat
       commit: opts.commit,
       npmDigest: opts.npmDigest ?? env.SLIM_NPM_DIGEST ?? null,
       actionDigest: opts.actionDigest ?? env.SLIM_ACTION_DIGEST ?? null,
+      workflowRun,
     };
     const scoped = opts.osNodeOnly
       ? { schemaVersion: 1 as const, entries: inventory.entries.filter((e) => e.kind === "osNode") }
@@ -110,6 +123,7 @@ export function runQualifyCandidate(opts: QualifyCandidateOpts): QualifyCandidat
       failures: qualifyInventory(scoped, opts.receiptsDir, candidate, { root: opts.root }),
       npmDigest: candidate.npmDigest,
       actionDigest: candidate.actionDigest,
+      workflowRun,
       written,
     };
   }
@@ -136,14 +150,16 @@ export function runQualifyCandidate(opts: QualifyCandidateOpts): QualifyCandidat
       commit: opts.commit,
       npmDigest,
       actionDigest,
+      workflowRun,
     };
+    const emitEnv = workflowRun ? { ...env, SLIM_WORKFLOW_RUN: workflowRun } : env;
     const emitted = emitLocalReceipts({
       inventory,
       receiptsDir: opts.receiptsDir,
       candidate,
       root: opts.root,
       runCheck: opts.runCheck,
-      env,
+      env: emitEnv,
     });
     written.push(...emitted.written);
     if (emitted.failed.length) {
@@ -155,13 +171,14 @@ export function runQualifyCandidate(opts: QualifyCandidateOpts): QualifyCandidat
 
     const liveFiles = liveTestFiles(env);
     if (liveFiles.length) {
-      const liveEnv = {
-        ...env,
+      const liveEnv: NodeJS.ProcessEnv = {
+        ...emitEnv,
         SLIM_RECEIPTS_DIR: opts.receiptsDir,
         SLIM_CANDIDATE_COMMIT: opts.commit,
         SLIM_NPM_DIGEST: npmDigest ?? "",
         SLIM_ACTION_DIGEST: actionDigest ?? "",
       };
+      if (workflowRun) liveEnv.SLIM_WORKFLOW_RUN = workflowRun;
       const runLive = opts.runLiveFiles ?? ((files, e) => defaultRunLive(opts.root, files, e));
       runLive(liveFiles, liveEnv);
     }
@@ -173,6 +190,7 @@ export function runQualifyCandidate(opts: QualifyCandidateOpts): QualifyCandidat
       failures: qualifyInventory(scoped, opts.receiptsDir, candidate, { root: opts.root }),
       npmDigest,
       actionDigest,
+      workflowRun,
       written,
     };
   } finally {

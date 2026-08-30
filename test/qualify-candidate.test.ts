@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
@@ -11,11 +11,11 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { EXIT_REFUSED, SlimExit } from "../src/exit.ts";
+import { EXIT_REFUSED, EXIT_USAGE, SlimExit } from "../src/exit.ts";
 import { assertMigrationGuidance } from "../src/release/identity.ts";
 import { liveTestFiles, runQualifyCandidate } from "../src/support/qualify-candidate.ts";
 import { INVENTORY_NODES, INVENTORY_OS, loadInventory } from "../src/support/inventory.ts";
-import { localReceipt, writeReceipt } from "../src/support/receipts.ts";
+import { localReceipt, providerReceipt, writeReceipt } from "../src/support/receipts.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const COMMIT = "a".repeat(40);
@@ -91,6 +91,7 @@ test("collect mode fails closed until all six osNode receipts exist", () => {
     commit: COMMIT,
     npmDigest: NPM,
     osNodeOnly: true,
+    env: {},
   });
   assert.equal(missing.failures.length, 1);
   assert.match(missing.failures[0]?.reason ?? "", /missing receipt/);
@@ -104,6 +105,7 @@ test("collect mode fails closed until all six osNode receipts exist", () => {
     commit: COMMIT,
     npmDigest: NPM,
     osNodeOnly: true,
+    env: {},
   });
   assert.deepEqual(ok.failures, []);
 });
@@ -182,4 +184,143 @@ test("collect mode receipts are schema-valid osNode documents", () => {
   assert.equal(raw.outcome, "pass");
   assert.match(raw.environment, /ubuntu-latest/);
   assert.match(raw.environment, /22\.18/);
+});
+
+test("collect mode without os-node-only fails live entries when workflowRun is omitted", () => {
+  const from = mkdtempSync(join(tmpdir(), "slim-qc-live-"));
+  const dest = mkdtempSync(join(tmpdir(), "slim-qc-live-dest-"));
+  for (const os of INVENTORY_OS) {
+    for (const node of INVENTORY_NODES) writeOsNodeReceipt(from, os, node);
+  }
+  writeReceipt(
+    dest,
+    "provider.openai",
+    providerReceipt({
+      provider: "openai",
+      model: "test",
+      fixture: "tiny-add",
+      commit: COMMIT,
+      npmDigest: NPM,
+      startedAt: NOW,
+      endedAt: NOW,
+      log: "ok",
+      workflowRun: "99",
+    }),
+  );
+  const missing = runQualifyCandidate({
+    root: ROOT,
+    mode: "collect",
+    receiptsDir: dest,
+    fromDir: from,
+    commit: COMMIT,
+    npmDigest: NPM,
+    actionDigest: ACTION,
+    env: {},
+  });
+  const live = missing.failures.find((f) => f.entryId === "provider.openai");
+  assert.ok(live, JSON.stringify(missing.failures.slice(0, 8)));
+  assert.match(live.reason, /missing workflow run/);
+});
+
+test("collect mode stamps candidate workflowRun from opts", () => {
+  const from = mkdtempSync(join(tmpdir(), "slim-qc-wf-"));
+  const dest = mkdtempSync(join(tmpdir(), "slim-qc-wf-dest-"));
+  for (const os of INVENTORY_OS) {
+    for (const node of INVENTORY_NODES) writeOsNodeReceipt(from, os, node);
+  }
+  const withRun = runQualifyCandidate({
+    root: ROOT,
+    mode: "collect",
+    receiptsDir: dest,
+    fromDir: from,
+    commit: COMMIT,
+    npmDigest: NPM,
+    actionDigest: ACTION,
+    workflowRun: "33287137687",
+    osNodeOnly: true,
+    env: {},
+  });
+  assert.equal(withRun.workflowRun, "33287137687");
+  assert.ok(withRun.failures.some((f) => /workflow run mismatch/.test(f.reason)));
+});
+
+test("emit mode passes SLIM_WORKFLOW_RUN into live env", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-qc-liveenv-"));
+  git(root, ["init", "--template=", "-b", "main"]);
+  git(root, ["config", "user.email", "slim@test"]);
+  git(root, ["config", "user.name", "slim"]);
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({
+      name: "@gsxrcoder159/slim",
+      version: "0.1.0",
+      repository: { type: "git", url: "git+https://github.com/GSXRcoder159/slim.git" },
+      bugs: { url: "https://github.com/GSXRcoder159/slim/issues" },
+      homepage: "https://github.com/GSXRcoder159/slim#readme",
+      publishConfig: { registry: "https://registry.npmjs.org" },
+    }) + "\n",
+  );
+  writeFileSync(
+    join(root, "CHANGELOG.md"),
+    "# Changelog\n\n## 0.1.0\n\n### Revert / migration\n\nUndo the PR.\n",
+  );
+  mkdirSync(join(root, ".github", "workflows"), { recursive: true });
+  writeFileSync(
+    join(root, ".github", "workflows", "release.yml"),
+    "permissions:\n  id-token: write\n  contents: write\n",
+  );
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "init"]);
+  const dest = mkdtempSync(join(tmpdir(), "slim-qc-liveenv-rec-"));
+  let captured: NodeJS.ProcessEnv | undefined;
+  try {
+    runQualifyCandidate({
+      root,
+      mode: "emit",
+      receiptsDir: dest,
+      commit: COMMIT,
+      npmDigest: NPM,
+      actionDigest: ACTION,
+      workflowRun: "99",
+      pack: () => ({ npmDigest: NPM, actionDigest: ACTION }),
+      runCheck: () => ({ ok: true, log: "ok" }),
+      env: { SLIM_LLM_LIVE: "1" },
+      runLiveFiles: (_files, env) => {
+        captured = env;
+      },
+    });
+  } catch {
+    // live receipts are absent; the live env must still have been stamped
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+  assert.equal(captured?.SLIM_WORKFLOW_RUN, "99");
+  assert.equal(captured?.SLIM_CANDIDATE_COMMIT, COMMIT);
+  assert.equal(captured?.SLIM_NPM_DIGEST, NPM);
+});
+
+test("qualify-candidate collect without os-node-only requires --workflow-run", () => {
+  const env = { ...process.env };
+  delete env.SLIM_WORKFLOW_RUN;
+  delete env.GITHUB_RUN_ID;
+  const r = spawnSync(
+    process.execPath,
+    [
+      "--experimental-strip-types",
+      join(ROOT, "scripts/qualify-candidate.ts"),
+      "--mode",
+      "collect",
+      "--commit",
+      COMMIT,
+      "--npm-digest",
+      NPM,
+      "--action-digest",
+      ACTION,
+      "--receipts",
+      mkdtempSync(join(tmpdir(), "slim-qc-cli-")),
+    ],
+    { cwd: ROOT, encoding: "utf8", env },
+  );
+  assert.equal(r.status, EXIT_USAGE);
+  assert.match(r.stderr, /workflow-run/);
 });

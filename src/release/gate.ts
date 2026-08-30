@@ -261,7 +261,7 @@ export async function runReleaseGate(
   if (opts.mode === "identity") return result;
 
   const commit = resolveCommit(opts.root, opts.commit, execFile);
-  const workflowRun =
+  let workflowRun =
     opts.workflowRun ?? process.env.SLIM_WORKFLOW_RUN ?? process.env.GITHUB_RUN_ID ?? null;
 
   let tarball = opts.tarball;
@@ -277,6 +277,15 @@ export async function runReleaseGate(
     });
     tarball = bundle.tarball;
     receiptsDir = bundle.receiptsDir;
+    if (bundle.report) {
+      if (opts.workflowRun && opts.workflowRun !== bundle.report.workflowRun) {
+        throw new SlimExit(
+          EXIT_REFUSED,
+          `workflow run ${opts.workflowRun} does not match report ${bundle.report.workflowRun}`,
+        );
+      }
+      workflowRun = bundle.report.workflowRun;
+    }
     const artifacts = assertTarballMatchesRoot(tarball, opts.root);
     if (artifacts.npmDigest !== bundle.identity.npmDigest) {
       throw new SlimExit(EXIT_FAIL, "bundle npmDigest does not match tarball contents");
