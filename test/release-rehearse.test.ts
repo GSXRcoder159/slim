@@ -193,6 +193,8 @@ test("clone rehearsal: identity, packed dry-run, attach rollback, no tag or tarb
           tag: "v0.1.0",
           registryUrl: "https://registry.npmjs.org",
           occupancyFetch: async () => new Response(null, { status: 404 }),
+          eventName: "push",
+          gitRef: "refs/tags/v0.1.0",
         }),
       /bundle/,
     );

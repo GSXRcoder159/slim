@@ -122,6 +122,11 @@ function freeOccupancy(): Promise<Response> {
   return Promise.resolve(new Response(null, { status: 404 }));
 }
 
+/** Pin publish-mode tests off ambient GITHUB_REF / GITHUB_EVENT_NAME (CI push to a branch). */
+function publishTagRef(tag = "v0.1.0"): { eventName: string; gitRef: string } {
+  return { eventName: "push", gitRef: `refs/tags/${tag}` };
+}
+
 function isSlimExit(err: unknown, code: number, re: RegExp): boolean {
   return err instanceof SlimExit && err.code === code && re.test(err.message);
 }
@@ -505,6 +510,10 @@ test("workflow_dispatch publish from a non-default branch is refused", () => {
 
 test("publish without a qualification bundle is refused before attach", async () => {
   const root = initReleaseFixture();
+  const prevEvent = process.env.GITHUB_EVENT_NAME;
+  const prevRef = process.env.GITHUB_REF;
+  process.env.GITHUB_EVENT_NAME = "push";
+  process.env.GITHUB_REF = "refs/heads/main";
   try {
     await assert.rejects(
       () =>
@@ -514,10 +523,15 @@ test("publish without a qualification bundle is refused before attach", async ()
           tag: "v0.1.0",
           registryUrl: "https://registry.npmjs.org",
           occupancyFetch: freeOccupancy,
+          ...publishTagRef(),
         }),
       (err: unknown) => isSlimExit(err, EXIT_REFUSED, /bundle/),
     );
   } finally {
+    if (prevEvent === undefined) delete process.env.GITHUB_EVENT_NAME;
+    else process.env.GITHUB_EVENT_NAME = prevEvent;
+    if (prevRef === undefined) delete process.env.GITHUB_REF;
+    else process.env.GITHUB_REF = prevRef;
     rmSync(root, { recursive: true, force: true });
   }
 });
@@ -551,8 +565,9 @@ test("qualification bundle commit mismatch is refused before attach", async () =
           bundleDir,
           registryUrl: "https://registry.npmjs.org",
           occupancyFetch: freeOccupancy,
+          ...publishTagRef(),
         }),
-      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /bundle commit|does not match/),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /bundle commit/),
     );
   } finally {
     rmSync(root, { recursive: true, force: true });
