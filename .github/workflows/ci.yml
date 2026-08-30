@@ -71,10 +71,17 @@ jobs:
           path: qualification/receipts
       - name: require six osNode receipts
         run: |
+          set -euo pipefail
+          NPM="$(jq -r .npmDigest qualification/receipts/osNode.*.json | sort -u)"
+          if [ "$(printf '%s\n' "$NPM" | grep -c .)" != 1 ] || [ "$NPM" = "null" ] || [ -z "$NPM" ]; then
+            echo "osNode receipts must share one npmDigest (got: $NPM)" >&2
+            exit 1
+          fi
           node --experimental-strip-types scripts/qualify-candidate.ts \
             --mode collect \
             --os-node-only \
             --commit "${{ github.sha }}" \
+            --npm-digest "$NPM" \
             --receipts qualification/receipts \
             --from qualification/receipts
       - run: npm ci
