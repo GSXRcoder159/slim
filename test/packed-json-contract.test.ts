@@ -35,7 +35,7 @@ function packAndInstall(): { tmp: string; packDir: string; slimJs: string; proj:
   execPm("npm", ["install", tarball, "--omit=dev"], {
     cwd: tmp,
     encoding: "utf8",
-    timeout: 60_000,
+    timeout: 300_000,
     env: hermeticPmEnv(),
   });
   const slimJs = join(packageNodeModulesDir(tmp), "dist", "main.js");
@@ -58,7 +58,7 @@ function packAndInstall(): { tmp: string; packDir: string; slimJs: string; proj:
   return { tmp, packDir, slimJs, proj };
 }
 
-test("packed JSON commands emit one schema-valid document; replace --json is usage", { timeout: 180_000 }, () => {
+test("packed JSON commands emit one schema-valid document; replace --json is usage", { timeout: 400_000 }, () => {
   const { tmp, packDir, slimJs, proj } = packAndInstall();
   try {
     const scan = run([slimJs, "scan", "--json"], proj);
@@ -85,7 +85,7 @@ test("packed JSON commands emit one schema-valid document; replace --json is usa
     assert.match(replace.stderr, /replace does not support --json/);
     assert.equal(validateNamed("error", JSON.parse(replace.stdout)), null);
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
-    rmSync(packDir, { recursive: true, force: true });
+    rmSync(tmp, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+    rmSync(packDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
   }
 });

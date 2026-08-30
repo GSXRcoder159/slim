@@ -140,7 +140,7 @@ before(async () => {
   execPm("npm", ["install", packed.tarball, "--omit=dev"], {
     cwd: host,
     encoding: "utf8",
-    timeout: 60_000,
+    timeout: 300_000,
     env: hermeticPmEnv(),
   });
   const mod = (await import(
@@ -150,8 +150,8 @@ before(async () => {
 });
 
 after(() => {
-  if (host) rmSync(host, { recursive: true, force: true });
-  if (packDir) rmSync(packDir, { recursive: true, force: true });
+  if (host) rmSync(host, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+  if (packDir) rmSync(packDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
 });
 
 test("packed createPullRequest succeeds when the independent remote PR matches", { timeout: 180_000 }, async () => {

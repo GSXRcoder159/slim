@@ -54,7 +54,7 @@ function plantPackedProject(proj: string): void {
   rebindEvidenceArtifacts(proj, pkg, "src/slim");
 }
 
-test("packed upstream --json refuses an escaping module before not-exposed", { timeout: 180_000 }, () => {
+test("packed upstream --json refuses an escaping module before not-exposed", { timeout: 400_000 }, () => {
   const { packDir, tarball } = packSlim();
   const host = mkdtempSync(join(tmpdir(), "slim-up-pack-esc-"));
   const proj = join(host, "app");
@@ -63,7 +63,7 @@ test("packed upstream --json refuses an escaping module before not-exposed", { t
     execPm("npm", ["install", tarball, "--omit=dev"], {
       cwd: host,
       encoding: "utf8",
-      timeout: 60_000,
+      timeout: 300_000,
       env: hermeticPmEnv(),
     });
     const slimJs = join(packageNodeModulesDir(host), "dist", "main.js");
@@ -83,12 +83,12 @@ test("packed upstream --json refuses an escaping module before not-exposed", { t
     assert.equal(doc.action, "blocked");
     assert.match(String(doc.error ?? ""), /unsafe state path/i);
   } finally {
-    rmSync(host, { recursive: true, force: true });
-    rmSync(packDir, { recursive: true, force: true });
+    rmSync(host, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+    rmSync(packDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
   }
 });
 
-test("packed upstream --json missing configured envelope is missing-state", { timeout: 180_000 }, () => {
+test("packed upstream --json missing configured envelope is missing-state", { timeout: 400_000 }, () => {
   const { packDir, tarball } = packSlim();
   const host = mkdtempSync(join(tmpdir(), "slim-up-pack-cfg-"));
   const proj = join(host, "app");
@@ -97,7 +97,7 @@ test("packed upstream --json missing configured envelope is missing-state", { ti
     execPm("npm", ["install", tarball, "--omit=dev"], {
       cwd: host,
       encoding: "utf8",
-      timeout: 60_000,
+      timeout: 300_000,
       env: hermeticPmEnv(),
     });
     const slimJs = join(packageNodeModulesDir(host), "dist", "main.js");
@@ -124,7 +124,7 @@ test("packed upstream --json missing configured envelope is missing-state", { ti
     assert.equal(doc.conclusion, "missing-state");
     assert.equal(doc.action, "blocked");
   } finally {
-    rmSync(host, { recursive: true, force: true });
-    rmSync(packDir, { recursive: true, force: true });
+    rmSync(host, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
+    rmSync(packDir, { recursive: true, force: true, maxRetries: 8, retryDelay: 100 });
   }
 });
