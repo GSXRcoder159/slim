@@ -7,7 +7,7 @@
 import { execFileSync, type ExecFileSyncOptions } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { EXIT_ENV, EXIT_FAIL, EXIT_REFUSED, SlimExit } from "../exit.ts";
 import { cmdShim, cmdShimSpawnOpts } from "../rewrite/lockfile.ts";
 import { loadInventory } from "../support/inventory.ts";
@@ -101,6 +101,14 @@ export function resolveTag(root: string, tag?: string): string {
   return versionTag(packageVersion(root));
 }
 
+function envCommitForRoot(root: string): string | undefined {
+  const want = process.env.SLIM_CANDIDATE_COMMIT ?? process.env.GITHUB_SHA;
+  if (!want) return undefined;
+  const workspace = process.env.GITHUB_WORKSPACE;
+  if (workspace && resolve(root) !== resolve(workspace)) return undefined;
+  return want;
+}
+
 export function resolveCommit(
   root: string,
   supplied: string | undefined,
@@ -109,7 +117,7 @@ export function resolveCommit(
   const head = String(
     execFile("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }),
   ).trim();
-  const want = supplied ?? process.env.SLIM_CANDIDATE_COMMIT ?? process.env.GITHUB_SHA;
+  const want = supplied ?? envCommitForRoot(root);
   if (want && want !== head) {
     throw new SlimExit(EXIT_REFUSED, `commit ${want} does not match HEAD ${head}`);
   }

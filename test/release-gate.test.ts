@@ -482,6 +482,28 @@ test("supplied commit that does not match HEAD is refused", () => {
   }
 });
 
+test("GITHUB_SHA does not bind a fixture outside GITHUB_WORKSPACE", () => {
+  const root = initReleaseFixture();
+  const prevSha = process.env.GITHUB_SHA;
+  const prevWs = process.env.GITHUB_WORKSPACE;
+  const prevCandidate = process.env.SLIM_CANDIDATE_COMMIT;
+  process.env.GITHUB_SHA = "c".repeat(40);
+  process.env.SLIM_CANDIDATE_COMMIT = "d".repeat(40);
+  process.env.GITHUB_WORKSPACE = ROOT;
+  try {
+    const head = git(root, ["rev-parse", "HEAD"]);
+    assert.equal(resolveCommit(root, undefined, execFileSync), head);
+  } finally {
+    if (prevSha === undefined) delete process.env.GITHUB_SHA;
+    else process.env.GITHUB_SHA = prevSha;
+    if (prevWs === undefined) delete process.env.GITHUB_WORKSPACE;
+    else process.env.GITHUB_WORKSPACE = prevWs;
+    if (prevCandidate === undefined) delete process.env.SLIM_CANDIDATE_COMMIT;
+    else process.env.SLIM_CANDIDATE_COMMIT = prevCandidate;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("workflow_dispatch publish from a non-default branch is refused", () => {
   assert.throws(
     () =>
