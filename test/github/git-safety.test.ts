@@ -101,28 +101,74 @@ function assertSafeGit(calls: string[][]): void {
 
 function execRealGit(extra?: {
   lsRemote?: string;
+  lsRemoteAfterPush?: string;
   pushError?: string;
   commitTreeError?: string;
   ghError?: string;
+  viewMismatch?: boolean;
 }): { execFile: ExecFileFn; calls: string[][] } {
   const calls: string[][] = [];
+  let pushed = false;
+  let created: { title: string; body: string; head: string; base: string; labels: string[] } | null = null;
   const execFile: ExecFileFn = (file, args = [], options) => {
     calls.push([file, ...args]);
     if (file === "gh") {
-      if (extra?.ghError) {
+      if (extra?.ghError && args[0] === "pr" && args[1] === "create") {
         throw Object.assign(new Error(extra.ghError), { status: 1 });
       }
-      if (args[0] === "pr") return "https://github.com/acme/app/pull/7\n";
+      if (args[0] === "pr" && args[1] === "create") {
+        created = {
+          title: String(args[args.indexOf("--title") + 1] ?? ""),
+          body: String(args[args.indexOf("--body") + 1] ?? ""),
+          head: String(args[args.indexOf("--head") + 1] ?? ""),
+          base: String(args[args.indexOf("--base") + 1] ?? "main"),
+          labels: args.filter((_, i) => args[i - 1] === "--label"),
+        };
+        return "https://github.com/acme/app/pull/7\n";
+      }
+      if (args[0] === "pr" && args[1] === "view") {
+        const cwd = typeof options === "object" && options && "cwd" in options
+          ? String((options as { cwd?: string }).cwd ?? "")
+          : "";
+        const branch = created?.head || "slim/lodash";
+        const sha = cwd
+          ? execFileSync("git", ["rev-parse", branch], { cwd, encoding: "utf8" }).trim()
+          : "c".repeat(40);
+        const fileList = cwd
+          ? execFileSync("git", ["diff-tree", "--no-commit-id", "--name-only", "-r", sha], {
+              cwd,
+              encoding: "utf8",
+            })
+              .trim()
+              .split("\n")
+              .filter(Boolean)
+          : [];
+        return `${JSON.stringify({
+          title: extra?.viewMismatch ? "not the accepted title" : created?.title,
+          body: created?.body ?? "",
+          baseRefName: created?.base ?? "main",
+          headRefName: branch,
+          labels: (created?.labels ?? ["slim", "slim:replace"]).map((name) => ({ name })),
+          files: fileList.map((path) => ({ path })),
+          headRefOid: sha,
+          url: "https://github.com/acme/app/pull/7",
+        })}\n`;
+      }
+      if (args[0] === "pr" && args[1] === "close") return "";
       return "gh version 2.0.0\n";
     }
     if (file === "git" && args[0] === "remote" && args.includes("get-url")) {
       return "git@github.com:acme/app.git\n";
     }
-    if (file === "git" && args[0] === "ls-remote" && extra?.lsRemote !== undefined) {
-      return extra.lsRemote;
+    if (file === "git" && args[0] === "ls-remote") {
+      if (!pushed && extra?.lsRemote !== undefined) return extra.lsRemote;
+      if (pushed && extra?.lsRemoteAfterPush !== undefined) return extra.lsRemoteAfterPush;
     }
-    if (file === "git" && args[0] === "push" && extra?.pushError) {
-      throw Object.assign(new Error(extra.pushError), { status: 1 });
+    if (file === "git" && args[0] === "push") {
+      if (extra?.pushError && !args.includes("--delete")) {
+        throw Object.assign(new Error(extra.pushError), { status: 1 });
+      }
+      if (!args.includes("--delete")) pushed = true;
     }
     if (file === "git" && args[0] === "commit-tree" && extra?.commitTreeError) {
       throw Object.assign(new Error(extra.commitTreeError), { status: 1 });
@@ -177,6 +223,8 @@ test("clean fixture commit contains only intended Slim files", async () => {
       .filter(Boolean)
       .sort();
     assert.deepEqual(diff, [...opts.files].sort());
+    const leftover = git(root, ["for-each-ref", "--format=%(refname)", "refs/slim-verify"]).trim();
+    assert.equal(leftover, "");
     assertSafeGit(calls);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -437,6 +485,52 @@ test("gh failure deletes the pushed Slim branch locally and remotely", async () 
       remoteHeads = "";
     }
     assert.equal(remoteHeads, "");
+    assertSafeGit(calls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(bare, { recursive: true, force: true });
+  }
+});
+
+test("remote PR title mismatch restores unrelated state and drops the Slim branch", async () => {
+  const root = initRepo();
+  const bare = addBareOrigin(root);
+  plantDirty(root);
+  const opts = plantSlimFiles(root);
+  const before = snapshot(root);
+  const { execFile, calls } = execRealGit({ viewMismatch: true });
+  try {
+    await assert.rejects(
+      () =>
+        withStderr(() =>
+          pr.createPullRequest(opts, {
+            hasGh: () => true,
+            env: {},
+            execFile,
+            fetchImpl: async () => new Response("no"),
+          }),
+        ),
+      (err: unknown) =>
+        err instanceof SlimExit && err.code === EXIT_FAIL && /remote PR title/i.test(err.message),
+    );
+    const after = snapshot(root);
+    assert.equal(after.branch, before.branch);
+    assert.equal(after.head, before.head);
+    assert.equal(after.porcelain, before.porcelain);
+    assert.deepEqual(after.index, before.index);
+    assert.deepEqual(after.committed, before.committed);
+    assert.deepEqual(after.untracked, before.untracked);
+    assert.equal(existsSync(join(root, ".git", "refs", "heads", "slim", "lodash")), false);
+    let remoteHeads = "";
+    try {
+      remoteHeads = execFileSync("git", ["--git-dir", bare, "show-ref", "--heads", opts.branch], {
+        encoding: "utf8",
+      }).trim();
+    } catch {
+      remoteHeads = "";
+    }
+    assert.equal(remoteHeads, "");
+    assert.ok(calls.some((c) => c[0] === "gh" && c[1] === "pr" && c[2] === "close"));
     assertSafeGit(calls);
   } finally {
     rmSync(root, { recursive: true, force: true });

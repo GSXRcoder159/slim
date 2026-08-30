@@ -131,13 +131,18 @@ export function githubReceipt(opts: {
   endedAt: Date;
   log: string;
   workflowRun?: string | null;
+  prUrl?: string;
+  cleanup?: string;
 }): QualificationReceipt {
+  const envBits = [`${process.platform} node-${process.version}`];
+  if (opts.prUrl) envBits.push(`pr=${opts.prUrl}`);
+  if (opts.cleanup) envBits.push(`cleanup=${opts.cleanup}`);
   return {
     schemaVersion: 1,
     checkId: "test/github/pr-live.test.ts",
     command: "replace",
     fixture: opts.fixture,
-    environment: `${process.platform} node-${process.version}`,
+    environment: envBits.join(" "),
     provider: null,
     service: "github",
     startedAt: opts.startedAt.toISOString(),

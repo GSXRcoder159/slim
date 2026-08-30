@@ -49,10 +49,10 @@ function currentGhUser(): string {
   return JSON.parse(gh(["api", "user"])).login as string;
 }
 
-function deleteOrTransferRepo(name: string, owner: string): void {
+function deleteOrTransferRepo(name: string, owner: string): string {
   try {
     gh(["repo", "delete", `${owner}/${name}`, "--yes"]);
-    return;
+    return "closed+deleted";
   } catch (err) {
     const dest = process.env.SLIM_PR_TRANSFER_OWNER;
     if (!dest) {
@@ -68,6 +68,7 @@ function deleteOrTransferRepo(name: string, owner: string): void {
     if (!res) {
       throw new Error(`leftover disposable repository ${owner}/${name}: transfer to ${dest} failed`);
     }
+    return `closed+transferred:${dest}`;
   }
 }
 
@@ -130,7 +131,9 @@ test("live packed replace opens a scoped GitHub PR and cleans up", { timeout: 30
     leftover = name;
     owner = currentGhUser();
 
+    const digest = process.env.SLIM_NPM_DIGEST ?? npmDigest;
     const extra: NodeJS.ProcessEnv = { CI: "1" };
+    if (digest) extra.SLIM_NPM_DIGEST = digest;
     const out = await runSlim(
       slimJs,
       ["replace", "ms", "--seed", "1", "--budget-ms", "800", "--workers", "1"],
@@ -139,6 +142,31 @@ test("live packed replace opens a scoped GitHub PR and cleans up", { timeout: 30
       180_000,
     );
     assert.equal(out.status, 0, `${out.stdout}\n${out.stderr}`);
+
+    const slimSha = execFileSync("git", ["rev-parse", "slim/ms"], { cwd: dest, encoding: "utf8" }).trim();
+    const remoteHeads = execFileSync("git", ["ls-remote", "--heads", "origin", "refs/heads/slim/ms"], {
+      cwd: dest,
+      encoding: "utf8",
+    }).trim();
+    assert.match(remoteHeads, new RegExp(`^${slimSha}\\s+`));
+
+    const independent = JSON.parse(
+      gh(["api", `repos/${owner}/${name}/pulls/1`], dest),
+    ) as {
+      html_url: string;
+      title: string;
+      body: string;
+      base: { ref: string };
+      head: { ref: string; sha: string };
+    };
+    assert.match(independent.title, /ms/);
+    assert.equal(independent.head.ref, "slim/ms");
+    assert.equal(independent.head.sha, slimSha);
+    assert.equal(independent.base.ref, "main");
+    assert.match(independent.body, /Candidate artifact digest:\s+`[0-9a-f]{64}`/i);
+    if (digest) {
+      assert.match(independent.body, new RegExp(`Candidate artifact digest:\\s+\`${digest}\``, "i"));
+    }
 
     const view = JSON.parse(
       gh(["pr", "view", "1", "--json", "title,baseRefName,headRefName,labels,files,url,body"], dest),
@@ -151,6 +179,7 @@ test("live packed replace opens a scoped GitHub PR and cleans up", { timeout: 30
       url: string;
       body: string;
     };
+    assert.equal(view.url, independent.html_url);
     assert.match(view.title, /ms/);
     assert.equal(view.headRefName, "slim/ms");
     const labelNames = view.labels.map((l) => l.name).sort();
@@ -179,9 +208,10 @@ test("live packed replace opens a scoped GitHub PR and cleans up", { timeout: 30
     assert.match(view.body, new RegExp(`Evidence hash:\\s+\`${evidenceHash}\``, "i"));
     assert.match(view.body, new RegExp(`Module digest:\\s+\`${moduleDigest}\``, "i"));
     assert.match(view.body, /Package:\s+`ms@/);
+    assert.doesNotMatch(view.body, /ghp_|github_pat|ANTHROPIC_API_KEY|OPENAI_API_KEY/);
 
     gh(["pr", "close", "1", "--delete-branch"], dest);
-    deleteOrTransferRepo(name, owner);
+    const cleanup = deleteOrTransferRepo(name, owner);
     leftover = null;
 
     const receiptsDir = process.env.SLIM_RECEIPTS_DIR;
@@ -195,11 +225,13 @@ test("live packed replace opens a scoped GitHub PR and cleans up", { timeout: 30
         githubReceipt({
           fixture: FIXTURE,
           commit,
-          npmDigest: process.env.SLIM_NPM_DIGEST ?? npmDigest,
+          npmDigest: digest,
           startedAt,
           endedAt: new Date(),
-          log: `${view.url}:${view.headRefName}:${out.status}`,
+          log: `${view.url}:${view.headRefName}:${slimSha}:${cleanup}:${out.status}`,
           workflowRun: process.env.SLIM_WORKFLOW_RUN ?? null,
+          prUrl: view.url,
+          cleanup,
         }),
       );
     }

@@ -1,14 +1,21 @@
 import { execFileSync, type ExecFileSyncOptions } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../exit.ts";
+import { readStamp } from "../release/digest.ts";
 import { sourceErr, sourceOk, type SourceResult } from "../upstream/status.ts";
 import {
   REPLACE_PR_LABELS,
+  SHA256_HEX,
   UPSTREAM_PR_LABELS,
   assertCommitMatchesTransaction,
   assertPrMatchesTransaction,
+  assertRemotePrMatchesTransaction,
+  parsePullRequestNumber,
+  withArtifactDigest,
   type PrKind,
+  type RemotePrSnapshot,
 } from "./pr-transaction.ts";
 
 export { REPLACE_PR_LABELS, UPSTREAM_PR_LABELS } from "./pr-transaction.ts";
@@ -29,6 +36,7 @@ export interface PrDeps {
   fetchImpl?: typeof fetch;
   env?: NodeJS.ProcessEnv;
   execFile?: ExecFileFn;
+  packageRoot?: string;
 }
 
 export interface CreatePrOpts {
@@ -40,6 +48,8 @@ export interface CreatePrOpts {
   labels: string[];
   kind?: PrKind;
   pkg?: string;
+  artifactDigest?: string;
+  base?: string;
 }
 
 const PR_BODY_FIELDS: { name: string; re: RegExp }[] = [
@@ -58,6 +68,12 @@ const PR_BODY_FIELDS: { name: string; re: RegExp }[] = [
   { name: "upstream pin", re: /Upstream pin/i },
   { name: "revert", re: /How to revert/i },
 ];
+
+const REST_HEADERS = {
+  accept: "application/vnd.github+json",
+  "content-type": "application/json",
+  "user-agent": "slim",
+} as const;
 
 function defaultExecFile(
   file: string,
@@ -81,7 +97,7 @@ export function parseGithubOwnerRepo(remoteUrl: string): { owner: string; repo: 
   const s = remoteUrl.trim();
   const m =
     s.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i) ||
-    s.match(/^ssh:\/\/git@github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/i) ||
+    s.match(/^ssh:\/\/git@github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i) ||
     s.match(/^https?:\/\/(?:[^@/]+@)?github\.com\/([^/]+)\/([^/]+?)(?:\.git)?\/?$/i);
   if (!m) {
     throw new SlimExit(EXIT_ENV, `cannot parse GitHub owner/repo from origin: ${s}`);
@@ -117,6 +133,48 @@ function detectBaseBranch(execFile: ExecFileFn, root: string): string {
 
 function gitToken(env: NodeJS.ProcessEnv): string | undefined {
   return env.GITHUB_TOKEN || env.GH_TOKEN || undefined;
+}
+
+export function slimPackageRoot(start = fileURLToPath(import.meta.url)): string {
+  let dir = dirname(start);
+  for (let i = 0; i < 10; i++) {
+    const pkgPath = join(dir, "package.json");
+    if (existsSync(pkgPath)) {
+      try {
+        const name = (JSON.parse(readFileSync(pkgPath, "utf8")) as { name?: string }).name;
+        if (name === "slim") return dir;
+      } catch {
+        /* keep walking */
+      }
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new SlimExit(EXIT_FAIL, "missing candidate artifact digest");
+}
+
+export function resolveArtifactDigest(
+  opts: { artifactDigest?: string },
+  env: NodeJS.ProcessEnv,
+  packageRoot?: string,
+): string {
+  if (opts.artifactDigest !== undefined) {
+    if (!SHA256_HEX.test(opts.artifactDigest)) {
+      throw new SlimExit(EXIT_FAIL, "missing candidate artifact digest");
+    }
+    return opts.artifactDigest;
+  }
+  const fromEnv = env.SLIM_NPM_DIGEST;
+  if (fromEnv !== undefined && fromEnv !== "") {
+    if (!SHA256_HEX.test(fromEnv)) {
+      throw new SlimExit(EXIT_FAIL, "missing candidate artifact digest");
+    }
+    return fromEnv;
+  }
+  const sha = readStamp(packageRoot ?? slimPackageRoot())?.sha256;
+  if (sha && SHA256_HEX.test(sha)) return sha;
+  throw new SlimExit(EXIT_FAIL, "missing candidate artifact digest");
 }
 
 export function probeGithubAvailability(root: string, deps: PrDeps = {}): SourceResult<true> {
@@ -242,6 +300,14 @@ function abandonSlimRef(
   }
 }
 
+function dropVerifyRef(execFile: ExecFileFn, root: string, verifyRef: string): void {
+  try {
+    execFile("git", ["update-ref", "-d", verifyRef], { cwd: root, encoding: "utf8" });
+  } catch {
+    /* leftover verify ref is tmp */
+  }
+}
+
 function ensureGhLabels(execFile: ExecFileFn, root: string, labels: string[]): void {
   for (const name of labels) {
     try {
@@ -250,6 +316,10 @@ function ensureGhLabels(execFile: ExecFileFn, root: string, labels: string[]): v
       /* --force still fails if the repo cannot create labels; apply may work */
     }
   }
+}
+
+function authHeaders(token: string): Record<string, string> {
+  return { ...REST_HEADERS, authorization: `Bearer ${token}` };
 }
 
 async function ensureRestLabels(
@@ -262,12 +332,7 @@ async function ensureRestLabels(
   for (const name of labels) {
     const res = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/labels`, {
       method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
-        accept: "application/vnd.github+json",
-        "content-type": "application/json",
-        "user-agent": "slim",
-      },
+      headers: authHeaders(token),
       body: JSON.stringify({ name }),
     });
     if (!res.ok && res.status !== 422) {
@@ -287,18 +352,168 @@ async function applyRestLabels(
 ): Promise<void> {
   const res = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${issue}/labels`, {
     method: "POST",
-    headers: {
-      authorization: `Bearer ${token}`,
-      accept: "application/vnd.github+json",
-      "content-type": "application/json",
-      "user-agent": "slim",
-    },
+    headers: authHeaders(token),
     body: JSON.stringify({ labels }),
   });
   if (!res.ok) {
     const text = await res.text();
     throw new SlimExit(EXIT_FAIL, `GitHub REST label apply failed: ${res.status} ${text.slice(0, 200)}`);
   }
+}
+
+async function closePullRequest(
+  execFile: ExecFileFn,
+  fetchImpl: typeof fetch,
+  token: string | undefined,
+  gh: boolean,
+  owner: string,
+  repo: string,
+  number: number | null,
+  root: string,
+): Promise<void> {
+  if (number == null) return;
+  if (token) {
+    try {
+      await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}`, {
+        method: "PATCH",
+        headers: authHeaders(token),
+        body: JSON.stringify({ state: "closed" }),
+      });
+    } catch {
+      /* still delete the Slim branch */
+    }
+    return;
+  }
+  if (gh) {
+    try {
+      execFile("gh", ["pr", "close", String(number), "--repo", `${owner}/${repo}`], {
+        cwd: root,
+        encoding: "utf8",
+      });
+    } catch {
+      /* still delete the Slim branch */
+    }
+  }
+}
+
+function parseLsRemoteSha(out: string, branch: string): string {
+  const line = out.trim().split("\n").find((l) => l.includes(`refs/heads/${branch}`)) ?? "";
+  const m = line.match(/^([0-9a-f]{40})\s+refs\/heads\/\S+/);
+  if (!m?.[1]) {
+    throw new SlimExit(EXIT_FAIL, `origin ${branch} SHA does not match the Slim commit`);
+  }
+  return m[1];
+}
+
+function restStatusMessage(action: string, status: number): string {
+  if (status === 401 || status === 403) {
+    return `GitHub REST ${action} failed: ${status} authentication`;
+  }
+  return `GitHub REST ${action} failed: ${status}`;
+}
+
+async function readRemotePrRest(
+  fetchImpl: typeof fetch,
+  token: string,
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<RemotePrSnapshot> {
+  const pullRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}`, {
+    method: "GET",
+    headers: authHeaders(token),
+  });
+  if (!pullRes.ok) {
+    throw new SlimExit(EXIT_FAIL, restStatusMessage("PR read", pullRes.status));
+  }
+  const pull = (await pullRes.json()) as {
+    html_url?: string;
+    title?: string;
+    body?: string | null;
+    base?: { ref?: string };
+    head?: { ref?: string; sha?: string };
+  };
+  const filesRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/pulls/${number}/files`, {
+    method: "GET",
+    headers: authHeaders(token),
+  });
+  if (!filesRes.ok) {
+    throw new SlimExit(EXIT_FAIL, restStatusMessage("PR files read", filesRes.status));
+  }
+  const filesJson = (await filesRes.json()) as { filename?: string }[];
+  const labelsRes = await fetchImpl(`https://api.github.com/repos/${owner}/${repo}/issues/${number}/labels`, {
+    method: "GET",
+    headers: authHeaders(token),
+  });
+  if (!labelsRes.ok) {
+    throw new SlimExit(EXIT_FAIL, restStatusMessage("PR labels read", labelsRes.status));
+  }
+  const labelsJson = (await labelsRes.json()) as { name?: string }[];
+  if (!pull.html_url || !pull.title || !pull.head?.sha || !pull.head.ref || !pull.base?.ref) {
+    throw new SlimExit(EXIT_FAIL, "GitHub REST PR read returned an incomplete document");
+  }
+  return {
+    url: pull.html_url,
+    title: pull.title,
+    body: pull.body ?? "",
+    base: pull.base.ref,
+    head: pull.head.ref,
+    headSha: pull.head.sha,
+    labels: labelsJson.map((l) => l.name).filter((n): n is string => Boolean(n)),
+    files: filesJson.map((f) => f.filename).filter((n): n is string => Boolean(n)),
+  };
+}
+
+function readRemotePrGh(
+  execFile: ExecFileFn,
+  root: string,
+  owner: string,
+  repo: string,
+  number: number,
+): RemotePrSnapshot {
+  const raw = String(
+    execFile(
+      "gh",
+      [
+        "pr",
+        "view",
+        String(number),
+        "--repo",
+        `${owner}/${repo}`,
+        "--json",
+        "title,body,baseRefName,headRefName,labels,files,headRefOid,url",
+      ],
+      { cwd: root, encoding: "utf8" },
+    ),
+  );
+  let parsed: {
+    title?: string;
+    body?: string;
+    baseRefName?: string;
+    headRefName?: string;
+    labels?: { name?: string }[];
+    files?: { path?: string }[];
+    headRefOid?: string;
+    url?: string;
+  };
+  try {
+    parsed = JSON.parse(raw) as typeof parsed;
+  } catch {
+    throw new SlimExit(EXIT_FAIL, "gh pr view returned malformed JSON");
+  }
+  if (!parsed.url || !parsed.title || !parsed.headRefOid || !parsed.headRefName || !parsed.baseRefName) {
+    throw new SlimExit(EXIT_FAIL, "gh pr view returned an incomplete document");
+  }
+  return {
+    url: parsed.url,
+    title: parsed.title,
+    body: parsed.body ?? "",
+    base: parsed.baseRefName,
+    head: parsed.headRefName,
+    headSha: parsed.headRefOid,
+    labels: (parsed.labels ?? []).map((l) => l.name).filter((n): n is string => Boolean(n)),
+    files: (parsed.files ?? []).map((f) => f.path).filter((n): n is string => Boolean(n)),
+  };
 }
 
 export async function maybeCreatePullRequest(
@@ -321,7 +536,6 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
     ? "upstream"
     : "replace");
   if (kind === "replace") assertPrBodyComplete(opts.body);
-  assertPrMatchesTransaction({ ...opts, kind });
 
   const execFile = deps.execFile ?? defaultExecFile;
   const env = deps.env ?? process.env;
@@ -358,6 +572,9 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
     );
   }
 
+  const digest = resolveArtifactDigest(opts, env, deps.packageRoot);
+  const body = withArtifactDigest(opts.body, digest);
+
   let remoteHeads = "";
   try {
     remoteHeads = gitOut(execFile, opts.root, [
@@ -376,7 +593,13 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
     );
   }
 
-  const base = detectBaseBranch(execFile, opts.root);
+  const detectedBase = detectBaseBranch(execFile, opts.root);
+  if (opts.base && opts.base !== detectedBase) {
+    throw new SlimExit(EXIT_FAIL, `PR base ${opts.base} does not match ${detectedBase}`);
+  }
+  const base = detectedBase;
+  assertPrMatchesTransaction({ ...opts, kind, body, artifactDigest: digest, base });
+
   const head = gitOut(execFile, opts.root, ["rev-parse", "HEAD"]);
   const sha = commitSlimBranch(
     { root: opts.root, branch: opts.branch, files: opts.files, message: opts.title },
@@ -402,6 +625,33 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
   }
 
   try {
+    const landed = gitOut(execFile, opts.root, [
+      "ls-remote",
+      "--heads",
+      "origin",
+      `refs/heads/${opts.branch}`,
+    ]);
+    const remoteSha = parseLsRemoteSha(landed, opts.branch);
+    if (remoteSha !== sha) {
+      throw new SlimExit(EXIT_FAIL, `origin ${opts.branch} SHA does not match the Slim commit`);
+    }
+  } catch (err) {
+    abandonSlimRef(execFile, opts.root, opts.branch, true);
+    if (err instanceof SlimExit) throw err;
+    throw new SlimExit(EXIT_FAIL, `origin ${opts.branch} SHA does not match the Slim commit`);
+  }
+
+  const accepted = {
+    ...opts,
+    kind,
+    body,
+    artifactDigest: digest,
+    base,
+  };
+  let prNumber: number | null = null;
+  const verifyRef = `refs/slim-verify/${process.pid}-${Date.now()}`;
+  try {
+    let url: string;
     if (gh) {
       ensureGhLabels(execFile, opts.root, opts.labels);
       const ghArgs = [
@@ -416,7 +666,7 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
         "--title",
         opts.title,
         "--body",
-        opts.body,
+        body,
         ...opts.labels.flatMap((l) => ["--label", l]),
       ];
       process.stderr.write(`gh ${ghArgs.join(" ")}\n`);
@@ -427,22 +677,57 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
             encoding: "utf8",
           }),
         );
-        const url = out.trim().split(/\s+/).find((t) => t.startsWith("http")) ?? out.trim();
-        return { url, local: false };
+        url = out.trim().split(/\s+/).find((t) => t.startsWith("http")) ?? out.trim();
       } catch (err) {
         process.stderr.write(`gh pr create failed: ${errText(err)}\n`);
         throw new SlimExit(EXIT_FAIL, `gh pr create failed: ${errText(err)}`);
       }
+    } else {
+      const created = await createPullRequestRest(accepted, {
+        fetchImpl,
+        token: token!,
+        owner,
+        repo,
+        base,
+      });
+      url = created.url;
+      prNumber = created.number;
+    }
+    prNumber = prNumber ?? parsePullRequestNumber(url);
+
+    try {
+      gitOut(execFile, opts.root, ["fetch", "origin", `refs/heads/${opts.branch}:${verifyRef}`]);
+      const fetched = gitOut(execFile, opts.root, ["rev-parse", verifyRef]);
+      if (fetched !== sha) {
+        throw new SlimExit(EXIT_FAIL, `origin ${opts.branch} SHA does not match the Slim commit`);
+      }
+      assertCommitMatchesTransaction(
+        (args) => gitOut(execFile, opts.root, args),
+        fetched,
+        opts.files,
+        opts.title,
+        head,
+      );
+    } finally {
+      dropVerifyRef(execFile, opts.root, verifyRef);
     }
 
-    return await createPullRequestRest(opts, {
-      fetchImpl,
-      token: token!,
-      owner,
-      repo,
+    const remote = token
+      ? await readRemotePrRest(fetchImpl, token, owner, repo, prNumber)
+      : readRemotePrGh(execFile, opts.root, owner, repo, prNumber);
+    assertRemotePrMatchesTransaction(remote, {
+      title: opts.title,
+      body,
       base,
+      branch: opts.branch,
+      sha,
+      labels: opts.labels,
+      files: opts.files,
     });
+    return { url: remote.url, local: false };
   } catch (err) {
+    dropVerifyRef(execFile, opts.root, verifyRef);
+    await closePullRequest(execFile, fetchImpl, token, gh, owner, repo, prNumber, opts.root);
     abandonSlimRef(execFile, opts.root, opts.branch, true);
     if (err instanceof SlimExit) throw err;
     throw new SlimExit(EXIT_FAIL, `pull request failed: ${errText(err)}`);
@@ -458,18 +743,13 @@ async function createPullRequestRest(
     repo: string;
     base: string;
   },
-): Promise<PrResult> {
+): Promise<{ url: string; number: number }> {
   await ensureRestLabels(ctx.fetchImpl, ctx.token, ctx.owner, ctx.repo, opts.labels);
   const url = `https://api.github.com/repos/${ctx.owner}/${ctx.repo}/pulls`;
   try {
     const res = await ctx.fetchImpl(url, {
       method: "POST",
-      headers: {
-        authorization: `Bearer ${ctx.token}`,
-        accept: "application/vnd.github+json",
-        "content-type": "application/json",
-        "user-agent": "slim",
-      },
+      headers: authHeaders(ctx.token),
       body: JSON.stringify({
         title: opts.title,
         body: opts.body,
@@ -480,14 +760,14 @@ async function createPullRequestRest(
     if (!res.ok) {
       const text = await res.text();
       process.stderr.write(`GitHub REST PR create failed: ${res.status} ${text.slice(0, 400)}\n`);
-      throw new SlimExit(EXIT_FAIL, `GitHub REST PR create failed: ${res.status}`);
+      throw new SlimExit(EXIT_FAIL, restStatusMessage("PR create", res.status));
     }
     const json = (await res.json()) as { html_url?: string; number?: number };
-    if (json.number == null) {
+    if (json.number == null || !json.html_url) {
       throw new SlimExit(EXIT_FAIL, "GitHub REST PR create returned no issue number");
     }
     await applyRestLabels(ctx.fetchImpl, ctx.token, ctx.owner, ctx.repo, json.number, opts.labels);
-    return { url: json.html_url ?? null, local: false };
+    return { url: json.html_url, number: json.number };
   } catch (err) {
     if (err instanceof SlimExit) throw err;
     process.stderr.write(`GitHub REST PR create failed: ${errText(err)}\n`);

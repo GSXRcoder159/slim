@@ -3,8 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeEvidence } from "../../src/evidence/report.ts";
 import { REPLACE_PR_LABELS, type CreatePrOpts } from "../../src/github/pr.ts";
+import { withArtifactDigest } from "../../src/github/pr-transaction.ts";
 import { fileBase } from "../../src/rewrite/paths.ts";
 import { minimalEnvelope, minimalManifest, plantReplacementTree } from "./documents.ts";
+
+export const TEST_ARTIFACT_DIGEST = "b".repeat(64);
 
 export function plantReplaceTxn(opts?: { pkg?: string; root?: string }): CreatePrOpts & { pkg: string } {
   const pkg = opts?.pkg ?? "lodash";
@@ -45,7 +48,10 @@ export function plantReplaceTxn(opts?: { pkg?: string; root?: string }): CreateP
       installCommand: "npm install",
     },
   });
-  const body = readFileSync(join(root, ".slim", pkg, "evidence.md"), "utf8");
+  const body = withArtifactDigest(
+    readFileSync(join(root, ".slim", pkg, "evidence.md"), "utf8"),
+    TEST_ARTIFACT_DIGEST,
+  );
   return {
     root,
     pkg,
@@ -60,5 +66,6 @@ export function plantReplaceTxn(opts?: { pkg?: string; root?: string }): CreateP
     ],
     labels: [...REPLACE_PR_LABELS],
     kind: "replace",
+    artifactDigest: TEST_ARTIFACT_DIGEST,
   };
 }

@@ -15,6 +15,8 @@ import { fileBase } from "../rewrite/paths.ts";
 
 export const REPLACE_PR_LABELS = ["slim", "slim:replace"] as const;
 export const UPSTREAM_PR_LABELS = ["slim", "slim:upstream"] as const;
+export const SHA256_HEX = /^[0-9a-f]{64}$/;
+export const ARTIFACT_DIGEST_RE = /Candidate artifact digest:\s+`([0-9a-f]{64})`/i;
 
 export type PrKind = "replace" | "upstream";
 
@@ -27,9 +29,26 @@ export interface PrRequest {
   labels: string[];
   kind?: PrKind;
   pkg?: string;
+  base?: string;
+  artifactDigest?: string;
+}
+
+export interface RemotePrSnapshot {
+  url: string;
+  title: string;
+  body: string;
+  base: string;
+  head: string;
+  headSha: string;
+  labels: string[];
+  files: string[];
 }
 
 export { sha256Bytes, sha256File } from "../evidence/digests.ts";
+
+function posix(rel: string): string {
+  return rel.replace(/\\/g, "/");
+}
 
 function field(body: string, re: RegExp, name: string): string {
   const m = body.match(re);
@@ -44,10 +63,20 @@ function labelsEqual(got: string[], want: readonly string[]): boolean {
   return got.every((l, i) => l === want[i]);
 }
 
+function sortedEqual(got: string[], want: string[]): boolean {
+  const a = [...got].map(posix).sort();
+  const b = [...want].map(posix).sort();
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
+function normalizeBody(s: string): string {
+  return s.replace(/\r\n/g, "\n").replace(/\s+$/, "");
+}
+
 function inferPkg(opts: PrRequest): string {
   if (opts.pkg) return opts.pkg;
   for (const f of opts.files) {
-    const m = f.replace(/\\/g, "/").match(/^\.slim\/(.+)\/evidence\.md$/);
+    const m = posix(f).match(/^\.slim\/(.+)\/evidence\.md$/);
     if (m?.[1]) return m[1];
   }
   const titled = opts.title.match(/^slim: replace (.+) with a verified slice$/);
@@ -62,7 +91,7 @@ function inferKind(opts: PrRequest): PrKind {
 }
 
 function isAllowedReplacePath(rel: string, pkg: string, moduleRel: string, rewrites: string[]): boolean {
-  const p = rel.replace(/\\/g, "/");
+  const p = posix(rel);
   if (p.startsWith(".slim/")) return true;
   if (p === moduleRel || p.startsWith("src/slim/")) return true;
   if (p === "package.json" || p === "slim.json") return true;
@@ -80,6 +109,20 @@ function loadJson(path: string, what: string): unknown {
   }
 }
 
+export function withArtifactDigest(body: string, digest: string): string {
+  if (!SHA256_HEX.test(digest)) {
+    throw new SlimExit(EXIT_FAIL, "missing candidate artifact digest");
+  }
+  const m = body.match(ARTIFACT_DIGEST_RE);
+  if (m) {
+    if (m[1] !== digest) {
+      throw new SlimExit(EXIT_FAIL, "PR candidate artifact digest does not match the accepted transaction");
+    }
+    return body;
+  }
+  return `${body.replace(/\s*$/, "")}\n\n- Candidate artifact digest: \`${digest}\`\n`;
+}
+
 export function assertEvidenceBodyMatchesDisk(root: string, pkg: string, body: string): string {
   const evidenceJsonPath = join(root, ".slim", pkg, "evidence.json");
   const envelopePath = join(root, ".slim", pkg, "envelope.json");
@@ -89,7 +132,7 @@ export function assertEvidenceBodyMatchesDisk(root: string, pkg: string, body: s
   if (evidence.envelopeHash !== envHash) {
     throw new SlimExit(EXIT_FAIL, "evidence.json envelope hash does not match envelope.json");
   }
-  const moduleRel = (evidence.revert?.module ?? `src/slim/${fileBase(pkg)}.ts`).replace(/\\/g, "/");
+  const moduleRel = posix(evidence.revert?.module ?? `src/slim/${fileBase(pkg)}.ts`);
   const modulePath = join(root, moduleRel);
   if (!existsSync(modulePath)) {
     throw new SlimExit(EXIT_FAIL, `missing replacement module ${moduleRel}`);
@@ -129,6 +172,19 @@ export function assertEvidenceBodyMatchesDisk(root: string, pkg: string, body: s
   return moduleRel;
 }
 
+function assertBaseAndDigest(opts: PrRequest): void {
+  if (!opts.base?.trim()) {
+    throw new SlimExit(EXIT_FAIL, "PR base must match the accepted transaction");
+  }
+  if (!opts.artifactDigest || !SHA256_HEX.test(opts.artifactDigest)) {
+    throw new SlimExit(EXIT_FAIL, "missing candidate artifact digest");
+  }
+  const got = field(opts.body, ARTIFACT_DIGEST_RE, "candidate artifact digest");
+  if (got !== opts.artifactDigest) {
+    throw new SlimExit(EXIT_FAIL, "PR candidate artifact digest does not match the accepted transaction");
+  }
+}
+
 function assertReplaceTransaction(opts: PrRequest): void {
   const pkg = inferPkg(opts);
   const wantLabels = [...REPLACE_PR_LABELS];
@@ -150,7 +206,7 @@ function assertReplaceTransaction(opts: PrRequest): void {
   const evidenceJsonPath = join(opts.root, ".slim", pkg, "evidence.json");
   const evidence = loadJson(evidenceJsonPath, `.slim/${pkg}/evidence.json`) as EvidenceJson;
 
-  const files = opts.files.map((f) => f.replace(/\\/g, "/"));
+  const files = opts.files.map(posix);
   const required = [
     moduleRel,
     `.slim/${pkg}/evidence.md`,
@@ -162,7 +218,7 @@ function assertReplaceTransaction(opts: PrRequest): void {
       throw new SlimExit(EXIT_FAIL, `PR file list missing ${req}`);
     }
   }
-  const rewrites = (evidence.revert?.rewrites ?? []).map((r) => r.file.replace(/\\/g, "/"));
+  const rewrites = (evidence.revert?.rewrites ?? []).map((r) => posix(r.file));
   for (const f of files) {
     if (!isAllowedReplacePath(f, pkg, moduleRel, rewrites)) {
       throw new SlimExit(EXIT_FAIL, `refusing to commit unrelated path ${f}`);
@@ -184,7 +240,7 @@ function assertUpstreamTransaction(opts: PrRequest): void {
   if (!/^slim: upstream slice fix for \S+$/.test(opts.title)) {
     throw new SlimExit(EXIT_FAIL, "PR title does not match slim: upstream slice fix for <id>");
   }
-  const files = opts.files.map((f) => f.replace(/\\/g, "/"));
+  const files = opts.files.map(posix);
   if (!files.includes(".slim/UPSTREAM.md")) {
     throw new SlimExit(EXIT_FAIL, "PR file list missing .slim/UPSTREAM.md");
   }
@@ -219,6 +275,7 @@ export function assertPrMatchesTransaction(opts: PrRequest): void {
   if (!opts.labels?.length) {
     throw new SlimExit(EXIT_FAIL, "PR labels must match the accepted transaction");
   }
+  assertBaseAndDigest(opts);
   const kind = inferKind(opts);
   if (kind === "upstream") assertUpstreamTransaction(opts);
   else assertReplaceTransaction(opts);
@@ -241,14 +298,63 @@ export function assertCommitMatchesTransaction(
   }
   const names = gitOut(["diff-tree", "--no-commit-id", "--name-only", "-r", sha])
     .split("\n")
-    .map((s) => s.trim().replace(/\\/g, "/"))
+    .map((s) => posix(s.trim()))
     .filter(Boolean)
     .sort();
-  const expected = [...files].map((f) => f.replace(/\\/g, "/")).sort();
+  const expected = [...files].map(posix).sort();
   if (names.length !== expected.length || names.some((n, i) => n !== expected[i])) {
     throw new SlimExit(
       EXIT_FAIL,
       `Slim commit files [${names.join(", ")}] do not match [${expected.join(", ")}]`,
     );
   }
+}
+
+export function assertRemotePrMatchesTransaction(
+  remote: RemotePrSnapshot,
+  accepted: {
+    title: string;
+    body: string;
+    base: string;
+    branch: string;
+    sha: string;
+    labels: readonly string[];
+    files: string[];
+  },
+): void {
+  if (remote.title !== accepted.title) {
+    throw new SlimExit(EXIT_FAIL, "remote PR title does not match the accepted transaction");
+  }
+  if (normalizeBody(remote.body) !== normalizeBody(accepted.body)) {
+    throw new SlimExit(EXIT_FAIL, "remote PR body does not match the accepted transaction");
+  }
+  if (remote.base !== accepted.base) {
+    throw new SlimExit(EXIT_FAIL, `remote PR base ${remote.base} does not match ${accepted.base}`);
+  }
+  if (remote.head !== accepted.branch) {
+    throw new SlimExit(EXIT_FAIL, `remote PR head ${remote.head} does not match ${accepted.branch}`);
+  }
+  if (remote.headSha !== accepted.sha) {
+    throw new SlimExit(EXIT_FAIL, `remote PR head SHA does not match the Slim commit`);
+  }
+  if (!sortedEqual(remote.labels, [...accepted.labels])) {
+    throw new SlimExit(
+      EXIT_FAIL,
+      `remote PR labels [${remote.labels.join(", ")}] do not match [${accepted.labels.join(", ")}]`,
+    );
+  }
+  if (!sortedEqual(remote.files, accepted.files)) {
+    throw new SlimExit(
+      EXIT_FAIL,
+      `remote PR files [${remote.files.map(posix).join(", ")}] do not match [${accepted.files.map(posix).join(", ")}]`,
+    );
+  }
+}
+
+export function parsePullRequestNumber(url: string): number {
+  const m = url.trim().match(/\/pull\/(\d+)/);
+  if (!m?.[1]) {
+    throw new SlimExit(EXIT_FAIL, `cannot parse pull request number from ${url}`);
+  }
+  return Number(m[1]);
 }

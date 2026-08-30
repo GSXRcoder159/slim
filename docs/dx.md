@@ -29,7 +29,7 @@ Confirmations: none. `--no-pr` skips GitHub. CI is non-interactive.
 | Code | When |
 | --- | --- |
 | 0 | Success. `watch`: slice not exposed. `check`: all standing tests + envelope match. `scan`: always 0 unless usage/internal (findings are data). |
-| 1 | Operational failure: tests failed, malformed/oversize traces, envelope drifted, slice **exposed** or **uncertain** on an advisory, replace fuzz mismatch, branch collision, git commit/push/PR failed. |
+| 1 | Operational failure: tests failed, malformed/oversize traces, envelope drifted, slice **exposed** or **uncertain** on an advisory, replace fuzz mismatch, branch collision, git commit/push/PR/reconcile failed. |
 | 2 | Usage. Help was printed to stderr. |
 | 3 | Refused / envelope too wide / native / network / fs. Human-readable error already on stderr. |
 | 4 | Environment: Node too old, network required but failed (OSV/npm), `gh` and `GITHUB_TOKEN` both missing when a PR is requested, no origin/unparseable GitHub remote, no `package.json`, Jest/no-runner/missing hook/timeout when traces are required. |
@@ -115,7 +115,7 @@ Steps, in order, stop on first failure. After the first project write, failure *
 7. Write slice (and a `.cjs` companion when CJS `require()` sites exist). Rewrite imports/requires to the slice. Remove only the replaced package and family siblings that have import sites in this envelope.
 8. Refresh the lockfile with `npm install` / `pnpm install` / `yarn install` / `bun install`. Package-manager caches go to a temp dir (`os.tmpdir()/slim-pm-cache`); Slim does not create a store inside the target unless the project already had one. Failure → exit 1 (or 4 if the package manager is missing) and rollback, then a frozen install to restore `node_modules`. `--no-install` skips this. `--keep-original` skips package.json and lockfile changes.
 9. Write evidence (including revert steps), standing tests, manifest, envelope. Run merge-gate (`testCommand` or `scripts.test`). Failure → rollback.
-10. Unless `--no-pr`: after merge-gate, create `slim/<fileBase(pkg)>` from `HEAD` without switching the user's branch or writing `.git/index`. `fileBase` strips a leading `@` and replaces `/` with `-` (`lodash` → `slim/lodash`, `@scope/name` → `slim/scope-name`). Cross-check title, body (package, versions, envelope/evidence/module digests, fuzz stats), files, base, head, and labels (`slim`, `slim:replace`) against the accepted evidence before any push. Commit only Slim files, `git push` without `--force`, then `gh pr create --repo --base --head --label` or GitHub REST with `GITHUB_TOKEN`/`GH_TOKEN`. PRs target origin (not a fork parent). Local or remote branch collision, commit failure, push failure, and `gh`/REST failure are nonzero; the user's branch and index stay recoverable. Push failure deletes the local Slim branch; PR API failure also deletes the remote Slim branch. No `gh` and no token → exit 4 after local writes, with no git refs created. `--no-pr` performs no branch, commit, push, or network.
+10. Unless `--no-pr`: after merge-gate, create `slim/<fileBase(pkg)>` from `HEAD` without switching the user's branch or writing `.git/index`. `fileBase` strips a leading `@` and replaces `/` with `-` (`lodash` → `slim/lodash`, `@scope/name` → `slim/scope-name`). Resolve a 64-hex candidate artifact digest (`CreatePrOpts.artifactDigest`, else `SLIM_NPM_DIGEST`, else the running Slim stamp `sha256`) and append `Candidate artifact digest` to the PR body. Cross-check title, body (package, versions, envelope/evidence/module digests, candidate artifact digest, fuzz stats), files, detected origin base, head, parent, and labels (`slim`, `slim:replace`) against the accepted transaction before any push. Commit only Slim files, `git push` without `--force`, then `gh pr create --repo --base --head --label` or GitHub REST with `GITHUB_TOKEN`/`GH_TOKEN`. Independently `git fetch` the remote Slim ref into `refs/slim-verify/<pid>` (then delete that ref) and GET the PR (`GET /pulls/{n}` when a token is set, else `gh pr view --json`). Any mismatch in title, body, labels, files, base, head, parent, or SHAs is nonzero: close the PR and delete the Slim branch locally and on origin. PRs target origin (not a fork parent). Local or remote branch collision, commit failure, push failure, `gh`/REST failure, and reconcile mismatch are nonzero; the user's branch and index stay recoverable. Push failure deletes the local Slim branch; PR API or reconcile failure also closes the PR and deletes the remote Slim branch. No `gh` and no token → exit 4 after local writes, with no git refs created. `--no-pr` performs no branch, commit, push, or network.
 
 Default without `--no-pr`: attempt a PR after a successful merge-gate. There is no TTY confirm and no `--yes` / `--no-commit` flag.
 
@@ -177,7 +177,7 @@ Usage:
       --no-install       Rewrite package.json but skip lockfile refresh
       --out <dir>        Default: src/slim. Refuse unowned output files and a symlinked --out.
 
-Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate/git commit/push/PR failed.
+Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate/git commit/push/PR/reconcile failed.
       3 Slim refuses this envelope. 4 missing gh and GITHUB_TOKEN when PR required, missing origin, or missing package manager.
 
 Example:
@@ -410,7 +410,7 @@ Consulted OSV/npm `sources.*.status` values: `success`, `unavailable` (HTTP/netw
 
 Live packed `slim upstream` proof for advertised sources is `SLIM_UPSTREAM_LIVE=1`. Missing or stale `externalService.osv` / `externalService.npm-registry` receipts fail `npm run qualify`; they do not vanish from `npm test`. Set `SLIM_RECEIPTS_DIR` to write those receipts (commit + tarball digest).
 
-Live packed `slim replace` PR proof is `SLIM_PR_LIVE=1` (GitHub CLI with repo create/push/PR plus `delete_repo`, or `SLIM_PR_TRANSFER_OWNER` to transfer leftovers). Missing or stale `externalService.github` receipts fail `npm run qualify`. Unset `SLIM_PR_LIVE` still registers the live test (it returns; it does not skip off the suite).
+Live packed `slim replace` PR proof is `SLIM_PR_LIVE=1` (GitHub CLI with repo create/push/PR plus `delete_repo`, or `SLIM_PR_TRANSFER_OWNER` to transfer leftovers). The packed CLI binds `SLIM_NPM_DIGEST` into the PR body, independently fetches the remote Slim ref and GET the PR, then the live test closes the PR and deletes or transfers the disposable repo. The `externalService.github` receipt names commit, tarball digest, `pr=<url>`, and `cleanup=closed+deleted` (or `closed+transferred:<owner>`). Missing or stale receipts fail `npm run qualify`. Unset `SLIM_PR_LIVE` still registers the live test (it returns; it does not skip off the suite).
 
 GitHub Advisory GraphQL and OSV `querybatch` are later-scope; OSV already mirrors GHSA ids. No NVD key. No Slim servers.
 

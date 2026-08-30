@@ -173,7 +173,9 @@ test("githubReceipt is schema-valid with github service identity", () => {
     npmDigest: NPM,
     startedAt: new Date("2026-08-27T14:00:00.000Z"),
     endedAt: new Date("2026-08-27T14:00:01.000Z"),
-    log: "https://github.com/example/slim-pr/pull/1",
+    log: "https://github.com/example/slim-pr/pull/1:closed+deleted",
+    prUrl: "https://github.com/example/slim-pr/pull/1",
+    cleanup: "closed+deleted",
   });
   const parsed = parseReceipt(rec);
   assert.equal(parsed.checkId, "test/github/pr-live.test.ts");
@@ -181,7 +183,23 @@ test("githubReceipt is schema-valid with github service identity", () => {
   assert.equal(parsed.service, "github");
   assert.equal(parsed.provider, null);
   assert.equal(parsed.outcome, "pass");
+  assert.match(parsed.environment ?? "", /pr=https:\/\/github.com\/example\/slim-pr\/pull\/1/);
+  assert.match(parsed.environment ?? "", /cleanup=closed\+deleted/);
   assert.doesNotMatch(JSON.stringify(parsed), /token|ghp_|github_pat/i);
+
+  const transferred = parseReceipt(
+    githubReceipt({
+      fixture: "ms",
+      commit: COMMIT,
+      npmDigest: NPM,
+      startedAt: new Date("2026-08-27T14:00:00.000Z"),
+      endedAt: new Date("2026-08-27T14:00:01.000Z"),
+      log: "https://github.com/example/slim-pr/pull/1:closed+transferred:gsxr-slim-sandbox",
+      prUrl: "https://github.com/example/slim-pr/pull/1",
+      cleanup: "closed+transferred:gsxr-slim-sandbox",
+    }),
+  );
+  assert.match(transferred.environment ?? "", /cleanup=closed\+transferred:gsxr-slim-sandbox/);
 });
 
 test("qualify missing externalService.osv receipt fails closed", () => {

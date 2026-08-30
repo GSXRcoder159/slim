@@ -42,7 +42,7 @@ Usage:
       --template-only    Catalog only, no LLM
       --max-attempts <n> LLM repair loop (default 3)
 
-Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate/repair exhausted/git commit/push/PR.
+Exit: 0 wrote (and PR opened if requested). 1 tests/fuzz/lockfile/merge-gate/repair exhausted/git commit/push/PR/reconcile.
       3 Slim refuses this envelope, or no catalog and no LLM key. 4 missing gh and
       GITHUB_TOKEN when a PR is requested, missing origin, LLM HTTP/timeout,
       missing package manager, or traces required.
