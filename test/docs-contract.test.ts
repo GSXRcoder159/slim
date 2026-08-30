@@ -137,6 +137,7 @@ test("CI matrix is OS × Node 22.18 and 24", () => {
   assert.match(ci, /"22\.18"/);
   assert.match(ci, /"24"/);
   assert.match(ci, /fail-fast:\s*false/);
+  assert.match(ci, /timeout-minutes:\s*60/);
   assert.match(ci, /emit-local-receipts\.ts --only osNode --pack --commit/);
   assert.match(ci, /qualification-bundle/);
   assert.match(ci, /pack-qualify-bundle\.ts/);
