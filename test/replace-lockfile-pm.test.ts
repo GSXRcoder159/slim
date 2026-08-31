@@ -90,8 +90,22 @@ function pmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
 function installPmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env = pmEnv(extra);
   delete env.GITHUB_ACTIONS;
+  env.CI = "true";
   return env;
 }
+
+test("lockfile-pm test installs set CI so pnpm can purge node_modules without a TTY", () => {
+  const prev = process.env.GITHUB_ACTIONS;
+  process.env.GITHUB_ACTIONS = "true";
+  try {
+    const env = installPmEnv();
+    assert.equal(env.GITHUB_ACTIONS, undefined);
+    assert.equal(env.CI, "true");
+  } finally {
+    if (prev === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = prev;
+  }
+});
 
 function which(bin: string): boolean {
   const probe = process.platform === "win32" ? ["cmd", "/c", "where", bin] : ["sh", "-c", `command -v ${bin}`];
@@ -233,19 +247,32 @@ function runReplace(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
   assert.equal(check.status, 0, `${kind} check: ${check.stderr}\n${check.stdout}`);
 }
 
+function installArgs(kind: "npm" | "pnpm" | "yarn" | "bun"): string[] {
+  if (kind === "pnpm") {
+    return ["install", "--no-frozen-lockfile", "--config.confirmModulesPurge=false"];
+  }
+  return ["install"];
+}
+
+test("pnpm lockfile-pm helper install disables frozen-lockfile after revert", () => {
+  assert.ok(installArgs("pnpm").includes("--no-frozen-lockfile"));
+  assert.ok(installArgs("pnpm").some((a) => /confirmModulesPurge=false/i.test(a)));
+  assert.deepEqual(installArgs("npm"), ["install"]);
+});
+
 function revertAndReinstall(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
   const evidence = JSON.parse(readFileSync(join(dir, ".slim", "ms", "evidence.json"), "utf8")) as {
     revert: RevertPlan;
   };
   applyRevert(dir, evidence.revert);
-  const inst = spawnSync(pmBin(kind), ["install"], {
+  const inst = spawnSync(pmBin(kind), installArgs(kind), {
     cwd: dir,
     encoding: "utf8",
     env: installPmEnv(),
     timeout: 120_000,
     ...cmdShimSpawnOpts(pmBin(kind)),
   });
-  assert.equal(inst.status, 0, `${kind} revert install: ${inst.stderr}`);
+  assert.equal(inst.status, 0, `${kind} revert install: ${inst.stderr}\n${inst.stdout}`);
   const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as {
     dependencies?: Record<string, string>;
   };
@@ -253,7 +280,7 @@ function revertAndReinstall(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"):
 }
 
 function installKind(dir: string, kind: "npm" | "pnpm" | "yarn" | "bun"): void {
-  const inst = spawnSync(pmBin(kind), ["install"], {
+  const inst = spawnSync(pmBin(kind), installArgs(kind), {
     cwd: dir,
     encoding: "utf8",
     env: installPmEnv(),
