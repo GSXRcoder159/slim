@@ -22,6 +22,7 @@ const LOCK_ROOT_ENV = "SLIM_DIST_LOCK_ROOT";
 const LOCK_PID_ENV = "SLIM_DIST_LOCK_PID";
 const lockNest = new Map();
 const lockExit = new Map();
+const LOCK_WAIT_MS = 600_000;
 
 function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
@@ -37,22 +38,46 @@ function pidAlive(pid) {
   }
 }
 
+function lockOwnedBy(lockPath, pid) {
+  try {
+    return pidAlive(pid) && Number(readFileSync(lockPath, "utf8").trim()) === pid;
+  } catch {
+    return false;
+  }
+}
+
 function acquireLockFile(lockPath) {
-  const deadline = Date.now() + 120_000;
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  let stale = "";
+  let staleSince = 0;
   while (Date.now() < deadline) {
     try {
       writeFileSync(lockPath, `${process.pid}\n`, { flag: "wx" });
       return;
     } catch (err) {
       if (err?.code !== "EEXIST") throw err;
+      let raw;
       try {
-        const pid = Number(readFileSync(lockPath, "utf8").trim());
-        const age = Date.now() - statSync(lockPath).mtimeMs;
-        if (!pidAlive(pid) || age > 180_000) unlinkSync(lockPath);
-        else sleepSync(50);
+        raw = readFileSync(lockPath, "utf8").trim();
       } catch {
         sleepSync(50);
+        continue;
       }
+      const pid = /^[1-9][0-9]*$/.test(raw) ? Number(raw) : 0;
+      if (!pidAlive(pid)) {
+        if (staleSince === 0 || stale !== raw) {
+          stale = raw;
+          staleSince = Date.now();
+        } else if (Date.now() - staleSince >= 1_000) {
+          throw new Error(
+            `slim build: stale ${LOCK_NAME} owned by dead pid ${pid}; remove it after confirming no build is running`,
+          );
+        }
+      } else {
+        stale = "";
+        staleSince = 0;
+      }
+      sleepSync(50);
     }
   }
   throw new Error(`slim build: timed out waiting for ${LOCK_NAME}`);
@@ -60,7 +85,7 @@ function acquireLockFile(lockPath) {
 
 function releaseLockFile(lockPath) {
   try {
-    unlinkSync(lockPath);
+    if (lockOwnedBy(lockPath, process.pid)) unlinkSync(lockPath);
   } catch {
     /* lock already gone */
   }
@@ -70,8 +95,10 @@ function releaseLockFile(lockPath) {
 export function withDistLock(root, fn) {
   const absRoot = resolve(root);
   const lockPath = join(absRoot, LOCK_NAME);
+  const inheritedPid = Number(process.env[LOCK_PID_ENV]);
   const inherited =
-    process.env[LOCK_ROOT_ENV] === absRoot && pidAlive(Number(process.env[LOCK_PID_ENV]));
+    process.env[LOCK_ROOT_ENV] === absRoot &&
+    lockOwnedBy(lockPath, inheritedPid);
   if (inherited) return fn();
 
   const nested = lockNest.get(lockPath) ?? 0;

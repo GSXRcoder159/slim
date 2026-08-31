@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -10,12 +10,13 @@ import {
   renameSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { dirname, join, relative } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { hermeticPmEnv, spawnPm, cmdShimSpawnOpts } from "../src/rewrite/lockfile.ts";
 import { withRepoDistLock } from "./helpers/llm-replace.ts";
 
@@ -23,6 +24,23 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = join(ROOT, "dist");
 const STAMP = join(DIST, ".slim-build.json");
 const BUILD = join(ROOT, "scripts/build.mjs");
+
+function waitForPath(path: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    const poll = () => {
+      if (existsSync(path)) return resolve();
+      if (Date.now() >= deadline) return reject(new Error(`timed out waiting for ${path}`));
+      setTimeout(poll, 20);
+    };
+    poll();
+  });
+}
+
+function waitForChild(child: ReturnType<typeof spawn>): Promise<number | null> {
+  if (child.exitCode !== null) return Promise.resolve(child.exitCode);
+  return new Promise((resolve) => child.once("close", resolve));
+}
 
 function walkFiles(dir: string, acc: string[] = []): string[] {
   if (!existsSync(dir)) return acc;
@@ -97,6 +115,86 @@ function stampOf(root = ROOT): {
     actionSha256?: string;
   };
 }
+
+test("an old live dist lock is never stolen by a contender", { timeout: 15_000 }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "slim-live-lock-"));
+  const held = join(tmp, "held");
+  const started = join(tmp, "started");
+  const entered = join(tmp, "entered");
+  const lock = join(tmp, ".slim-build.lock");
+  const buildUrl = JSON.stringify(pathToFileURL(BUILD).href);
+  const root = JSON.stringify(tmp);
+  let holder: ReturnType<typeof spawn> | undefined;
+  let contender: ReturnType<typeof spawn> | undefined;
+  try {
+    holder = spawn(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `import { writeFileSync } from "node:fs"; import { withDistLock } from ${buildUrl}; withDistLock(${root}, () => { writeFileSync(${JSON.stringify(held)}, "1"); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5000); });`,
+    ]);
+    await waitForPath(held);
+    const old = new Date(Date.now() - 600_000);
+    utimesSync(lock, old, old);
+    contender = spawn(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `import { writeFileSync } from "node:fs"; import { withDistLock } from ${buildUrl}; writeFileSync(${JSON.stringify(started)}, "1"); withDistLock(${root}, () => writeFileSync(${JSON.stringify(entered)}, "1"));`,
+    ]);
+    await waitForPath(started);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(existsSync(entered), false);
+    assert.equal(await waitForChild(holder), 0);
+    assert.equal(await waitForChild(contender), 0);
+    assert.equal(existsSync(entered), true);
+  } finally {
+    if (holder?.exitCode === null) holder.kill();
+    if (contender?.exitCode === null) contender.kill();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("a partially written dist lock is treated as contention", { timeout: 10_000 }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), "slim-partial-lock-"));
+  const ready = join(tmp, "ready");
+  const entered = join(tmp, "entered");
+  const lock = join(tmp, ".slim-build.lock");
+  const buildUrl = JSON.stringify(pathToFileURL(BUILD).href);
+  const root = JSON.stringify(tmp);
+  let holder: ReturnType<typeof spawn> | undefined;
+  let contender: ReturnType<typeof spawn> | undefined;
+  try {
+    holder = spawn(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `import { unlinkSync, writeFileSync } from "node:fs"; writeFileSync(${JSON.stringify(lock)}, ""); writeFileSync(${JSON.stringify(ready)}, "1"); setTimeout(() => writeFileSync(${JSON.stringify(lock)}, String(process.pid)), 200); setTimeout(() => unlinkSync(${JSON.stringify(lock)}), 1000);`,
+    ]);
+    await waitForPath(ready);
+    contender = spawn(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `import { writeFileSync } from "node:fs"; import { withDistLock } from ${buildUrl}; withDistLock(${root}, () => writeFileSync(${JSON.stringify(entered)}, "1"));`,
+    ]);
+    assert.equal(await waitForChild(holder), 0);
+    assert.equal(await waitForChild(contender), 0);
+    assert.equal(existsSync(entered), true);
+  } finally {
+    if (holder?.exitCode === null) holder.kill();
+    if (contender?.exitCode === null) contender.kill();
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("a dead dist lock fails closed instead of being stolen", { timeout: 10_000 }, () => {
+  const tmp = mkdtempSync(join(tmpdir(), "slim-dead-lock-"));
+  try {
+    writeFileSync(join(tmp, ".slim-build.lock"), "999999999\n");
+    const result = spawnSync(process.execPath, [BUILD, tmp], { encoding: "utf8", timeout: 5_000 });
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stderr}${result.stdout}`, /stale \.slim-build\.lock.*dead pid/i);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
 
 test("build wipes stale dist outputs after a source module is removed", { timeout: 120_000 }, () => {
   const tmp = mkdtempSync(join(tmpdir(), "slim-orphan-src-"));
