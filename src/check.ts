@@ -9,6 +9,7 @@ import { analyzePackage } from "./analyze/index.ts";
 import { specifierMatches, wantedSpecifiers } from "./analyze/reexports.ts";
 import { withLocalBinPath } from "./replace.ts";
 import { resolveScriptFile, scriptSpawnOpts } from "./rewrite/lockfile.ts";
+import { toPosixPath } from "./rewrite/paths.ts";
 import { JSON_SCHEMA_VERSION, statusFromExit, writeJson } from "./json.ts";
 import { assertDocument, readDocument } from "./schema/documents.ts";
 import { diffEnvelope, type EnvelopeDrift } from "./envelope/drift.ts";
@@ -235,6 +236,7 @@ function originalPackageImports(root: string, files: string[], pkg: string): Env
   const drift: EnvelopeDrift[] = [];
   for (const file of files) {
     if (!existsSync(file)) continue;
+    const fileRel = toPosixPath(relative(root, file));
     const text = readFileSync(file, "utf8");
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
     const visit = (node: import("typescript").Node): void => {
@@ -250,7 +252,7 @@ function originalPackageImports(root: string, files: string[], pkg: string): Env
         if (!typeOnly && specifierMatches(spec, wanted) && !spec.startsWith(".") && !spec.startsWith("/")) {
           drift.push({
             kind: "import",
-            detail: `${relative(root, file)} imports original package ${spec}`,
+            detail: `${fileRel} imports original package ${spec}`,
           });
         }
       } else if (
@@ -267,7 +269,7 @@ function originalPackageImports(root: string, files: string[], pkg: string): Env
         ) {
           drift.push({
             kind: "import",
-            detail: `${relative(root, file)} re-exports original package ${spec}`,
+            detail: `${fileRel} re-exports original package ${spec}`,
           });
         }
       } else if (ts.isCallExpression(node)) {
@@ -279,7 +281,7 @@ function originalPackageImports(root: string, files: string[], pkg: string): Env
           if (specifierMatches(spec, wanted) && !spec.startsWith(".") && !spec.startsWith("/")) {
             drift.push({
               kind: "import",
-              detail: `${relative(root, file)} loads original package ${spec}`,
+              detail: `${fileRel} loads original package ${spec}`,
             });
           }
         }
