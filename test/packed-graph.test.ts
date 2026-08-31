@@ -41,7 +41,7 @@ function run(
 
 function packTarball(): { dir: string; tarball: string } {
   mkdirSync(TMP, { recursive: true });
-  execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: hermeticPmEnv() });
+  execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 240_000, env: hermeticPmEnv() });
   const dir = mkdtempSync(join(TMP, "slim-graph-pack-"));
   return { dir, tarball: npmPackTo(dir) };
 }

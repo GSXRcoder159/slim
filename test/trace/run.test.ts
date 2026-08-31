@@ -343,7 +343,7 @@ test("missing compiled hook fails runTraces closed", { timeout: 90_000 }, async 
   const dest = mkdtempSync(join(tmpdir(), "slim-run-nohook-"));
   withRepoDistLock(() => {
     if (!existsSync(join(ROOT, "dist", "trace", "match.js"))) {
-      execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+      execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 240_000 });
     }
     cpSync(join(ROOT, "dist"), join(dest, "dist"), { recursive: true });
   });

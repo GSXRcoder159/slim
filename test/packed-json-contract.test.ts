@@ -26,7 +26,7 @@ function run(args: string[], cwd: string): { status: number; stdout: string; std
 
 function packAndInstall(): { tmp: string; packDir: string; slimJs: string; proj: string } {
   if (!existsSync(join(ROOT, "dist", ".slim-build.json"))) {
-    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 240_000 });
   }
   const packDir = mkdtempSync(join(tmpdir(), "slim-json-pack-"));
   const tarball = npmPackTo(packDir);

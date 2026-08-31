@@ -141,7 +141,7 @@ function assertHygiene(root: string, pkg: string): void {
 
 before(() => {
   if (!existsSync(join(ROOT, "dist", ".slim-build.json"))) {
-    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 240_000 });
   }
   packDir = mkdtempSync(join(TMP, "slim-p4-pack-"));
   tarball = npmPackTo(packDir);

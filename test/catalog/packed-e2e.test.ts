@@ -380,7 +380,7 @@ test("packed CLI replace → standing tests → slim check → revert for every 
   execPm("npm", ["run", "build"], {
     cwd: ROOT,
     encoding: "utf8",
-    timeout: 60_000,
+    timeout: 240_000,
     env: { ...process.env, COPYFILE_DISABLE: "1" },
   });
   mkdirSync(TMP, { recursive: true });

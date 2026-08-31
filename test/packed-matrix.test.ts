@@ -41,7 +41,7 @@ function run(
 function packTarball(): { dir: string; tarball: string } {
   mkdirSync(TMP, { recursive: true });
   if (!existsSync(join(ROOT, "dist", ".slim-build.json"))) {
-    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 240_000 });
   }
   const dir = mkdtempSync(join(TMP, "slim-matrix-pack-"));
   return { dir, tarball: npmPackTo(dir) };

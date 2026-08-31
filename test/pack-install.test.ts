@@ -46,11 +46,11 @@ function run(
 
 function ensureDist(): void {
   if (!existsSync(join(ROOT, "dist", ".slim-build.json"))) {
-    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 60_000 });
+    execPm("npm", ["run", "build"], { cwd: ROOT, encoding: "utf8", timeout: 240_000 });
   }
 }
 
-test("packed slim tarball npm install is not capped at 60s or 120s", () => {
+test("packed installs and root builds allow qualification contention", () => {
   assert.ok(PACKED_NPM_INSTALL_MS >= 300_000);
   const hits: string[] = [];
   const stack = [join(ROOT, "test")];
@@ -66,6 +66,9 @@ test("packed slim tarball npm install is not capped at 60s or 120s", () => {
       if (!name.endsWith(".ts")) continue;
       const text = readFileSync(p, "utf8");
       if (/install",\s*(?:tarball|packed\.tarball)[\s\S]{0,180}timeout:\s*(60_000|120_000)/.test(text)) {
+        hits.push(relative(ROOT, p).replace(/\\/g, "/"));
+      }
+      if (/\["run",\s*"build"\][\s\S]{0,180}timeout:\s*60_000/.test(text)) {
         hits.push(relative(ROOT, p).replace(/\\/g, "/"));
       }
     }
