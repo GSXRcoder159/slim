@@ -53,13 +53,16 @@ function runBuild(cwd: string, extraArgs: string[] = []): {
   stdout: string;
   stderr: string;
 } {
-  const r = spawnSync(process.execPath, [BUILD, ...extraArgs], {
-    cwd,
-    encoding: "utf8",
-    timeout: 120_000,
-    env: { ...process.env },
-  });
-  return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  const run = () => {
+    const r = spawnSync(process.execPath, [BUILD, ...extraArgs], {
+      cwd,
+      encoding: "utf8",
+      timeout: 120_000,
+      env: { ...process.env },
+    });
+    return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+  };
+  return cwd === ROOT ? withRepoDistLock(run) : run();
 }
 
 function parseNpmJson(text: string): unknown {
@@ -369,9 +372,9 @@ test("qualification commands can run twice without dirtying tracked files", { ti
   for (let i = 0; i < 2; i++) {
     const built = runBuild(ROOT);
     assert.equal(built.status, 0, built.stderr);
-    const pack = npmJson(["pack", "--dry-run"]);
+    const pack = withRepoDistLock(() => npmJson(["pack", "--dry-run"]));
     assert.equal(pack.status, 0, pack.stderr);
-    const publish = npmJson(["publish", "--dry-run"]);
+    const publish = withRepoDistLock(() => npmJson(["publish", "--dry-run"]));
     if (publish.status !== 0) {
       assert.match(`${publish.stdout}\n${publish.stderr}`, /cannot publish over the previously published versions/i);
     }

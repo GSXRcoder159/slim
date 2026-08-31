@@ -119,7 +119,7 @@ type Pkg = {
   repository?: { url?: unknown } | unknown;
   bugs?: { url?: unknown } | unknown;
   homepage?: unknown;
-  publishConfig?: { registry?: unknown };
+  publishConfig?: { registry?: unknown; access?: unknown };
 };
 
 function readPackage(root: string): Pkg {
@@ -160,6 +160,9 @@ export function assertPackageIdentity(root: string): void {
     throw new SlimExit(EXIT_REFUSED, "package.json publishConfig.registry is missing");
   }
   assertRegistry(String(published));
+  if (pkg.publishConfig?.access !== "public") {
+    throw new SlimExit(EXIT_REFUSED, "package.json publishConfig.access must be public");
+  }
 }
 
 export function assertPublishRef(opts: {

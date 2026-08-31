@@ -11,7 +11,8 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { assertSafeWrite } from "./paths.ts";
+import { EXIT_USAGE, SlimExit } from "../exit.ts";
+import { pathEscapesRoot, assertSafeWrite } from "./paths.ts";
 
 type Snap =
   | { kind: "absent" }
@@ -32,31 +33,64 @@ function unlinkPath(path: string): void {
   unlinkSync(path);
 }
 
+function assertTxnPath(root: string, path: string): void {
+  if (pathEscapesRoot(root, path)) {
+    throw new SlimExit(EXIT_USAGE, `unsafe transaction path escapes the project: ${path}`);
+  }
+}
+
+function verify(path: string, snap: Snap): void {
+  let st;
+  try {
+    st = lstatSync(path);
+  } catch (err) {
+    if (isEnoent(err) && snap.kind === "absent") return;
+    throw err;
+  }
+  if (snap.kind === "absent") throw new Error(`rollback left path in place: ${path}`);
+  if (snap.kind === "symlink") {
+    if (!st.isSymbolicLink() || readlinkSync(path) !== snap.target) {
+      throw new Error(`rollback did not restore symlink: ${path}`);
+    }
+    return;
+  }
+  if (
+    !st.isFile() ||
+    !readFileSync(path).equals(snap.bytes) ||
+    (process.platform !== "win32" && (st.mode & 0o7777) !== (snap.mode & 0o7777))
+  ) {
+    throw new Error(`rollback did not restore file: ${path}`);
+  }
+}
+
 function restore(path: string, snap: Snap): void {
   if (snap.kind === "absent") {
     try {
       unlinkPath(path);
-    } catch {
-      /* keep going */
+    } catch (err) {
+      if (!isEnoent(err)) throw err;
     }
+    verify(path, snap);
     return;
   }
   mkdirSync(dirname(path), { recursive: true });
   try {
     unlinkPath(path);
-  } catch {
-    /* keep going */
+  } catch (err) {
+    if (!isEnoent(err)) throw err;
   }
   if (snap.kind === "symlink") {
     symlinkSync(snap.target, path);
+    verify(path, snap);
     return;
   }
   writeFileSync(path, snap.bytes);
   try {
     chmodSync(path, snap.mode);
   } catch {
-    /* windows / unsupported mode */
+    // Windows may not preserve POSIX mode bits.
   }
+  verify(path, snap);
 }
 
 /** Snapshot mutated paths; restore kind, bytes, and link target on rollback. First snapshot wins. */
@@ -73,6 +107,7 @@ export class MutationTxn {
 
   snapshot(absPath: string): void {
     const path = resolve(absPath);
+    assertTxnPath(this.root, path);
     if (this.originals.has(path)) return;
     let st;
     try {
@@ -142,22 +177,27 @@ export class MutationTxn {
 
   rollback(): void {
     if (this.committed) return;
+    const failures: unknown[] = [];
     for (const [path, snap] of [...this.originals].reverse()) {
       try {
+        assertTxnPath(this.root, path);
         restore(path, snap);
-      } catch {
-        /* keep going */
+      } catch (err) {
+        failures.push(err);
       }
     }
     for (const dir of [...this.createdDirs].reverse()) {
       try {
         rmdirSync(dir);
-      } catch {
-        /* not empty or gone */
+      } catch (err) {
+        if (!isEnoent(err)) failures.push(err);
       }
     }
     this.originals.clear();
     this.createdDirs.length = 0;
+    if (failures.length) {
+      throw new Error(`transaction rollback failed: ${failures.map((e) => String(e)).join("; ")}`);
+    }
   }
 }
 

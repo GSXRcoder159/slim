@@ -63,7 +63,8 @@ export function createPool(opts: {
   projectRoot?: string;
   timeoutMs?: number;
 }): WorkerPool {
-  if (opts.workers > 1) return createThreadPool(opts);
+  // A worker is required even for workers=1 so a tight loop remains killable.
+  if (opts.workers >= 1) return createThreadPool(opts);
   return createInProcessPool(opts);
 }
 

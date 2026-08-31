@@ -22,6 +22,7 @@ const { values } = parseArgs({
     "npm-digest": { type: "string" },
     "action-digest": { type: "string" },
     "workflow-run": { type: "string" },
+    "qualification-run": { type: "string" },
     root: { type: "string" },
     branch: { type: "string" },
     repository: { type: "string" },
@@ -38,6 +39,8 @@ const npmDigest = values["npm-digest"] ?? process.env.SLIM_NPM_DIGEST ?? null;
 const actionDigest = values["action-digest"] ?? process.env.SLIM_ACTION_DIGEST ?? null;
 const workflowRun =
   values["workflow-run"] ?? process.env.SLIM_WORKFLOW_RUN ?? process.env.GITHUB_RUN_ID ?? null;
+const qualificationRun =
+  values["qualification-run"] ?? process.env.SLIM_QUALIFICATION_RUN ?? process.env.GITHUB_RUN_ID ?? null;
 if (!npmDigest || !SHA256.test(npmDigest)) {
   process.stderr.write("qualify-handoff: --npm-digest (64-char sha256) is required\n");
   process.exit(EXIT_USAGE);
@@ -48,6 +51,10 @@ if (!actionDigest || !SHA256.test(actionDigest)) {
 }
 if (!workflowRun) {
   process.stderr.write("qualify-handoff: --workflow-run is required\n");
+  process.exit(EXIT_USAGE);
+}
+if (!qualificationRun) {
+  process.stderr.write("qualify-handoff: --qualification-run is required\n");
   process.exit(EXIT_USAGE);
 }
 
@@ -65,6 +72,7 @@ try {
     npmDigest,
     actionDigest,
     workflowRun,
+    qualificationRun,
     branch: values.branch,
     repository: values.repository,
     entryCount: inventory.entries.length,

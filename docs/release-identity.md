@@ -13,12 +13,12 @@ Approved GitHub, published Action, and npm identity. The CLI bin remains `slim`.
 | Advertised Action pin | `GSXRcoder159/slim/action/{check,bloat,upstream}@v1` |
 | npm package name | `@gsxrcoder159/slim` |
 | npm version | `0.1.0` |
-| npm registry | `https://registry.npmjs.org` |
+| npm registry | `https://registry.npmjs.org` with public access |
 | Install | `npm i -g @gsxrcoder159/slim` then `slim`, or `npx @gsxrcoder159/slim` |
 | unpkg `$id` prefix | `https://unpkg.com/@gsxrcoder159/slim/` |
 
 Package metadata, documentation, examples, release identity checks, and Action receipts must use this identity. Dogfood workflows in this repository still run `npm run build` then `uses: ./action/*` because `dist/` is gitignored on the default branch. Published tags carry the compiled Action tree.
 
-Release publishes only the tarball from a downloaded complete `qualification-bundle` (receipts stay gitignored). That artifact comes from a successful `qualify.yml` run for the same commit, not from the osNode-only CI seed bundle. `--workflow-run` is the CI run id recorded in `qualify-report.json`. The release job does not build or pack. `workflow_dispatch` rehearses by default (`rehearse=true`). Publish from dispatch is allowed only from `main`. Tag push publish requires the tag to equal `v${version}`.
+Release publishes only the tarball from a downloaded complete `qualification-bundle` (receipts stay gitignored). That artifact comes from a successful `qualify.yml` run for the same commit, not from the osNode-only CI seed bundle. `workflowRun` is the CI seed run id recorded in `qualify-report.json`; `qualificationRun` is the producing `qualify.yml` run id. The release job independently verifies the latter's workflow, repository, branch, conclusion, and head SHA before accepting the bundle. The release job does not build or pack. `workflow_dispatch` rehearses by default (`rehearse=true`). Publish from dispatch is allowed only from `main`. Tag push publish requires the tag to equal `v${version}`.
 
 Standard GitHub-hosted runners on this public repository do not consume private-repo Actions minutes. Larger runners are not used.

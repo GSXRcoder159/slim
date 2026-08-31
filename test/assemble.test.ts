@@ -150,6 +150,18 @@ test("assembled get+debounce+set+has pass the AST allowlist", () => {
   assert.equal(r.ok, true, r.errors.join("; "));
 });
 
+test("generated validator rejects computed and aliased escape hatches", () => {
+  const sources = [
+    'const k = "eval"; globalThis[k]("x");',
+    'const g = globalThis; const k = "eval"; g[k]("x");',
+    'Reflect.get(globalThis, "eval");',
+    'const cc = ({}).constructor.constructor; cc("x");',
+    'const p = ({}).__proto__; p.polluted = true;',
+    'const k = "setPrototypeOf"; Object[k]({}, null);',
+  ];
+  for (const source of sources) assert.equal(validateGenerated(ts, source).ok, false, source);
+});
+
 test("assemble finds camelCase catalog files for whatwg-url and mime-types", () => {
   const urlEnv: Envelope = {
     ...env(["URL", "URLSearchParams"]),

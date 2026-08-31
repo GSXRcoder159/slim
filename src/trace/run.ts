@@ -206,5 +206,69 @@ export function readTraceFile(path: string): {
 function isTraceEvent(v: unknown): v is TraceEvent {
   if (!v || typeof v !== "object") return false;
   const o = v as Record<string, unknown>;
-  return typeof o.symbol === "string" && Array.isArray(o.args);
+  if (typeof o.symbol !== "string" || !Array.isArray(o.args)) return false;
+  const refs = { count: 0 };
+  if (!o.args.every((arg) => isSlimValue(arg, refs))) return false;
+  if (o.thisArg !== undefined && !isSlimValue(o.thisArg, refs)) return false;
+  if (o.result !== undefined && !isSlimValue(o.result, refs)) return false;
+  if (o.argsAfter !== undefined) {
+    if (!Array.isArray(o.argsAfter) || !o.argsAfter.every((arg) => isSlimValue(arg, refs))) return false;
+  }
+  if (o.thisAfter !== undefined && !isSlimValue(o.thisAfter, refs)) return false;
+  return true;
+}
+
+function isSlimValue(v: unknown, refs: { count: number }): v is TraceEvent["args"][number] {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  if (typeof o.t !== "string") return false;
+  const stringList = (x: unknown): x is string[] => Array.isArray(x) && x.every((n) => typeof n === "string");
+  const numberList = (x: unknown): x is number[] => Array.isArray(x) && x.every((n) => typeof n === "number");
+  const nested = (x: unknown): x is TraceEvent["args"][number] => isSlimValue(x, refs);
+  if (["date", "err", "fn", "arr", "obj", "map", "set", "bytes", "promise", "regexp"].includes(o.t)) refs.count++;
+  switch (o.t) {
+    case "undef": case "null": case "promise": case "trunc":
+      return Object.keys(o).length === 1;
+    case "bool": return typeof o.v === "boolean";
+    case "num": return (typeof o.v === "number" && Number.isFinite(o.v)) ||
+      (o.v === "NaN" || o.v === "-0" || o.v === "Infinity" || o.v === "-Infinity");
+    case "str": return typeof o.v === "string" && (o.redacted === undefined || typeof o.redacted === "boolean");
+    case "bigint": return typeof o.v === "string";
+    case "date": return typeof o.v === "number" && Number.isFinite(o.v);
+    case "err": return typeof o.name === "string" && typeof o.message === "string" &&
+      (o.code === undefined || typeof o.code === "string" || typeof o.code === "number");
+    case "fn": return (o.name === undefined || typeof o.name === "string") &&
+      (o.length === undefined || (typeof o.length === "number" && Number.isInteger(o.length)));
+    case "regexp": return typeof o.source === "string" && typeof o.flags === "string";
+    case "bytes": return (o.kind === undefined || typeof o.kind === "string") &&
+      (o.len === undefined || (typeof o.len === "number" && Number.isInteger(o.len) && o.len >= 0)) &&
+      (o.b64 === undefined || typeof o.b64 === "string");
+    case "ref": return typeof o.id === "number" && Number.isInteger(o.id) && o.id >= 0 && o.id < refs.count;
+    case "arr": {
+      if (!Array.isArray(o.v) || !numberList(o.holes)) return false;
+      const values = o.v;
+      if (o.holes.some((n) => !Number.isInteger(n) || n < 0 || n >= values.length)) return false;
+      if (new Set(o.holes).size !== o.holes.length || !values.every(nested)) return false;
+      return true;
+    }
+    case "obj": {
+      if (!stringList(o.keys) || !o.v || typeof o.v !== "object" || Array.isArray(o.v)) return false;
+      const fields = o.v as Record<string, unknown>;
+      if (new Set(o.keys).size !== o.keys.length || o.keys.some((k) => !Object.prototype.hasOwnProperty.call(fields, k))) return false;
+      if (!o.keys.every((k) => nested(fields[k]))) return false;
+      if (o.proto !== undefined && !["null", "object", "other"].includes(String(o.proto))) return false;
+      if (o.toStr !== undefined && typeof o.toStr !== "boolean") return false;
+      if (o.str !== undefined && typeof o.str !== "string") return false;
+      if (o.json !== undefined && typeof o.json !== "string") return false;
+      if (o.syms !== undefined && (!Array.isArray(o.syms) || !o.syms.every((s) => {
+        if (!s || typeof s !== "object") return false;
+        const x = s as Record<string, unknown>;
+        return typeof x.k === "string" && (x.g === undefined || typeof x.g === "boolean") && nested(x.v);
+      }))) return false;
+      return true;
+    }
+    case "map": return Array.isArray(o.v) && o.v.every((p) => Array.isArray(p) && p.length === 2 && nested(p[0]) && nested(p[1]));
+    case "set": return Array.isArray(o.v) && o.v.every(nested);
+    default: return false;
+  }
 }

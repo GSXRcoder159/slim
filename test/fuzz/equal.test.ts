@@ -249,6 +249,31 @@ test("equalResults treats own __proto__ clone args as hardening (json/prototype 
   assert.equal(equalResults(stillMismatch, clean, { json: true }).ok, false);
 });
 
+test("hardening marker does not hide unrelated return or mutation mismatches", () => {
+  const returnMismatch = equalResults(
+    { ok: true, value: 1, argsAfter: [{}, "__proto__"] },
+    { ok: true, value: 2, argsAfter: [{}, "__proto__"] },
+  );
+  assert.equal(returnMismatch.ok, false);
+
+  const mutationMismatch = equalResults(
+    { ok: true, value: 1, argsAfter: [{ changed: true }, "__proto__"] },
+    { ok: true, value: 1, argsAfter: [{}, "__proto__"] },
+  );
+  assert.equal(mutationMismatch.ok, false);
+
+  const protoAndValueMismatch = equalResults(
+    {
+      ok: true,
+      value: Object.assign(Object.create({ polluted: true }), { a: 1 }),
+      argsAfter: [{ a: 1 }, "__proto__"],
+    },
+    { ok: true, value: { a: 2 }, argsAfter: [{ a: 2 }, "__proto__"] },
+    { prototype: true },
+  );
+  assert.equal(protoAndValueMismatch.ok, false);
+});
+
 test("equal ignores slim.protoTag copied by lodash.clone", () => {
   const tagged = { a: 1 };
   Object.defineProperty(tagged, Symbol.for("slim.protoTag"), {

@@ -209,6 +209,8 @@ test("qualify.yml is main-only dispatch and reuses the CI tarball", () => {
   assert.match(q, /qualify-handoff\.ts/);
   assert.match(q, /SLIM_LLM_LIVE/);
   assert.match(q, /SLIM_WORKFLOW_RUN/);
+  assert.match(q, /SLIM_QUALIFY_TARBALL/);
+  assert.match(q, /--qualification-run/);
   assert.doesNotMatch(q, /^\s+push:/m);
   assert.match(q, /--workflow=ci\.yml/);
 });
@@ -233,6 +235,12 @@ test("release.yml downloads the qualification bundle and never packs after ident
   assert.match(rel, /--bundle "\$\{RUNNER_TEMP\}\/qualification-bundle"/);
   assert.match(rel, /qualify\.yml/);
   assert.match(rel, /qualify-report\.json/);
+  assert.match(rel, /gh api/);
+  assert.match(rel, /actions\/runs/);
+  assert.match(rel, /\.path == "\.github\/workflows\/qualify\.yml"/);
+  assert.match(rel, /\.head_sha == \$sha/);
+  assert.match(rel, /\.repository\.full_name == \$repo/);
+  assert.match(rel, /--qualification-run/);
   assert.doesNotMatch(rel, /--workflow=ci\.yml/);
 });
 

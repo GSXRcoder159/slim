@@ -51,3 +51,16 @@ test("applyRevert restores the dep, deletes slice files, and splices specifiers"
   assert.equal(existsSync(join(root, "src", "slim", "ms.cjs")), false);
   assert.match(readFileSync(join(root, "src", "index.ts"), "utf8"), /from "ms"/);
 });
+
+test("applyRevert rolls back every mutation when a later rewrite is unsupported", () => {
+  const root = mkdtempSync(join(tmpdir(), "slim-revert-atomic-"));
+  mkdirSync(join(root, "src", "slim"), { recursive: true });
+  writeFileSync(join(root, "package.json"), JSON.stringify({ dependencies: {} }) + "\n");
+  writeFileSync(join(root, "src", "index.ts"), `import ms from "./slim/ms.ts";\n`);
+  writeFileSync(join(root, "src", "slim", "ms.ts"), "slice\n");
+  const before = readFileSync(join(root, "package.json"), "utf8");
+  assert.throws(() => applyRevert(root, { ...plan, rewrites: [{ ...plan.rewrites[0]!, replacement: "./missing.ts" }] }));
+  assert.equal(readFileSync(join(root, "package.json"), "utf8"), before);
+  assert.equal(readFileSync(join(root, "src", "index.ts"), "utf8"), `import ms from "./slim/ms.ts";\n`);
+  assert.equal(existsSync(join(root, "src", "slim", "ms.ts")), true);
+});

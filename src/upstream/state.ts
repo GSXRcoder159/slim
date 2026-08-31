@@ -16,6 +16,7 @@ import { EXIT_FAIL, SlimExit } from "../exit.ts";
 import { checkContracts } from "../generate/exports.ts";
 import { validateGenerated } from "../generate/validate.ts";
 import { loadTargetTypescript } from "../project.ts";
+import { parseSpecifier } from "../analyze/family.ts";
 import { assertSafeStatePath, toPosixPath } from "../rewrite/paths.ts";
 import { readDocument } from "../schema/documents.ts";
 
@@ -51,6 +52,25 @@ export interface ReplacementState {
   fatal: SlimExit | null;
   kind: ReplacementStateKind;
   paths: ReplacementPaths | null;
+}
+
+/** Validate a bare package request before it reaches Node's module resolver. */
+export function assertSafePackageSpecifier(raw: string): { name: string; subpath: string } {
+  const parsed = parseSpecifier(raw);
+  const parts = raw.split("/");
+  const validName = /^(?:@[a-z0-9][a-z0-9._~-]*\/)?[a-z0-9][a-z0-9._~-]*$/;
+  if (
+    !parsed ||
+    parsed.subpath !== "" ||
+    !validName.test(parsed.name) ||
+    !raw ||
+    raw.includes("\\") ||
+    raw.includes("\0") ||
+    parts.some((part) => !part || part === "." || part === ".." || /^[A-Za-z]:/.test(part))
+  ) {
+    throw new SlimExit(EXIT_FAIL, `unsafe package specifier refused: ${raw}`);
+  }
+  return parsed;
 }
 
 interface EvidenceDoc {
@@ -106,7 +126,8 @@ function generationDrift(ev: EvidenceDoc, pkg: string): EnvelopeDrift[] {
 }
 
 function installedOracleVersion(root: string, pkg: string): string | false | null {
-  const abs = join(root, "node_modules", ...pkg.split("/"), "package.json");
+  const { name } = assertSafePackageSpecifier(pkg);
+  const abs = join(root, "node_modules", ...name.split("/"), "package.json");
   if (!existsSync(abs)) return null;
   try {
     const json = JSON.parse(readFileSync(abs, "utf8")) as { version?: unknown };
@@ -136,6 +157,7 @@ export function resolveReplacementPaths(
   rec: ReplacementRecord | null | undefined,
   opts: ReplacementStateOpts,
 ): ReplacementPaths {
+  assertSafePackageSpecifier(pkg);
   refuseAbsolute(opts.outDir);
   const configured = opts.envelope?.trim();
   if (configured) refuseAbsolute(configured);

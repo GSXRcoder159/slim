@@ -116,7 +116,7 @@ export function walkUses(
     }
 
     if (ts.isNewExpression(node) && node.expression) {
-      const info = resolveCallee(ts, node.expression, localSet, wanted);
+      const info = resolveCallee(ts, node.expression, localSet, wanted, checker);
       if (info) {
         if (info.dynamic) {
           unknowns.push({
@@ -154,8 +154,8 @@ export function walkUses(
     }
 
     if (ts.isCallExpression(node)) {
-      const peeled = peelCallApplyBind(ts, node.expression, localSet, wanted);
-      const info = resolveCallee(ts, peeled.callee, localSet, wanted);
+      const peeled = peelCallApplyBind(ts, node.expression, localSet, wanted, checker);
+      const info = resolveCallee(ts, peeled.callee, localSet, wanted, checker);
       if (info) {
         if (info.dynamic) {
           unknowns.push({
@@ -213,11 +213,11 @@ export function walkUses(
         }
       }
       for (const arg of node.arguments) {
-        const escaped = asBindingEscape(ts, arg, localSet);
+        const escaped = asBindingEscape(ts, arg, localSet, checker);
         if (!escaped) continue;
         if (escaped.namespace) {
           const expr = ts.isSpreadElement(arg) ? arg.expression : arg;
-          const b = namespaceIdent(ts, expr, localSet);
+          const b = namespaceIdent(ts, expr, localSet, checker);
           if (b) pushNsEscape(arg, b);
           continue;
         }
@@ -246,7 +246,7 @@ export function walkUses(
     }
 
     if (ts.isTaggedTemplateExpression(node)) {
-      const info = resolveCallee(ts, node.tag, localSet, wanted);
+      const info = resolveCallee(ts, node.tag, localSet, wanted, checker);
       if (info && !info.dynamic) {
         const interpolations = ts.isTemplateExpression(node.template) ? node.template.templateSpans.length : 0;
         const argc = interpolations + 1;
@@ -265,16 +265,16 @@ export function walkUses(
     }
 
     if (ts.isSpreadElement(node) && ts.isArrayLiteralExpression(node.parent)) {
-      const b = namespaceIdent(ts, node.expression, localSet);
+      const b = namespaceIdent(ts, node.expression, localSet, checker);
       if (b) pushNsEscape(node, b);
     }
     if (ts.isSpreadAssignment(node)) {
-      const b = namespaceIdent(ts, node.expression, localSet);
+      const b = namespaceIdent(ts, node.expression, localSet, checker);
       if (b) pushNsEscape(node, b);
     }
 
     if (ts.isPropertyAccessExpression(node)) {
-      const info = resolveCallee(ts, node.expression, localSet, wanted);
+      const info = resolveCallee(ts, node.expression, localSet, wanted, checker);
       if (info && !info.dynamic && ts.isIdentifier(node.name)) {
         const parentCall = ts.isCallExpression(node.parent) && node.parent.expression === node;
         if (!parentCall) {
@@ -330,7 +330,7 @@ export function walkUses(
       if (kind) dynamicAliases.set(node.left.text, kind);
     }
     if (ts.isIdentifier(node)) {
-      const escaped = identifierValueEscape(ts, node, localSet);
+      const escaped = identifierValueEscape(ts, node, localSet, checker);
       if (escaped) {
         if (escaped.imported === "*") pushNsEscape(node, escaped);
         else {

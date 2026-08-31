@@ -720,6 +720,22 @@ test("worker timeout is EXIT_ENV", { timeout: 20_000 }, async () => {
   );
 });
 
+test("workers=1 kills a tight loop instead of hanging", { timeout: 20_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-hang-one-"));
+  const orig = join(dir, "orig.mjs");
+  const slim = join(dir, "slim.mjs");
+  writeFileSync(orig, "export function id() { for (;;) {} }\n");
+  writeFileSync(slim, "export function id() { return 1; }\n");
+  const env = baseEnvelope({
+    traces: [{ symbol: "id", args: [] }],
+    symbols: [valueSym("id", [])],
+  });
+  await assert.rejects(
+    () => runFuzz({ origModule: orig, slimModule: slim, envelope: env, budgetMs: 80, seed: 1, workers: 1 }),
+    (e: unknown) => e instanceof SlimExit && e.code === EXIT_ENV && /timeout/i.test((e as Error).message),
+  );
+});
+
 test("non-cloneable job is EXIT_FAIL serialization failure", async () => {
   const { orig, slim } = writePair("export function id() { return 1; }\n");
   const bomb: Record<string, unknown> = {};

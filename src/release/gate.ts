@@ -59,6 +59,7 @@ export interface GateOpts {
   bundleDir?: string;
   commit?: string;
   workflowRun?: string | null;
+  qualificationRun?: string | null;
   registryUrl?: string;
   parentSha?: string;
   remote?: string;
@@ -277,10 +278,14 @@ export async function runReleaseGate(
   if (opts.mode === "publish" && !opts.bundleDir) {
     throw new SlimExit(EXIT_REFUSED, "publish requires --bundle (qualification-bundle)");
   }
+  if (opts.bundleDir && !opts.qualificationRun) {
+    throw new SlimExit(EXIT_REFUSED, "qualification bundle requires --qualification-run");
+  }
   if (opts.bundleDir) {
     const bundle = assertQualifyBundle({
       dir: opts.bundleDir,
       commit,
+      qualificationRun: opts.qualificationRun,
       now: opts.now,
     });
     tarball = bundle.tarball;

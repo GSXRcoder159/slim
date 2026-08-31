@@ -167,9 +167,14 @@ export function identifierValueEscape(
   ts: typeof import("typescript"),
   ident: ts.Identifier,
   localSet: Map<string, Binding>,
+  checker?: ts.TypeChecker,
 ): Binding | null {
   if (!localSet.has(ident.text)) return null;
   if (isAccountedIdentifier(ts, ident)) return null;
+  if (checker) {
+    const symbol = checker.getSymbolAtLocation(ident);
+    if (!symbol || (symbol.flags & ts.SymbolFlags.Alias) === 0) return null;
+  }
   return localSet.get(ident.text)!;
 }
 

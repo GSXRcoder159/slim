@@ -10,7 +10,8 @@ import {
   throwIfUnqualified,
   type QualifyMode,
 } from "../src/support/qualify-candidate.ts";
-import { repoRootFromScript } from "./build.mjs";
+import { repoRootFromScript, withDistLock } from "./build.mjs";
+import { packAndDigest } from "../src/support/emit-local.ts";
 
 const MODES = new Set<QualifyMode>(["emit", "collect"]);
 
@@ -43,8 +44,9 @@ try {
   if (mode === "collect" && !osNodeOnly && !workflowRun) {
     throw new SlimExit(EXIT_USAGE, "qualify-candidate: --workflow-run is required");
   }
+  const root = values.root ?? repoRootFromScript();
   const result = runQualifyCandidate({
-    root: values.root ?? repoRootFromScript(),
+    root,
     mode,
     receiptsDir: values.receipts ?? "qualification/receipts",
     commit,
@@ -54,6 +56,7 @@ try {
     fromDir: values.from,
     osNodeOnly,
     registryUrl: values.registry,
+    pack: () => withDistLock(root, () => packAndDigest(root)),
   });
   process.stdout.write(
     `qualify-candidate: mode=${mode} npm=${result.npmDigest ?? "-"} action=${result.actionDigest ?? "-"} written=${result.written.length}\n`,

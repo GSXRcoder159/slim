@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -122,6 +123,15 @@ export function npmPackTo(packDir: string): string {
 }
 
 export function packSlim(): { packDir: string; tarball: string } {
+  const supplied = process.env.SLIM_QUALIFY_TARBALL;
+  if (supplied) {
+    if (!existsSync(supplied)) throw new Error(`missing qualification tarball ${supplied}`);
+    const packDir = mkdtempSync(join(tmpdir(), "slim-qualified-pack-"));
+    const name = supplied.replace(/\\/g, "/").split("/").pop() || "candidate.tgz";
+    const tarball = join(packDir, name);
+    copyFileSync(supplied, tarball);
+    return { packDir, tarball };
+  }
   return withDistLock(ROOT, () => {
     build(ROOT);
     const packDir = mkdtempSync(join(tmpdir(), "slim-llm-pack-"));

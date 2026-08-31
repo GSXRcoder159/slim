@@ -3,7 +3,7 @@
  * Emit local support-inventory receipts after named checkIds pass.
  */
 import { parseArgs } from "node:util";
-import { repoRootFromScript } from "./build.mjs";
+import { repoRootFromScript, withDistLock } from "./build.mjs";
 import { emitLocalReceipts, packAndDigest, removePackDir } from "../src/support/emit-local.ts";
 import { loadInventory } from "../src/support/inventory.ts";
 
@@ -39,7 +39,7 @@ let packDir: string | undefined;
 
 try {
   if (values.pack || !npmDigest || !actionDigest) {
-    const packed = packAndDigest(root);
+    const packed = withDistLock(root, () => packAndDigest(root));
     npmDigest = packed.npmDigest;
     actionDigest = packed.actionDigest;
     packDir = packed.packDir;

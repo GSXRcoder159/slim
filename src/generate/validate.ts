@@ -154,6 +154,7 @@ export function validateGenerated(
     }
     if (ts.isCallExpression(node)) {
       checkPrototypeMutationCall(ts, node, stack, errors);
+      checkDynamicGlobalReflection(ts, node, stack, errors);
     }
     if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
       checkPrototypeMutationAssign(ts, node, stack, errors);
@@ -232,6 +233,8 @@ type Resolved =
   | { kind: "reflect" }
   | { kind: "host"; name: string }
   | { kind: "hostMember"; name: string }
+  | { kind: "reflectGet" | "reflectSet" | "reflectHas" | "reflectOwnKeys" }
+  | { kind: "constructor" | "proto" | "dynamicCode" }
   | { kind: "string"; value: string }
   | { kind: "unknown" };
 
@@ -331,12 +334,14 @@ function alwaysForbiddenResolved(r: Resolved, allowBuffer: boolean): boolean {
     if (r.name === "Buffer") return !allowBuffer;
     return true;
   }
+  if (r.kind === "dynamicCode") return true;
   return false;
 }
 
 function forbiddenResolvedMessage(r: Resolved): string {
   if (r.kind === "setPrototypeOf") return "prototype-mutation: Object.setPrototypeOf";
   if (r.kind === "hostMember") return `forbidden globalThis.${r.name}`;
+  if (r.kind === "dynamicCode") return "forbidden constructor.constructor";
   return "forbidden";
 }
 
@@ -474,7 +479,17 @@ function checkElementAccess(
   errors: string[],
 ): void {
   const key = foldString(ts, node.argumentExpression, stack);
-  if (key == null) return;
+  const obj = resolveExpr(ts, node.expression, stack);
+  if (key == null) {
+    if (obj.kind === "host") {
+      errors.push(`forbidden dynamic ${obj.name} access`);
+    } else if (obj.kind === "object") {
+      errors.push("forbidden dynamic Object access");
+    } else if (obj.kind === "reflect") {
+      errors.push("forbidden dynamic Reflect access");
+    }
+    return;
+  }
   checkMember(ts, node.expression, key, stack, allowBuffer, errors);
 }
 
@@ -499,6 +514,29 @@ function checkMember(
   if (resolved.kind === "hostMember" && alwaysForbiddenResolved(resolved, allowBuffer)) {
     errors.push(forbiddenResolvedMessage(resolved));
   }
+  if (resolved.kind === "dynamicCode") {
+    errors.push(forbiddenResolvedMessage(resolved));
+  }
+  if (resolved.kind === "proto") {
+    errors.push("prototype-mutation: __proto__ access");
+  }
+}
+
+function checkDynamicGlobalReflection(
+  ts: typeof import("typescript"),
+  node: ts.CallExpression,
+  stack: Scope[],
+  errors: string[],
+): void {
+  const callee = resolveExpr(ts, node.expression, stack);
+  const reflected =
+    callee.kind === "reflectGet" ||
+    callee.kind === "reflectSet" ||
+    callee.kind === "reflectHas" ||
+    callee.kind === "reflectOwnKeys";
+  if (reflected && node.arguments[0] && resolveExpr(ts, node.arguments[0], stack).kind === "host") {
+    errors.push("forbidden Reflect access to globalThis");
+  }
 }
 
 function checkPrototypeMutationCall(
@@ -516,10 +554,21 @@ function checkPrototypeMutationCall(
     errors.push(`forbidden callee ${shape.fn.name}`);
     return;
   }
+  if (shape.fn.kind === "dynamicCode") {
+    errors.push("forbidden constructor.constructor");
+    return;
+  }
+  if (shape.fn.kind === "reflectSet" && shape.target) {
+    const target = resolveExpr(ts, shape.target, stack);
+    if (target.kind === "prototype" || target.kind === "proto") {
+      errors.push("prototype-mutation: Reflect.set on a prototype");
+    }
+    return;
+  }
   if (shape.fn.kind === "defineProperty" || shape.fn.kind === "defineProperties" || shape.fn.kind === "assign") {
     if (shape.target) {
       const target = resolveExpr(ts, shape.target, stack);
-      if (target.kind === "prototype") {
+      if (target.kind === "prototype" || target.kind === "proto") {
         errors.push(`prototype-mutation: Object.${shape.fn.kind} on a prototype`);
       }
       return;
@@ -545,7 +594,15 @@ function checkPrototypeMutationAssign(
     const key = foldString(ts, left.argumentExpression, stack);
     if (key === "__proto__") {
       errors.push("prototype-mutation: __proto__ assignment");
+      return;
     }
+  }
+  if (ts.isPropertyAccessExpression(left)) {
+    const target = resolveExpr(ts, left.expression, stack);
+    if (target.kind === "proto") errors.push("prototype-mutation: __proto__ alias assignment");
+  } else if (ts.isElementAccessExpression(left)) {
+    const target = resolveExpr(ts, left.expression, stack);
+    if (target.kind === "proto") errors.push("prototype-mutation: __proto__ alias assignment");
   }
 }
 
@@ -624,12 +681,16 @@ function resolveMember(obj: Resolved, prop: string): Resolved {
     if (prop === "defineProperties") return { kind: "defineProperties" };
     if (prop === "assign") return { kind: "assign" };
     if (prop === "prototype") return { kind: "prototype" };
-    return { kind: "unknown" };
+    return prop === "constructor" ? { kind: "constructor" } : { kind: "unknown" };
   }
   if (obj.kind === "reflect") {
     if (prop === "setPrototypeOf") return { kind: "setPrototypeOf" };
     if (prop === "defineProperty") return { kind: "defineProperty" };
     if (prop === "apply") return { kind: "reflectApply" };
+    if (prop === "get") return { kind: "reflectGet" };
+    if (prop === "set") return { kind: "reflectSet" };
+    if (prop === "has") return { kind: "reflectHas" };
+    if (prop === "ownKeys") return { kind: "reflectOwnKeys" };
     return { kind: "unknown" };
   }
   if (obj.kind === "host") {
@@ -637,6 +698,10 @@ function resolveMember(obj: Resolved, prop: string): Resolved {
     if (prop === "Reflect") return { kind: "reflect" };
     return { kind: "hostMember", name: prop };
   }
+  if (obj.kind === "constructor" && prop === "constructor") return { kind: "dynamicCode" };
+  if (obj.kind === "proto") return { kind: "proto" };
+  if (prop === "constructor") return { kind: "constructor" };
+  if (prop === "__proto__") return { kind: "proto" };
   return { kind: "unknown" };
 }
 

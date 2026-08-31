@@ -11,6 +11,7 @@ import { assertDocument, readDocument } from "../schema/documents.ts";
 import { RECEIPT_MAX_AGE_MS } from "../support/receipts.ts";
 import { QUALIFY_REPORT_NAME, type QualifyReport } from "../support/qualify-report.ts";
 import { artifactIdentity, type ArtifactIdentity } from "./digest.ts";
+import { EXPECTED_DEFAULT_BRANCH, EXPECTED_GITHUB_REPO } from "./identity.ts";
 
 export interface QualifyBundle {
   dir: string;
@@ -102,6 +103,7 @@ export function readQualifyBundle(dir: string): QualifyBundle {
 export function assertQualifyBundle(opts: {
   dir: string;
   commit: string;
+  qualificationRun?: string | null;
   now?: Date;
 }): QualifyBundle {
   const bundle = readQualifyBundle(opts.dir);
@@ -135,6 +137,21 @@ export function assertQualifyBundle(opts: {
   }
   if (!report.workflowRun) {
     throw new SlimExit(EXIT_FAIL, "qualification report missing workflowRun");
+  }
+  if (!report.qualificationRun) {
+    throw new SlimExit(EXIT_FAIL, "qualification report missing qualificationRun");
+  }
+  if (report.branch !== EXPECTED_DEFAULT_BRANCH) {
+    throw new SlimExit(EXIT_REFUSED, `qualification report branch ${report.branch} is not ${EXPECTED_DEFAULT_BRANCH}`);
+  }
+  if (report.repository !== EXPECTED_GITHUB_REPO) {
+    throw new SlimExit(EXIT_REFUSED, `qualification report repository ${report.repository} is not ${EXPECTED_GITHUB_REPO}`);
+  }
+  if (opts.qualificationRun && report.qualificationRun !== opts.qualificationRun) {
+    throw new SlimExit(
+      EXIT_REFUSED,
+      `qualification run ${opts.qualificationRun} does not match report ${report.qualificationRun}`,
+    );
   }
   return { ...bundle, report };
 }

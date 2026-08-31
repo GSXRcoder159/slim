@@ -71,7 +71,8 @@
   },
   "homepage": "https://github.com/GSXRcoder159/slim#readme",
   "publishConfig": {
-    "registry": "https://registry.npmjs.org"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "dependencies": {},
   "devDependencies": {

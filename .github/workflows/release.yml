@@ -39,17 +39,46 @@ jobs:
         id: bundle
         env:
           GH_TOKEN: ${{ github.token }}
+          QUALIFY_RUN_INPUT: ${{ github.event.inputs.qualify_run_id }}
         run: |
           set -euo pipefail
-          RUN_ID="${{ github.event.inputs.qualify_run_id }}"
+          RUN_ID="${QUALIFY_RUN_INPUT:-}"
           if [ -z "$RUN_ID" ]; then
-            RUN_ID="$(gh run list --workflow=qualify.yml --commit "$GITHUB_SHA" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
+            RUN_ID="$(gh run list --workflow=qualify.yml --branch main --commit "$GITHUB_SHA" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')"
           fi
           if [ -z "$RUN_ID" ]; then
             echo "release-gate: missing qualification workflow run for $GITHUB_SHA" >&2
             exit 1
           fi
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+      - name: verify qualification run provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUALIFY_RUN_ID: ${{ steps.bundle.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$QUALIFY_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "release-gate: qualification run id must be numeric" >&2
+            exit 1
+          fi
+          RUN_JSON="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUALIFY_RUN_ID")"
+          jq -e \
+            --arg run "$QUALIFY_RUN_ID" \
+            --arg sha "$GITHUB_SHA" \
+            --arg repo "GSXRcoder159/slim" \
+            '(
+              (.id | tostring) == $run and
+              .status == "completed" and
+              .conclusion == "success" and
+              .path == ".github/workflows/qualify.yml" and
+              .head_sha == $sha and
+              .head_branch == "main" and
+              .event == "workflow_dispatch" and
+              .repository.full_name == $repo
+            )' <<< "$RUN_JSON" >/dev/null || {
+              echo "release-gate: supplied run is not a successful qualify.yml run for $GITHUB_REPOSITORY@$GITHUB_SHA" >&2
+              exit 1
+            }
       - uses: actions/download-artifact@v4
         with:
           name: qualification-bundle
@@ -89,4 +118,5 @@ jobs:
             --registry https://registry.npmjs.org \
             --commit "$GITHUB_SHA" \
             --parent-sha "$GITHUB_SHA" \
-            --workflow-run "${{ steps.report.outputs.workflow_run }}"
+            --workflow-run "${{ steps.report.outputs.workflow_run }}" \
+            --qualification-run "${{ steps.bundle.outputs.run_id }}"

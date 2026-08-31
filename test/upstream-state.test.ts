@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { EXIT_FAIL, SlimExit } from "../src/exit.ts";
 import {
+  assertSafePackageSpecifier,
   replacementStateIssues,
   resolveReplacementPaths,
   type ReplacementRecord,
@@ -19,6 +20,14 @@ import {
 } from "./helpers/documents.ts";
 
 const MODULE_SRC = "export function get() {}\nexport function set(o: unknown) { return o; }\n";
+
+test("package-name validation rejects subpaths and traversal", () => {
+  assert.deepEqual(assertSafePackageSpecifier("lodash"), { name: "lodash", subpath: "" });
+  assert.deepEqual(assertSafePackageSpecifier("@scope/pkg"), { name: "@scope/pkg", subpath: "" });
+  for (const value of ["lodash/get", "../secret", "lodash/../../secret", "/tmp/secret", "lodash\\secret", "lodash//get", "bad name"]) {
+    assert.throws(() => assertSafePackageSpecifier(value), /unsafe package specifier/i);
+  }
+});
 
 function plantComplete(
   root: string,

@@ -97,6 +97,16 @@ test("malformed JSONL fails closed", () => {
   assert.throws(() => readTraceFile(p), (e: unknown) => isExit(e, EXIT_FAIL));
 });
 
+test("malformed SlimValue trace payload fails closed", () => {
+  const dir = mkdtempSync(join(tmpdir(), "slim-run-value-"));
+  const p = join(dir, "traces.jsonl");
+  writeFileSync(
+    p,
+    sessionLine() + JSON.stringify({ symbol: "add", args: [{ t: "obj", keys: [] }] }) + "\n",
+  );
+  assert.throws(() => readTraceFile(p), (e: unknown) => isExit(e, EXIT_FAIL));
+});
+
 test("missing session header fails closed", () => {
   const dir = mkdtempSync(join(tmpdir(), "slim-run-hdr-"));
   const p = join(dir, "traces.jsonl");

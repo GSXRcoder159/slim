@@ -126,6 +126,19 @@ test("arr.map(get) is binding-escape with arity 3", () => {
   assert.ok(getSym?.callSites.some((c) => c.argc.max === 3));
 });
 
+test("lexically shadowed import is not attributed to the package", () => {
+  const root = mini({
+    "src/app.ts": `
+      import { get } from "lodash";
+      export function f(get: (o: object, path: string) => unknown, o: object) {
+        return get(o, "a");
+      }
+    `,
+  });
+  const env = analyzePackage(loadProject(root), "lodash");
+  assert.equal(env.symbols.some((s) => s.exportName === "get"), false);
+});
+
 test("computed member is unknown", () => {
   const root = mini({
     "src/app.ts": `

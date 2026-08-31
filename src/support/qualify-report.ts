@@ -19,6 +19,8 @@ export interface QualifyReport {
   npmDigest: string;
   actionDigest: string;
   workflowRun: string;
+  /** The qualify.yml run that produced this handoff bundle. */
+  qualificationRun: string;
   branch: string;
   repository: string;
   generatedAt: string;
@@ -37,6 +39,7 @@ export function qualifyReport(opts: {
   npmDigest: string;
   actionDigest: string;
   workflowRun: string;
+  qualificationRun: string;
   branch?: string;
   repository?: string;
   generatedAt?: Date;
@@ -57,6 +60,7 @@ export function qualifyReport(opts: {
     npmDigest: opts.npmDigest,
     actionDigest: opts.actionDigest,
     workflowRun: opts.workflowRun,
+    qualificationRun: opts.qualificationRun,
     branch: opts.branch ?? EXPECTED_DEFAULT_BRANCH,
     repository: opts.repository ?? EXPECTED_GITHUB_REPO,
     generatedAt: (opts.generatedAt ?? new Date()).toISOString(),

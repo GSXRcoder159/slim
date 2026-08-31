@@ -8,7 +8,7 @@ import { parseArgs } from "node:util";
 import { EXIT_FAIL, EXIT_USAGE, SlimExit } from "../src/exit.ts";
 import { readQualifyBundle, writeQualifyBundle } from "../src/release/bundle.ts";
 import { packAndDigest, removePackDir } from "../src/support/emit-local.ts";
-import { repoRootFromScript } from "./build.mjs";
+import { repoRootFromScript, withDistLock } from "./build.mjs";
 
 const { values } = parseArgs({
   options: {
@@ -43,7 +43,7 @@ try {
 
   if (!seed) {
     if (!out) throw new SlimExit(EXIT_USAGE, "pack-qualify-bundle: --out is required");
-    const packed = packAndDigest(root);
+    const packed = withDistLock(root, () => packAndDigest(root));
     packDir = packed.packDir;
     const bundle = writeQualifyBundle({
       dir: out,
@@ -59,7 +59,7 @@ try {
     );
   } else {
     if (values.verify) {
-      const packed = packAndDigest(root);
+      const packed = withDistLock(root, () => packAndDigest(root));
       packDir = packed.packDir;
       if (packed.npmDigest !== seed.identity.npmDigest) {
         throw new SlimExit(EXIT_FAIL, "pack-qualify-bundle: npmDigest does not match seed bundle");

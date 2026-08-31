@@ -184,6 +184,18 @@ function hasOwnProtoKey(v: unknown): boolean {
   return Boolean(v) && typeof v === "object" && Object.prototype.hasOwnProperty.call(v, "__proto__");
 }
 
+function hardeningPair(a: unknown, b: unknown, ctx: EqCtx): boolean {
+  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false;
+  if (Object.getPrototypeOf(a) !== Object.getPrototypeOf(b) || hasOwnProtoKey(a) !== hasOwnProtoKey(b)) {
+    return eq(a, b, { ...ctx, prototype: false }, new WeakMap());
+  }
+  const keys = (v: object) => Reflect.ownKeys(v).filter((k) => enumerableOwn(v, k) && !isUnsafeOwnKey(k));
+  const ak = keys(a);
+  const bk = keys(b);
+  return (ak.length === 1 && ak[0] === "polluted" && bk.length === 0) ||
+    (bk.length === 1 && bk[0] === "polluted" && ak.length === 0);
+}
+
 export function equal(
   a: unknown,
   b: unknown,
@@ -238,9 +250,10 @@ export function equalResults(
       reason: `argument mutation mismatch: argc ${orig.argsAfter.length} vs ${slim.argsAfter.length}`,
     };
   }
+  const hardeningObserved = hardeningPath(orig.argsAfter) || hardeningPath(slim.argsAfter);
   for (let i = 0; i < orig.argsAfter.length; i++) {
     if (!eq(orig.argsAfter[i], slim.argsAfter[i], ctx, pairSeen)) {
-      if (i === 0 && hardeningPath(slim.argsAfter)) continue;
+      if (i === 0 && hardeningObserved && hardeningPair(orig.argsAfter[i], slim.argsAfter[i], ctx)) continue;
       return { ok: false, reason: `argument mutation mismatch at index ${i}` };
     }
   }
@@ -261,7 +274,7 @@ export function equalResults(
     } else {
       const retSeen = identity ? pairSeen : new WeakMap<object, object>();
       if (!eq(orig.value, slim.value, ctx, retSeen) || !extras(orig.value, slim.value, ctx)) {
-        if (!hardeningPath(slim.argsAfter)) {
+        if (!hardeningObserved || !hardeningPair(orig.value, slim.value, ctx)) {
           return { ok: false, reason: "return value mismatch" };
         }
       }

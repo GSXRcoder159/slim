@@ -9,6 +9,7 @@ import { EXIT_FAIL, EXIT_USAGE, SlimExit } from "../src/exit.ts";
 import { writeQualifyBundle, assertQualifyBundle } from "../src/release/bundle.ts";
 import { assertDocument, validateNamed } from "../src/schema/documents.ts";
 import { qualifyReport, writeQualifyReport, QUALIFY_REPORT_NAME } from "../src/support/qualify-report.ts";
+import { packSlim, rmPackedTemp } from "./helpers/llm-replace.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const COMMIT = "a".repeat(40);
@@ -29,6 +30,7 @@ function sampleReport(extra: {
     npmDigest: NPM,
     actionDigest: ACTION,
     workflowRun: RUN,
+    qualificationRun: RUN,
     entryCount: 139,
     failures: [],
     ...extra,
@@ -57,6 +59,7 @@ test("qualifyReport fail document lists failures", () => {
     npmDigest: NPM,
     actionDigest: ACTION,
     workflowRun: RUN,
+    qualificationRun: RUN,
     entryCount: 2,
     failures: [{ entryId: "provider.openai", reason: "missing workflow run" }],
   });
@@ -81,6 +84,8 @@ test("qualify-handoff prints one JSON document and writes the gitignored path", 
       "--action-digest",
       ACTION,
       "--workflow-run",
+      RUN,
+      "--qualification-run",
       RUN,
       "--receipts",
       receipts,
@@ -182,6 +187,48 @@ test("writeQualifyBundle copies a passing report next to identity", () => {
     const ok = assertQualifyBundle({ dir: bundle.dir, commit: COMMIT });
     assert.equal(ok.report?.workflowRun, RUN);
   } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test("assertQualifyBundle binds the selected qualification workflow run", () => {
+  const work = mkdtempSync(join(tmpdir(), "slim-qr-run-"));
+  try {
+    const bundleDir = join(work, "bundle");
+    const bundle = writeQualifyBundle({
+      dir: bundleDir,
+      tarball: tarStub(join(work, "pack")),
+      receiptsDir: join(work, "receipts"),
+      commit: COMMIT,
+      npmDigest: NPM,
+      actionDigest: ACTION,
+      distSha256: "d".repeat(64),
+      report: sampleReport(),
+    });
+    assert.throws(
+      () => assertQualifyBundle({ dir: bundle.dir, commit: COMMIT, qualificationRun: "different" }),
+      (err: unknown) => err instanceof SlimExit && /qualification run/.test(err.message),
+    );
+    assertQualifyBundle({ dir: bundle.dir, commit: COMMIT, qualificationRun: RUN });
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+});
+
+test("live pack helper copies the supplied qualification tarball", () => {
+  const work = mkdtempSync(join(tmpdir(), "slim-qr-exact-"));
+  const source = tarStub(join(work, "pack"));
+  const previous = process.env.SLIM_QUALIFY_TARBALL;
+  process.env.SLIM_QUALIFY_TARBALL = source;
+  let packed: { packDir: string; tarball: string } | undefined;
+  try {
+    packed = packSlim();
+    assert.notEqual(packed.tarball, source);
+    assert.deepEqual(readFileSync(packed.tarball), readFileSync(source));
+  } finally {
+    if (packed) rmPackedTemp(packed.packDir);
+    if (previous === undefined) delete process.env.SLIM_QUALIFY_TARBALL;
+    else process.env.SLIM_QUALIFY_TARBALL = previous;
     rmSync(work, { recursive: true, force: true });
   }
 });

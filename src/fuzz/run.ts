@@ -81,10 +81,7 @@ export async function runFuzz(opts: {
   const allowFlaky = opts.allowFlaky === true;
   assertFuzzAllowed(opts.envelope, { allowFlaky });
   const workers = opts.workers ?? defaultWorkerCount();
-  if (workers > 1) {
-    if (!opts.origModule || !opts.slimModule) {
-      throw new Error("workers > 1 requires origModule and slimModule");
-    }
+  if (opts.origModule && opts.slimModule) {
     return runFuzzPool({
       ...opts,
       workers,
@@ -93,6 +90,7 @@ export async function runFuzz(opts: {
       slimModule: opts.slimModule,
     });
   }
+  if (workers > 1) throw new Error("workers > 1 requires origModule and slimModule");
   return runFuzzInProcess({ ...opts, allowFlaky });
 }
 

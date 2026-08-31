@@ -43,11 +43,14 @@ function symbolNames(env: Envelope): string[] {
   return (env.symbols ?? []).map((s) => s.exportName).filter(isTrackedSymbol);
 }
 
-function fingerprintsFor(env: Envelope, exportName: string): Set<string> {
-  const out = new Set<string>();
+function fingerprintsFor(env: Envelope, exportName: string): Map<string, number> {
+  const out = new Map<string, number>();
   for (const s of env.symbols ?? []) {
     if (s.exportName !== exportName) continue;
-    for (const c of s.callSites ?? []) out.add(callSiteFingerprint(c));
+    for (const c of s.callSites ?? []) {
+      const fp = callSiteFingerprint(c);
+      out.set(fp, (out.get(fp) ?? 0) + 1);
+    }
   }
   return out;
 }
@@ -85,8 +88,8 @@ export function diffEnvelope(saved: Envelope, live: Envelope): EnvelopeDrift[] {
     const liveSym = (live.symbols ?? []).find((s) => s.exportName === name);
     if (!liveSym) continue;
     const savedPrints = fingerprintsFor(saved, name);
-    for (const fp of fingerprintsFor(live, name)) {
-      if (!savedPrints.has(fp)) {
+    for (const [fp, count] of fingerprintsFor(live, name)) {
+      if (count > (savedPrints.get(fp) ?? 0)) {
         drift.push({ kind: "shape", detail: `new call shape on ${name}` });
         break;
       }

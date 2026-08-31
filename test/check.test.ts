@@ -514,6 +514,18 @@ test("replacementStateIssues reports missing evidence and hardening", () => {
   assert.ok(state.drift.some((d) => d.kind === "hardening"));
 });
 
+test("check scans every applicable project source file for original imports", async () => {
+  const root = fixture({
+    files: completeFiles({
+      "src/other.ts": 'import { get } from "lodash"; export const untouched = get({}, "x");\n',
+    }),
+  });
+  const { code, stdout } = await capture(() => runCheck(parseCli(["check", "--json"]), { cwd: root }));
+  assert.equal(code, EXIT_FAIL);
+  const doc = JSON.parse(stdout) as { packages: { drift: { kind: string; detail: string }[] }[] };
+  assert.ok(doc.packages[0]?.drift.some((d) => d.kind === "import" && /src\/other\.ts/.test(d.detail)));
+});
+
 test("emitHardenedGetSetTest writes a sibling hardening file", () => {
   const root = fixture({
     files: { "src/slim/lodash.ts": "export function get() { return 1; }\n" },

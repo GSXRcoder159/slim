@@ -257,7 +257,7 @@ test("emit mode passes SLIM_WORKFLOW_RUN into live env", () => {
       repository: { type: "git", url: "git+https://github.com/GSXRcoder159/slim.git" },
       bugs: { url: "https://github.com/GSXRcoder159/slim/issues" },
       homepage: "https://github.com/GSXRcoder159/slim#readme",
-      publishConfig: { registry: "https://registry.npmjs.org" },
+      publishConfig: { registry: "https://registry.npmjs.org", access: "public" },
     }) + "\n",
   );
   writeFileSync(

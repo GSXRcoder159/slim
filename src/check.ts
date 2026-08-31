@@ -3,7 +3,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import type { CliArgs } from "./cli.ts";
 import { EXIT_FAIL, EXIT_OK, SlimExit } from "./exit.ts";
-import { loadProject, loadTargetTypescript } from "./project.ts";
+import { filterSourceFiles, loadProject, loadTargetTypescript, walkSourceFiles } from "./project.ts";
 import { loadConfig } from "./config.ts";
 import { analyzePackage } from "./analyze/index.ts";
 import { specifierMatches, wantedSpecifiers } from "./analyze/reexports.ts";
@@ -429,19 +429,23 @@ export async function runCheck(args: CliArgs, opts: RunCheckOpts = {}): Promise<
       include: config.include,
       ignore: config.ignore,
     });
-    const scanFiles = [
+    const scanFiles = new Set([
+      ...filterSourceFiles(walkSourceFiles(project.root), project.root, {
+        include: config.include,
+        ignore: config.ignore,
+      }),
       moduleRel ? join(project.root, moduleRel) : "",
       standingTestPaths(project.root, pkg, config.outDir).tsAbs,
       standingTestPaths(project.root, pkg, config.outDir).jsAbs,
       ...(moduleRel
         ? [hardeningTestPaths(project.root, moduleRel).tsAbs, hardeningTestPaths(project.root, moduleRel).jsAbs]
         : []),
-    ].filter(Boolean);
+    ].filter(Boolean));
     const drift = uniqDrift([
       ...state.drift,
       ...diffEnvelope(saved, now),
       ...missingExports(project.root, moduleRel, saved),
-      ...originalPackageImports(project.root, scanFiles, pkg),
+      ...originalPackageImports(project.root, [...scanFiles], pkg),
     ]);
     const extraUnknowns = now.unknowns.filter((u) => !saved.unknowns?.some((s) => s.kind === u.kind && s.id === u.id));
     if (drift.length) {

@@ -110,6 +110,12 @@ test("new call shape on existing get is drift", () => {
   assert.ok(drift.some((d) => d.kind === "shape" && /get/.test(d.detail)), JSON.stringify(drift));
 });
 
+test("a second identical call site is not hidden by semantic fingerprint dedupe", () => {
+  const saved = envelope({ symbols: [getSym([site({ exportName: "get" })])] });
+  const live = envelope({ symbols: [getSym([site({ exportName: "get" }), site({ id: "s2", exportName: "get" })])] });
+  assert.ok(diffEnvelope(saved, live).some((d) => d.kind === "shape"), "duplicate call site must drift");
+});
+
 test("new observed argc is drift", () => {
   const saved = envelope({
     symbols: [getSym([site({ exportName: "get", argc: { min: 2, max: 2, observed: [2] } })])],

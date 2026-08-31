@@ -30,7 +30,7 @@ import type { NpmLatest } from "./npm.ts";
 import type { CreatePrOpts, PrResult } from "../github/pr.ts";
 import type { Exposure } from "./slice.ts";
 import type { SourceResult } from "./status.ts";
-import { resolveReplacementPaths, type ReplacementRecord } from "./state.ts";
+import { assertSafePackageSpecifier, resolveReplacementPaths, type ReplacementRecord } from "./state.ts";
 
 export type ManifestReplacement = ReplacementRecord;
 
@@ -402,6 +402,7 @@ export function assertHardenedGetSet(fns: Record<string, Function>): void {
 export { emitHardenedGetSetTest } from "../evidence/emit-tests.ts";
 
 export async function installUpstreamInTemp(name: string, version: string): Promise<string | null> {
+  assertSafePackageSpecifier(name);
   const spec = `${name}@${version}`;
   const view = spawnPm("npm", ["view", spec, "version"], {
     encoding: "utf8",
@@ -494,6 +495,7 @@ function loadOriginalFromRoot(
   symbols: string[],
 ): Record<string, Function> | null {
   try {
+    assertSafePackageSpecifier(pkg);
     const req = createRequire(join(root, "package.json"));
     const mod = req(pkg) as Record<string, unknown>;
     return pickFns(mod, symbols);

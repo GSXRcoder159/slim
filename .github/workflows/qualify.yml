@@ -68,6 +68,15 @@ jobs:
             --from-bundle "${{ runner.temp }}/ci-bundle" \
             --commit "${{ github.sha }}" \
             --verify
+      - name: bind live checks to the CI tarball
+        run: |
+          set -euo pipefail
+          TARBALL="$(find "${{ runner.temp }}/ci-bundle" -maxdepth 1 -type f -name '*.tgz' -print -quit)"
+          if [ -z "$TARBALL" ]; then
+            echo "qualify.yml: CI bundle has no tarball" >&2
+            exit 1
+          fi
+          echo "SLIM_QUALIFY_TARBALL=$TARBALL" >> "$GITHUB_ENV"
       - name: emit local receipts and overlay osNode cells
         env:
           COPYFILE_DISABLE: "1"
@@ -130,6 +139,7 @@ jobs:
             --npm-digest "$SLIM_NPM_DIGEST" \
             --action-digest "$SLIM_ACTION_DIGEST" \
             --workflow-run "${{ steps.ci.outputs.run_id }}" \
+            --qualification-run "${{ github.run_id }}" \
             --receipts qualification/receipts
       - name: pack complete qualification bundle from the CI tarball
         run: |

@@ -58,6 +58,7 @@ function initReleaseFixture(opts?: {
   bugs?: string;
   homepage?: string;
   publishConfig?: string | null;
+  publishAccess?: string | null;
   tag?: string | null;
 }): string {
   mkdirSync(TMP, { recursive: true });
@@ -74,7 +75,10 @@ function initReleaseFixture(opts?: {
     homepage: opts?.homepage ?? "https://github.com/GSXRcoder159/slim#readme",
   };
   if (opts?.publishConfig !== null) {
-    pkg.publishConfig = { registry: opts?.publishConfig ?? "https://registry.npmjs.org" };
+    pkg.publishConfig = {
+      registry: opts?.publishConfig ?? "https://registry.npmjs.org",
+      ...(opts?.publishAccess !== null ? { access: opts?.publishAccess ?? "public" } : {}),
+    };
   }
   writeFileSync(join(root, "package.json"), JSON.stringify(pkg, null, 2) + "\n");
   writeFileSync(join(root, "CHANGELOG.md"), opts?.changelog ?? `# Changelog\n\n## ${version}\n\nNotes.\n`);
@@ -232,6 +236,15 @@ test("wrong package name or repository identity is refused", () => {
     );
   } finally {
     rmSync(missingPub, { recursive: true, force: true });
+  }
+  const privatePub = initReleaseFixture({ publishAccess: null });
+  try {
+    assert.throws(
+      () => assertPackageIdentity(privatePub),
+      (err: unknown) => isSlimExit(err, EXIT_REFUSED, /access.*public/i),
+    );
+  } finally {
+    rmSync(privatePub, { recursive: true, force: true });
   }
 });
 
@@ -646,6 +659,7 @@ test("publish without a qualification bundle is refused before attach", async ()
           tag: "v0.1.0",
           registryUrl: "https://registry.npmjs.org",
           occupancyFetch: freeOccupancy,
+          qualificationRun: "1",
           ...publishTagRef(),
         }),
       (err: unknown) => isSlimExit(err, EXIT_REFUSED, /bundle/),
@@ -688,6 +702,7 @@ test("qualification bundle commit mismatch is refused before attach", async () =
           bundleDir,
           registryUrl: "https://registry.npmjs.org",
           occupancyFetch: freeOccupancy,
+          qualificationRun: "1",
           ...publishTagRef(),
         }),
       (err: unknown) => isSlimExit(err, EXIT_REFUSED, /bundle commit/),
