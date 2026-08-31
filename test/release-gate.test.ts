@@ -435,6 +435,107 @@ test("identity gate passes a clean matching fixture and refuses a dirty one", as
   }
 });
 
+test("attachCompiledTree commit-tree supplies GIT_AUTHOR when unset", () => {
+  const root = initReleaseFixture();
+  mkdirSync(TMP, { recursive: true });
+  const packWork = mkdtempSync(join(TMP, "slim-rel-ident-"));
+  const prevAuthor = process.env.GIT_AUTHOR_NAME;
+  const prevEmail = process.env.GIT_AUTHOR_EMAIL;
+  const prevCName = process.env.GIT_COMMITTER_NAME;
+  const prevCEmail = process.env.GIT_COMMITTER_EMAIL;
+  delete process.env.GIT_AUTHOR_NAME;
+  delete process.env.GIT_AUTHOR_EMAIL;
+  delete process.env.GIT_COMMITTER_NAME;
+  delete process.env.GIT_COMMITTER_EMAIL;
+  try {
+    const packRoot = join(packWork, "package");
+    writeActionPack(packRoot);
+    const parent = git(root, ["rev-parse", "HEAD"]);
+    const seen: NodeJS.ProcessEnv[] = [];
+    attachCompiledTree(
+      {
+        gitRoot: root,
+        packRoot,
+        parentSha: parent,
+        versionTag: "v0.1.0",
+        floatingTag: "v1",
+        push: false,
+      },
+      (file, args = [], opts) => {
+        if (file === "git" && args[0] === "commit-tree") {
+          seen.push((opts as { env?: NodeJS.ProcessEnv }).env ?? {});
+        }
+        return execFileSync(file, [...args], opts);
+      },
+    );
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.GIT_AUTHOR_NAME, "slim");
+    assert.equal(seen[0]!.GIT_AUTHOR_EMAIL, "slim@users.noreply.github.com");
+    assert.equal(seen[0]!.GIT_COMMITTER_NAME, "slim");
+    assert.equal(seen[0]!.GIT_COMMITTER_EMAIL, "slim@users.noreply.github.com");
+  } finally {
+    if (prevAuthor === undefined) delete process.env.GIT_AUTHOR_NAME;
+    else process.env.GIT_AUTHOR_NAME = prevAuthor;
+    if (prevEmail === undefined) delete process.env.GIT_AUTHOR_EMAIL;
+    else process.env.GIT_AUTHOR_EMAIL = prevEmail;
+    if (prevCName === undefined) delete process.env.GIT_COMMITTER_NAME;
+    else process.env.GIT_COMMITTER_NAME = prevCName;
+    if (prevCEmail === undefined) delete process.env.GIT_COMMITTER_EMAIL;
+    else process.env.GIT_COMMITTER_EMAIL = prevCEmail;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(packWork, { recursive: true, force: true });
+  }
+});
+
+test("attachCompiledTree push authenticates GitHub HTTPS from GH_TOKEN", () => {
+  const root = initReleaseFixture();
+  mkdirSync(TMP, { recursive: true });
+  const packWork = mkdtempSync(join(TMP, "slim-rel-push-"));
+  const prev = process.env.GH_TOKEN;
+  process.env.GH_TOKEN = "ghp_test_token_not_real";
+  try {
+    const packRoot = join(packWork, "package");
+    writeActionPack(packRoot);
+    const parent = git(root, ["rev-parse", "HEAD"]);
+    const seen: NodeJS.ProcessEnv[] = [];
+    attachCompiledTree(
+      {
+        gitRoot: root,
+        packRoot,
+        parentSha: parent,
+        versionTag: "v0.1.0",
+        floatingTag: "v1",
+        push: true,
+        remote: "origin",
+      },
+      (file, args = [], opts) => {
+        if (file === "git" && args[0] === "push") {
+          seen.push((opts as { env?: NodeJS.ProcessEnv }).env ?? {});
+          return "";
+        }
+        return execFileSync(file, [...args], opts);
+      },
+    );
+    assert.ok(seen.length >= 1);
+    const env = seen[0]!;
+    const count = Number(env.GIT_CONFIG_COUNT ?? "0");
+    let header = "";
+    for (let i = 0; i < count; i++) {
+      if (env[`GIT_CONFIG_KEY_${i}`] === "http.https://github.com/.extraheader") {
+        header = String(env[`GIT_CONFIG_VALUE_${i}`] ?? "");
+      }
+    }
+    assert.match(header, /^AUTHORIZATION: basic /);
+    const b64 = header.slice("AUTHORIZATION: basic ".length);
+    assert.equal(Buffer.from(b64, "base64").toString("utf8"), "x-access-token:ghp_test_token_not_real");
+  } finally {
+    if (prev === undefined) delete process.env.GH_TOKEN;
+    else process.env.GH_TOKEN = prev;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(packWork, { recursive: true, force: true });
+  }
+});
+
 test("attachCompiledTree moves version and floating tags onto the pack tree and rollback restores them", () => {
   const root = initReleaseFixture();
   mkdirSync(TMP, { recursive: true });

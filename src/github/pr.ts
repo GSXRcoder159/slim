@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { EXIT_ENV, EXIT_FAIL, SlimExit } from "../exit.ts";
 import { readStamp } from "../release/digest.ts";
 import { EXPECTED_PACKAGE_NAME } from "../release/identity.ts";
+import { gitIdentEnv, gitRemoteEnv } from "./git-env.ts";
 import { sourceErr, sourceOk, type SourceResult } from "../upstream/status.ts";
 import {
   REPLACE_PR_LABELS,
@@ -183,13 +184,13 @@ export function probeGithubAvailability(root: string, deps: PrDeps = {}): Source
   const env = deps.env ?? process.env;
   const hasGh = deps.hasGh ?? (() => detectHasGh(execFile));
   try {
-    gitOut(execFile, root, ["rev-parse", "--is-inside-work-tree"]);
+    gitOut(execFile, root, ["rev-parse", "--is-inside-work-tree"], env);
   } catch (err) {
     return sourceErr("unavailable", `not a git repository: ${errText(err)}`);
   }
   let origin: string;
   try {
-    origin = gitOut(execFile, root, ["remote", "get-url", "origin"]);
+    origin = gitOut(execFile, root, ["remote", "get-url", "origin"], env);
   } catch (err) {
     return sourceErr("unavailable", `no origin remote: ${errText(err)}`);
   }
@@ -207,8 +208,13 @@ export function probeGithubAvailability(root: string, deps: PrDeps = {}): Source
   return sourceOk(true);
 }
 
-function gitOut(execFile: ExecFileFn, root: string, args: readonly string[]): string {
-  return String(execFile("git", args, { cwd: root, encoding: "utf8" })).trim();
+function gitOut(
+  execFile: ExecFileFn,
+  root: string,
+  args: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return String(execFile("git", args, { cwd: root, encoding: "utf8", env: gitRemoteEnv(env) })).trim();
 }
 
 function refExists(execFile: ExecFileFn, root: string, ref: string): boolean {
@@ -246,10 +252,11 @@ export function assertPrBodyComplete(body: string): void {
 export function commitSlimBranch(
   opts: { root: string; branch: string; files: string[]; message: string },
   execFile: ExecFileFn,
+  env: NodeJS.ProcessEnv = process.env,
 ): string {
   const files = normalizeFiles(opts.files);
   const indexFile = join(opts.root, ".git", `slim-index-${process.pid}-${Date.now()}`);
-  const indexEnv = { ...process.env, GIT_INDEX_FILE: indexFile };
+  const indexEnv = gitIdentEnv({ ...env, GIT_INDEX_FILE: indexFile });
   try {
     execFile("git", ["read-tree", "HEAD"], { cwd: opts.root, env: indexEnv, encoding: "utf8" });
     execFile("git", ["add", "-f", "--", ...files], {
@@ -260,11 +267,12 @@ export function commitSlimBranch(
     const treeFromIndex = String(
       execFile("git", ["write-tree"], { cwd: opts.root, env: indexEnv, encoding: "utf8" }),
     ).trim();
-    const head = gitOut(execFile, opts.root, ["rev-parse", "HEAD"]);
+    const head = gitOut(execFile, opts.root, ["rev-parse", "HEAD"], env);
     const commit = String(
       execFile("git", ["commit-tree", treeFromIndex, "-p", head, "-m", opts.message], {
         cwd: opts.root,
         encoding: "utf8",
+        env: gitIdentEnv(env),
       }),
     ).trim();
     execFile("git", ["branch", opts.branch, commit], { cwd: opts.root, encoding: "utf8" });
@@ -286,10 +294,15 @@ function abandonSlimRef(
   root: string,
   branch: string,
   remote: boolean,
+  env: NodeJS.ProcessEnv = process.env,
 ): void {
   if (remote) {
     try {
-      execFile("git", ["push", "origin", "--delete", branch], { cwd: root, encoding: "utf8" });
+      execFile("git", ["push", "origin", "--delete", branch], {
+        cwd: root,
+        encoding: "utf8",
+        env: gitRemoteEnv(env),
+      });
     } catch {
       /* still drop the local ref */
     }
@@ -544,7 +557,7 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
   const hasGh = deps.hasGh ?? (() => detectHasGh(execFile));
 
   try {
-    gitOut(execFile, opts.root, ["rev-parse", "--is-inside-work-tree"]);
+    gitOut(execFile, opts.root, ["rev-parse", "--is-inside-work-tree"], env);
   } catch (err) {
     throw new SlimExit(EXIT_ENV, `not a git repository: ${errText(err)}`);
   }
@@ -558,7 +571,7 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
 
   let origin: string;
   try {
-    origin = gitOut(execFile, opts.root, ["remote", "get-url", "origin"]);
+    origin = gitOut(execFile, opts.root, ["remote", "get-url", "origin"], env);
   } catch (err) {
     throw new SlimExit(EXIT_ENV, `no origin remote; cannot open a pull request: ${errText(err)}`);
   }
@@ -578,12 +591,12 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
 
   let remoteHeads = "";
   try {
-    remoteHeads = gitOut(execFile, opts.root, [
-      "ls-remote",
-      "--heads",
-      "origin",
-      `refs/heads/${opts.branch}`,
-    ]);
+    remoteHeads = gitOut(
+      execFile,
+      opts.root,
+      ["ls-remote", "--heads", "origin", `refs/heads/${opts.branch}`],
+      env,
+    );
   } catch (err) {
     throw new SlimExit(EXIT_FAIL, `git ls-remote failed: ${errText(err)}`);
   }
@@ -601,13 +614,14 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
   const base = detectedBase;
   assertPrMatchesTransaction({ ...opts, kind, body, artifactDigest: digest, base });
 
-  const head = gitOut(execFile, opts.root, ["rev-parse", "HEAD"]);
+  const head = gitOut(execFile, opts.root, ["rev-parse", "HEAD"], env);
   const sha = commitSlimBranch(
     { root: opts.root, branch: opts.branch, files: opts.files, message: opts.title },
     execFile,
+    env,
   );
   assertCommitMatchesTransaction(
-    (args) => gitOut(execFile, opts.root, args),
+    (args) => gitOut(execFile, opts.root, args, env),
     sha,
     opts.files,
     opts.title,
@@ -618,26 +632,27 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
     execFile("git", ["push", "-u", "origin", `refs/heads/${opts.branch}:refs/heads/${opts.branch}`], {
       cwd: opts.root,
       encoding: "utf8",
+      env: gitRemoteEnv(env),
     });
   } catch (err) {
-    abandonSlimRef(execFile, opts.root, opts.branch, false);
+    abandonSlimRef(execFile, opts.root, opts.branch, false, env);
     process.stderr.write(`git push failed: ${errText(err)}\n`);
     throw new SlimExit(EXIT_FAIL, `git push failed: ${errText(err)}`);
   }
 
   try {
-    const landed = gitOut(execFile, opts.root, [
-      "ls-remote",
-      "--heads",
-      "origin",
-      `refs/heads/${opts.branch}`,
-    ]);
+    const landed = gitOut(
+      execFile,
+      opts.root,
+      ["ls-remote", "--heads", "origin", `refs/heads/${opts.branch}`],
+      env,
+    );
     const remoteSha = parseLsRemoteSha(landed, opts.branch);
     if (remoteSha !== sha) {
       throw new SlimExit(EXIT_FAIL, `origin ${opts.branch} SHA does not match the Slim commit`);
     }
   } catch (err) {
-    abandonSlimRef(execFile, opts.root, opts.branch, true);
+    abandonSlimRef(execFile, opts.root, opts.branch, true, env);
     if (err instanceof SlimExit) throw err;
     throw new SlimExit(EXIT_FAIL, `origin ${opts.branch} SHA does not match the Slim commit`);
   }
@@ -697,13 +712,13 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
     prNumber = prNumber ?? parsePullRequestNumber(url);
 
     try {
-      gitOut(execFile, opts.root, ["fetch", "origin", `refs/heads/${opts.branch}:${verifyRef}`]);
-      const fetched = gitOut(execFile, opts.root, ["rev-parse", verifyRef]);
+      gitOut(execFile, opts.root, ["fetch", "origin", `refs/heads/${opts.branch}:${verifyRef}`], env);
+      const fetched = gitOut(execFile, opts.root, ["rev-parse", verifyRef], env);
       if (fetched !== sha) {
         throw new SlimExit(EXIT_FAIL, `origin ${opts.branch} SHA does not match the Slim commit`);
       }
       assertCommitMatchesTransaction(
-        (args) => gitOut(execFile, opts.root, args),
+        (args) => gitOut(execFile, opts.root, args, env),
         fetched,
         opts.files,
         opts.title,
@@ -729,7 +744,7 @@ export async function createPullRequest(opts: CreatePrOpts, deps: PrDeps = {}): 
   } catch (err) {
     dropVerifyRef(execFile, opts.root, verifyRef);
     await closePullRequest(execFile, fetchImpl, token, gh, owner, repo, prNumber, opts.root);
-    abandonSlimRef(execFile, opts.root, opts.branch, true);
+    abandonSlimRef(execFile, opts.root, opts.branch, true, env);
     if (err instanceof SlimExit) throw err;
     throw new SlimExit(EXIT_FAIL, `pull request failed: ${errText(err)}`);
   }

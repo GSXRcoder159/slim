@@ -9,6 +9,7 @@ import { existsSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { EXIT_FAIL, SlimExit } from "../exit.ts";
+import { gitRemoteEnv } from "../github/git-env.ts";
 
 export type ExecFileFn = (
   file: string,
@@ -84,7 +85,7 @@ export function attachCompiledTree(opts: AttachOpts, execFile: ExecFileFn = defa
 
   const indexFile = join(tmpdir(), `slim-release-index-${process.pid}-${Date.now()}`);
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...gitRemoteEnv(),
     GIT_INDEX_FILE: indexFile,
     GIT_DIR: gitDir,
     GIT_WORK_TREE: packRoot,
@@ -102,10 +103,12 @@ export function attachCompiledTree(opts: AttachOpts, execFile: ExecFileFn = defa
     execFile("git", ["update-ref", `refs/tags/${opts.versionTag}`, commit], {
       cwd: gitRoot,
       encoding: "utf8",
+      env,
     });
     execFile("git", ["update-ref", `refs/tags/${opts.floatingTag}`, commit], {
       cwd: gitRoot,
       encoding: "utf8",
+      env,
     });
     if (opts.push) {
       pushReleaseTags(
@@ -154,7 +157,7 @@ export function pushReleaseTags(
       `+refs/tags/${attached.versionTag}:refs/tags/${attached.versionTag}`,
       `+refs/tags/${attached.floatingTag}:refs/tags/${attached.floatingTag}`,
     ],
-    { cwd: gitRoot, encoding: "utf8" },
+    { cwd: gitRoot, encoding: "utf8", env: gitRemoteEnv() },
   );
 }
 
@@ -182,7 +185,7 @@ function pushRestoredTag(
 ): void {
   const spec = previous ? `+${previous}:refs/tags/${tag}` : `:refs/tags/${tag}`;
   try {
-    execFile("git", ["push", remote, spec], { cwd: gitRoot, encoding: "utf8" });
+    execFile("git", ["push", remote, spec], { cwd: gitRoot, encoding: "utf8", env: gitRemoteEnv() });
   } catch {
     /* remote tag may already match */
   }
