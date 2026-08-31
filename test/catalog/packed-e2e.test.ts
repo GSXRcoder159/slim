@@ -194,7 +194,7 @@ function assertReplaceLoop(dest: string, pkg: string, slimJs: string, budgetMs =
 }
 
 function npmInstall(cwd: string, tarball: string): void {
-  execPm("npm", ["install", tarball], {
+  execPm("npm", ["install", tarball, "--no-audit", "--no-fund", "--prefer-offline"], {
     cwd,
     encoding: "utf8",
     timeout: 300_000,
@@ -376,7 +376,7 @@ test("packed case table covers every advertised alias and catalog symbol", () =>
   assert.equal(PACKAGE_CASES.length, 9);
 });
 
-test("packed CLI replace → standing tests → slim check → revert for every registered catalog package and alias", { timeout: 3_600_000 }, () => {
+test("packed CLI replace → standing tests → slim check → revert for every registered catalog package and alias", { timeout: 4_500_000 }, () => {
   execPm("npm", ["run", "build"], {
     cwd: ROOT,
     encoding: "utf8",

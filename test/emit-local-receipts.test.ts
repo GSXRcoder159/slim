@@ -248,4 +248,5 @@ test("defaultRunCheck rebuilds dist before the named checkId", () => {
 test("packed catalog e2e does not compile slim through the installer cache env", () => {
   const src = readFileSync(new URL("./catalog/packed-e2e.test.ts", import.meta.url), "utf8");
   assert.doesNotMatch(src, /"build"[\s\S]{0,200}npmEnv\(\)/);
+  assert.match(src, /"--no-audit", "--no-fund", "--prefer-offline"/);
 });
