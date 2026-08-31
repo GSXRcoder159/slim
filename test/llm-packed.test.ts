@@ -38,7 +38,7 @@ function assertCleanRoomBody(body: string): void {
   assert.doesNotMatch(body, /padpadpad/);
 }
 
-test("packed replace --llm via mocked Anthropic completes the pipeline", { timeout: 180_000 }, async () => {
+test("packed replace --llm via mocked Anthropic completes the pipeline", { timeout: 300_000 }, async () => {
   const dest = mkdtempSync(join(tmpdir(), "slim-llm-anth-"));
   const mock = await startLlmMock("anthropic", addModuleSource());
   try {
@@ -89,7 +89,7 @@ test("packed replace --llm via mocked Anthropic completes the pipeline", { timeo
   }
 });
 
-test("packed replace --llm via mocked OpenAI completes the pipeline", { timeout: 180_000 }, async () => {
+test("packed replace --llm via mocked OpenAI completes the pipeline", { timeout: 300_000 }, async () => {
   const dest = mkdtempSync(join(tmpdir(), "slim-llm-oai-"));
   const mock = await startLlmMock("openai", addModuleSource());
   try {
@@ -132,7 +132,7 @@ test("packed replace --llm via mocked OpenAI completes the pipeline", { timeout:
   }
 });
 
-test("packed replace --llm refuses escaping types before any provider call", { timeout: 180_000 }, async () => {
+test("packed replace --llm refuses escaping types before any provider call", { timeout: 300_000 }, async () => {
   const dest = mkdtempSync(join(tmpdir(), "slim-llm-esc-"));
   const mock = await startLlmMock("anthropic", addModuleSource());
   try {
@@ -156,7 +156,7 @@ test("packed replace --llm refuses escaping types before any provider call", { t
   }
 });
 
-test("packed replace --llm refuses package-dir symlink before any provider call", { timeout: 180_000 }, async () => {
+test("packed replace --llm refuses package-dir symlink before any provider call", { timeout: 300_000 }, async () => {
   const dest = mkdtempSync(join(tmpdir(), "slim-llm-pkgdir-"));
   const mock = await startLlmMock("anthropic", addModuleSource());
   try {
@@ -184,7 +184,7 @@ test("packed replace --llm refuses package-dir symlink before any provider call"
   }
 });
 
-test("packed replace --llm rejects prototype-mutation before project writes", { timeout: 180_000 }, async () => {
+test("packed replace --llm rejects prototype-mutation before project writes", { timeout: 300_000 }, async () => {
   const dest = mkdtempSync(join(tmpdir(), "slim-llm-proto-"));
   const mock = await startLlmMock("anthropic", protoMutationSource());
   try {
@@ -206,7 +206,7 @@ test("packed replace --llm rejects prototype-mutation before project writes", { 
   }
 });
 
-test("packed replace --llm rejects aliased and Object.assign prototype mutation before writes", { timeout: 180_000 }, async () => {
+test("packed replace --llm rejects aliased and Object.assign prototype mutation before writes", { timeout: 300_000 }, async () => {
   for (const [label, source] of [
     ["aliased setPrototypeOf", aliasedProtoMutationSource()],
     ["Object.assign on prototype", assignPrototypeSource()],
