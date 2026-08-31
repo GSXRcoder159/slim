@@ -101,6 +101,8 @@ export function hermeticPmEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv 
 function installEnv(): NodeJS.ProcessEnv {
   const env = hermeticPmEnv();
   delete env.GITHUB_ACTIONS;
+  // pnpm aborts node_modules removal without a TTY unless CI is set.
+  env.CI = "true";
   return env;
 }
 
@@ -156,6 +158,7 @@ function frozenInstallArgs(bin: string, env: NodeJS.ProcessEnv, frozen: boolean)
     const args = ["install"];
     if (env.npm_config_store_dir) args.push("--store-dir", env.npm_config_store_dir);
     args.push(frozen ? "--frozen-lockfile" : "--no-frozen-lockfile");
+    args.push("--config.confirmModulesPurge=false");
     return args;
   }
   if (frozen && kind === "yarn") return ["install", "--frozen-lockfile"];

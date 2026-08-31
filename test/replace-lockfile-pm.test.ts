@@ -34,7 +34,7 @@ test("pnpm lockfile refresh does not pass GITHUB_ACTIONS to the installer", () =
       },
     );
     assert.equal(seenEnv.GITHUB_ACTIONS, undefined);
-    assert.equal(seenEnv.CI, undefined);
+    assert.equal(seenEnv.CI, "true");
   } finally {
     if (prev === undefined) delete process.env.GITHUB_ACTIONS;
     else process.env.GITHUB_ACTIONS = prev;
@@ -60,6 +60,7 @@ test("pnpm lockfile refresh disables frozen-lockfile so CI can update the lock",
   assert.equal(seen[0], cmdShim("pnpm"));
   assert.ok(seen.includes("--no-frozen-lockfile"));
   assert.equal(seen.includes("--frozen-lockfile"), false);
+  assert.ok(seen.some((a) => /confirmModulesPurge=false/i.test(a)));
 });
 
 test("pnpm rollback refresh keeps frozen-lockfile", () => {

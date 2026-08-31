@@ -42,7 +42,7 @@ test("refreshLockfile npm install on npm lockfile", () => {
   assert.equal(calls[0]!.file, cmdShim("npm"));
   assert.deepEqual(calls[0]!.args, ["install"]);
   assert.equal(calls[0]!.shell, process.platform === "win32" ? true : undefined);
-  assert.equal(calls[0]!.env?.CI, undefined);
+  assert.equal(calls[0]!.env?.CI, "true");
   assert.equal(calls[0]!.env?.INIT_CWD, undefined);
   assert.match(calls[0]!.env?.npm_config_cache ?? "", /slim-pm-cache/);
 });
